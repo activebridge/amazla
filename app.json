@@ -1,0 +1,205 @@
+{
+  "configVersion": "v2",
+  "app": {
+    "appId": 1038805,
+    "appName": "Amazla",
+    "appType": "app",
+    "version": {
+      "code": 15,
+      "name": "1.0.8"
+    },
+    "icon": "icon.png",
+    "vender": "activebridge",
+    "description": "Control your tesla from your watch"
+  },
+  "permissions": [],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "1.0.0",
+      "target": "1.0.0",
+      "minVersion": "1.0.0"
+    }
+  },
+  "targets": {
+    "common": {
+      "module": {
+        "page": {
+          "pages": [
+            "pages/index"
+          ]
+        },
+        "app-side": { "path": "app-side/index" },
+        "setting": { "path": "setting/index" }
+      },
+      "platforms": [
+        {
+          "name": "balance",
+          "deviceSource": 8519936
+        },
+        {
+          "name": "balance",
+          "deviceSource": 8519937
+        },
+        {
+          "name": "balance",
+          "deviceSource": 8519939
+        },
+        {
+          "name": "gtr-mini",
+          "deviceSource": 250
+        },
+        {
+          "name": "gtr-mini",
+          "deviceSource": 251
+        },
+        {
+          "name": "band7",
+          "deviceSource": 252
+        },
+        {
+          "name": "band7",
+          "deviceSource": 253
+        },
+        {
+          "name": "band7",
+          "deviceSource": 254
+        },
+        {
+          "name": "bip5",
+          "deviceSource": 8454400
+        },
+        {
+          "name": "bip5",
+          "deviceSource": 8454401
+        },
+        {
+          "name": "gts3",
+          "deviceSource": 224
+        },
+        {
+          "name": "gts3",
+          "deviceSource": 225
+        },
+        {
+          "name": "active-edge",
+          "deviceSource": 8388864
+        },
+        {
+          "name": "active-edge",
+          "deviceSource": 8388865
+        },
+        {
+          "name": "active",
+          "deviceSource": 8323328
+        },
+        {
+          "name": "active",
+          "deviceSource": 8323329
+        },
+        {
+          "name": "cheetah",
+          "deviceSource": 8257793
+        },
+        {
+          "name": "cheetah",
+          "deviceSource": 8192256
+        },
+        {
+          "name": "cheetah",
+          "deviceSource": 8192257
+        },
+        {
+          "name": "cheetah-pro",
+          "deviceSource": 8126720
+        },
+        {
+          "name": "cheetah-pro",
+          "deviceSource": 8126721
+        },
+        {
+          "name": "t-rex-ultra",
+          "deviceSource": 6553856
+        },
+        {
+          "name": "t-rex-ultra",
+          "deviceSource": 6553857
+        },
+        {
+          "name": "gtr4",
+          "deviceSource": 7930112
+        },
+        {
+          "name": "gtr4",
+          "deviceSource": 7930113
+        },
+        {
+          "name": "gtr4",
+          "deviceSource": 7864577
+        },
+        {
+          "name": "gts4",
+          "deviceSource": 7995648
+        },
+        {
+          "name": "gts4",
+          "deviceSource": 7995649
+        },
+        {
+          "name": "gts4-mini",
+          "deviceSource": 246
+        },
+        {
+          "name": "gts4-mini",
+          "deviceSource": 247
+        },
+        {
+          "name": "falcon",
+          "deviceSource": 414
+        },
+        {
+          "name": "falcon",
+          "deviceSource": 415
+        },
+        {
+          "name": "gtr3-pro",
+          "deviceSource": 229
+        },
+        {
+          "name": "gtr3-pro",
+          "deviceSource": 230
+        },
+        {
+          "name": "gtr3-pro",
+          "deviceSource": 242
+        },
+        {
+          "name": "gtr3-pro",
+          "deviceSource": 6095106
+        },
+        {
+          "name": "gtr3",
+          "deviceSource": 226
+        },
+        {
+          "name": "gtr3",
+          "deviceSource": 227
+        },
+        {
+          "name": "t-rex2",
+          "deviceSource": 418
+        },
+        {
+          "name": "t-rex2",
+          "deviceSource": 419
+        }
+      ],
+      "designWidth": 198
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Amazla"
+    }
+  },
+  "defaultLanguage": "en-US"
+}
