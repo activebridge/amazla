@@ -1,0 +1,12 @@
+FROM golang:1.20
+
+WORKDIR /app
+
+RUN git init .
+RUN git pull https://github.com/teslamotors/vehicle-command.git
+RUN go get ./...
+RUN go build ./...
+RUN go install ./...
+
+EXPOSE 443
+CMD tesla-http-proxy -tls-key /keys/privkey1.pem -cert /keys/fullchain1.pem -key-file /keys/private.pem -host 0.0.0.0
