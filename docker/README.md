@@ -36,3 +36,11 @@ docker pull ediff/tesla-proxy:latest
 docker stop $(docker ps -a -q)
 docker run -d -v /etc/letsencrypt/archive/tesla.activebridge.org:/keys --rm -p 443:443/tcp ediff/tesla-proxy:latest
 ```
+
+## Update Certs
+```
+certbot certonly -d tesla.activebridge.org
+cd /etc/letsencrypt/archive/tesla.activebridge.org-0002
+cp ../tesla.activebridge.org/private.pem private.pem
+docker run -d -v /etc/letsencrypt/archive/tesla.activebridge.org-0002:/keys --rm -p 443:443/tcp ediff/tesla-proxy:latest
+```
