@@ -9,11 +9,17 @@ docker buildx build . -t ediff/tesla-proxy:latest --platform linux/amd64
 
 #### Run on Local
 
+To Generate Tesla proxy keys run: 
+
+```
+tesla-keygen -key-file private.pem create > public.pem
+```
+
 To run on local create folder and place 3 files
 
 - tls-key: privkey1.pem
 - tls-cert: fullchain1.pem
-- tesla private key: fullchain1.pem
+- tesla private key: private.pem
 
 On run command change path to folder where are certs and keys placed.
 
