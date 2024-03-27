@@ -35,7 +35,7 @@ const fetch = (method, onSuccess, onError) => {
 
     onSuccess(props)
   }).catch(error => {
-    hmUI.showToast({ text: error || 'JS error' })
+    hmUI.showToast({ text: `JS ERROR: ${error}` })
   })
 }
 

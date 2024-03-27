@@ -3,14 +3,16 @@ const { settingsStorage: storage } = settings
 export const xhr = async (url, method, headers, body = '') => {
   // return stub
   try {
+    storage.setItem('debug', `API: ${url} ${JSON.stringify(headers)} start`)
     res = await fetch({ url, method, headers, body })
-    storage.setItem('debug', 'API: ' + res.status)
+    storage.setItem('debug', `API: ${url}` + res.status)
     if (!res.ok) return { status: res.status, error: res.body }
 
     const data = typeof res.body === 'string' ?  JSON.parse(res.body) : res.body
     return data
   } catch (error) {
-    return { error: 'JS error', status: '0' }
+    storage.setItem('debug', `JS ERROR: ${url} ${error}`)
+    return { error: `JS error: ${error}`, status: '0' }
   }
 }
 
@@ -21,6 +23,7 @@ export const store = {
   get access_token() { return storage.getItem('access_token') },
   get name() { return storage.getItem('name') },
   get eu() { return storage.getItem('eu') },
+  get proxy() { return storage.getItem('proxy') },
   get vehicle() {
     return JSON.parse(storage.getItem('vehicle') || '{}')
   },

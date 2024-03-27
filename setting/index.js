@@ -64,6 +64,17 @@ AppSettingsPage({
         ),
       ]),
 
+      View({}, [
+        Toggle({
+          label: 'Skip PROXY server',
+          value: settingsStorage.getItem('proxy'),
+          onChange: val => {
+            if (val) return settingsStorage.setItem('proxy', true)
+            settingsStorage.removeItem('proxy')
+          }},
+        ),
+      ]),
+
       (!code && !token) && View({ style: CONNECT_BTN }, [
         Auth({
           label: '👤 CONNECT TESLA ACCOUNT',
@@ -87,7 +98,7 @@ AppSettingsPage({
           settingsStorage.removeItem('name')
           settingsStorage.removeItem('access_token')
           settingsStorage.removeItem('refresh_token')
-          settingsStorage.removeItem('cpde')
+          settingsStorage.removeItem('code')
         }
       }),
 
@@ -190,8 +201,8 @@ AppSettingsPage({
         }, 'Leave feadback or suggestions'),
       ]),
       Text({ paragraph: true }, 'buymeacoffee.com/galulex'),
-      Text({ paragraph: true }, settingsStorage.getItem('debug')),
-      // Text({ style: { overflow: 'auto' } }, settingsStorage.getItem('vehicle')),
+      Text({ paragraph: true, style: { wordBreak: 'break-word' } }, settingsStorage.getItem('debug')),
+      // Text({ paragraph: true, style: { wordBreak: 'break-word' } }, settingsStorage.getItem('vehicle')),
     ])
   },
 })

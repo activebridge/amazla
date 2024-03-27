@@ -6,7 +6,7 @@
     "appType": "app",
     "version": {
       "code": 15,
-      "name": "1.0.8"
+      "name": "1.0.9"
     },
     "icon": "icon.png",
     "vender": "activebridge",
@@ -29,7 +29,31 @@
           ]
         },
         "app-side": { "path": "app-side/index" },
-        "setting": { "path": "setting/index" }
+        "setting": { "path": "setting/index" },
+        "secondary-widget": {
+          "widgets": [
+            {
+              "path": "widgets/card",
+              "icon": "icon.png",
+              "name": "Tesla",
+              "runtime": {
+                "type": "js"
+              }
+            }
+          ]
+        },
+        "app-widget": {
+          "widgets": [
+            {
+              "path": "widgets/card",
+              "icon": "icon.png",
+              "name": "Tesla",
+              "runtime": {
+                "type": "js"
+              }
+            }
+          ]
+        }
       },
       "platforms": [
         {

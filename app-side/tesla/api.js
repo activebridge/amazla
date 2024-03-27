@@ -14,12 +14,13 @@ const R = {
   },
 
   get URL() {
-    // if (store.eu) return EU_URL
-    return PROXY_URL
+    if (!store.proxy) return PROXY_URL
+    if (store.eu) return EU_URL
+    return URL
   }
 }
 
-const path = path => `${R.URL}/vehicles/${store.id}/${path}`
+const path = path => `${R.URL}vehicles/${store.id}/${path}`
 
 const formatTime = time => {
   const h = Math.floor(time / 60)
