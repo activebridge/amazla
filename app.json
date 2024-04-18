@@ -5,8 +5,8 @@
     "appName": "Amazla",
     "appType": "app",
     "version": {
-      "code": 15,
-      "name": "1.0.9"
+      "code": 16,
+      "name": "1.1.0"
     },
     "icon": "icon.png",
     "vender": "activebridge",

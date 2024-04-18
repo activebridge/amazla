@@ -18,6 +18,7 @@ export const xhr = async (url, method, headers, body = '') => {
 
 export const store = {
   get id() { return storage.getItem('id') },
+  get vin() { return storage.getItem('vin') },
   get code() { return storage.getItem('code') },
   get refresh_token() { return storage.getItem('refresh_token') },
   get access_token() { return storage.getItem('access_token') },

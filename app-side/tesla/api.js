@@ -20,7 +20,7 @@ const R = {
   }
 }
 
-const path = path => `${R.URL}vehicles/${store.id}/${path}`
+const path = path => `${R.URL}vehicles/${store.vin}/${path}`
 
 const formatTime = time => {
   const h = Math.floor(time / 60)
@@ -139,8 +139,9 @@ const updateVehicle = (key, value) => {
 
 const vehicles = async () => {
   data = await xhr(R.URL + 'vehicles', 'GET', R.HEADERS)
-  const { response: [{ id, display_name }] } = data
+  const { response: [{ id, display_name, vin }] } = data
   setItem('id', id)
+  setItem('vin', vin)
   setItem('name', display_name)
   return data
 }

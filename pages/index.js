@@ -187,9 +187,9 @@ const render = (attrs) => {
   // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
   // text({ text: "", text_size: 30 }, slide4)
 
-  !online && circle({}, slide1)
-  !online && circle({}, slide2)
-  !online && circle({}, slide3)
+  // !online && circle({}, slide1)
+  // !online && circle({}, slide2)
+  // !online && circle({}, slide3)
 }
 
 const send = (method, { title = '🌐Sending…', success = '🌐OK', toast = false, vibro = true }) => {
@@ -200,7 +200,7 @@ const send = (method, { title = '🌐Sending…', success = '🌐OK', toast = fa
     writeFile(vehicle)
     render(vehicle)
     if (vibro) vibrate(24)
-    if (toast) hmUI.showToast({ text: 'OK' })
+    if (toast) hmUI.showToast({ text: success })
     return hmUI.updateStatusBarTitle(success)
   }
 
@@ -211,6 +211,7 @@ const send = (method, { title = '🌐Sending…', success = '🌐OK', toast = fa
   }
 
   hmUI.updateStatusBarTitle(title)
+  if (toast) hmUI.showToast({ text: `${title}` })
 
   fetch(method, onSuccess, onError)
 }
@@ -265,7 +266,7 @@ Page({
     }})
     hmUI.setScrollView(true, height, 4, true)
     hmUI.scrollToPage(1, false)
-    send('VEHICLE_DATA', { title: '🌐Sync…', success: '🌐Online' })
+    send('VEHICLE_DATA', { title: '🌐Sync…', success: '🌐Online', toast: true })
   },
 
 })
