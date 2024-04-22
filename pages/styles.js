@@ -1,3 +1,5 @@
+import * as hmUI from '@zos/ui'
+
 export const LEVEL_COLORS = [
   0xF00F00,
   0xF07301,

@@ -1,6 +1,6 @@
 const { settingsStorage: storage } = settings
 
-export const xhr = async (url, method, headers, body = '') => {
+export const xhr = async (url, method, headers, body = undefined) => {
   // return stub
   try {
     storage.setItem('debug', `API: ${url} ${JSON.stringify(headers)} start`)

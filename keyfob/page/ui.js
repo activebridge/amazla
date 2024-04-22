@@ -1,7 +1,8 @@
+
 import * as hmUI from '@zos/ui'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 
-const { width, height, screenShape } = hmSetting?.getDeviceInfo() || getDeviceInfo()
+const { width, height, screenShape } = getDeviceInfo()
 let widgets = []
 
 export const page = (x = 0, y = 0) => {

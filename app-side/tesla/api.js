@@ -155,7 +155,7 @@ const vehicleData = async () => {
 const doorLock = async () => {
   const { response, status } = await xhr(path('command/door_lock'), 'POST', R.HEADERS)
   if (response) updateVehicle('locked', true)
-  return response, { status }
+  return response || { status }
 }
 
 const doorUnlock = async () => {
