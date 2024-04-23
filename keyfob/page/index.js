@@ -1,14 +1,20 @@
-// import BLEMaster from '@silver-zepp/easy-ble'
-// const ble = new BLEMaster()
+import BLEMaster from '@silver-zepp/easy-ble'
+const ble = new BLEMaster()
 
 import * as hmUI from '@zos/ui'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 import { BasePage } from '@zeppos/zml/base-page';
-import { createWidget, widget } from '@zos/ui'
+import { createWidget, deleteWidget, widget, redraw } from '@zos/ui'
+import { writeFileSync, readFileSync } from '@zos/fs'
 
-// import { readFile, writeFile } from '../../shared/utils'
-const readFile = () => {}
-const writeFile = () => {}
+const readFile = () => {
+  const vehicle = readFileSync({ path: 'vehicle.txt', options: { encoding: 'utf8' } })
+  return JSON.parse(vehicle || '{}')
+}
+
+const writeFile = (data) => {
+  return writeFileSync({ path: 'vehicle.txt', data: JSON.stringify(data), options: { encoding: 'utf8' } })
+}
 
 import UI, { page, button, img, text, circle, progress, animation } from '../../pages/ui'
 import {
@@ -34,7 +40,6 @@ import {
 import vibrate from '../../pages/vibrate'
 import { getColor } from '../../pages/paint'
 
-const { messageBuilder } = getApp()._options.globalData;
 const { height } = hmSetting?.getDeviceInfo() || getDeviceInfo()
 
 let isRunning = false
@@ -47,18 +52,21 @@ const fetch = (method, onSuccess, onError) => {
 
     onSuccess(props)
   }).catch(error => {
-    hmUI.showToast({ text: `JS ERROR: ${error}` })
+    hmUI.showToast({ text: `ERROR: ${error}` })
   })
 }
 
 const render = (attrs) => {
-  const slide2 = page(0, 1)
+  console.log('RENDER')
+  console.log(JSON.stringify(attrs))
+  UI.reset()
+  redraw()
   const slide1 = page(0, 0)
+  const slide2 = page(0, 1)
   const slide3 = page(0, 2)
   const slide4 = page(0, 3)
   const slide5 = page(0, 4)
 
-  UI.reset()
   let vehicle = attrs || {}
 
   const {
@@ -111,8 +119,8 @@ const render = (attrs) => {
   img({ w: 480, h: 480, y: -40, src: `${car}_bg.png` }, slide2)
   img({ w: 480, h: 480, y: -40, src: `${car}_details.png` }, slide2)
 
-  locked && img({ w: 252, h: 360, src: 'Y_Top_View_Dark.png' }, slide1)
-  !locked && img({ w: 252, h: 360, src: 'Y_Top_View.png' }, slide1)
+  locked && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
+  !locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' }, slide1)
   frunk_open && img({ w: 252, h: 360, src: 'Y_Frunk.png' }, slide1)
   trunk_open && img({ w: 252, h: 360, src: 'Y_Trunk.png' }, slide1)
   pf && img({ w: 252, h: 360, src: 'Y_Right_Front_Door.png' }, slide1)
@@ -201,6 +209,7 @@ const render = (attrs) => {
   // !online && circle({}, slide1)
   // !online && circle({}, slide2)
   // !online && circle({}, slide3)
+  console.log('RENDERED')
 }
 
 const send = (method, { title = '🌐Sending…', success = '🌐OK', toast = false, vibro = true }) => {
@@ -208,11 +217,13 @@ const send = (method, { title = '🌐Sending…', success = '🌐OK', toast = fa
   isRunning = true
 
   const onSuccess = ({ vehicle }) => {
+    console.log("SUCCESS")
     writeFile(vehicle)
-    // render(vehicle)
+    render(vehicle)
     if (vibro) vibrate(24)
     if (toast) hmUI.showToast({ text: success })
-    return hmUI.updateStatusBarTitle(success)
+    hmUI.updateStatusBarTitle(success)
+    console.log("SUCCESSED")
   }
 
   const onError = error => {
@@ -232,8 +243,8 @@ const lock = () => send('DOOR_LOCK', { toast: true })
 const unlock = () => send('DOOR_UNLOCK', { toast: true })
 const frunk = () => send('ACTUATE_FRUNK', { toast: true })
 const trunk = () => send('ACTUATE_TRUNK', { toast: true })
-const startHVAC = () => send('START_HVAC', { toast: true })
-const stopHVAC = () => send('STOP_HVAC', { toast: true })
+const startHVAC = () => send('START_CONDITIONING', { toast: true })
+const stopHVAC = () => send('STOP_CONDITIONING', { toast: true })
 const heatSeat = () => send('HEAT_SEAT', { toast: true })
 const defrost = () => send('DEFROST', { toast: true })
 const undefrost = () => send('UNDEFROST', { toast: true })
@@ -250,55 +261,42 @@ Page(
       currentPage = this
 
       render({ ...readFile(), ...{
-        // online: false,
-        online: true,
-        dr: true,
-        pf: true,
-        frunk_open: false,
-        trunk_open: true,
-        isCharging: false,
-        isConnected: false,
-        isChargerOpen: true,
-        soc_limit: 75,
-        name: 'Model Y',
-        car_type: 'modely',
-        odometer: 123456,
-        battery_level: 89,
-        battery_range: 333,
-        online: true,
-        remaning: '2hrs 20mins',
-        insideTemp: '12℃',
-        outsideTemp: '2℃',
-        climateTemp: '23℃',
-        inside_temp: 12,
-        driver_temp_setting: 23,
-        is_climate_on: true,
-        shl: 1,
-        exterior_color: 'Premium Signature Red',
+        online: false,
+        // online: true,
+        // dr: true,
+        // pf: true,
+        // frunk_open: false,
+        // trunk_open: true,
+        // isCharging: false,
+        // isConnected: false,
+        // isChargerOpen: true,
+        // soc_limit: 75,
+        // name: 'Model Y',
+        // car_type: 'modely',
+        // odometer: 123456,
+        // battery_level: 89,
+        // battery_range: 333,
+        // online: true,
+        // remaning: '2hrs 20mins',
+        // insideTemp: '12℃',
+        // outsideTemp: '2℃',
+        // climateTemp: '23℃',
+        // inside_temp: 12,
+        // driver_temp_setting: 23,
+        // is_climate_on: true,
+        // shl: 1,
+        // exterior_color: 'Premium Signature Red',
         // color: 'C0C0C0',
       }})
       hmUI.setScrollView(true, height, 4, true)
       hmUI.scrollToPage(1, false)
-      send('VEHICLE_DATA', { title: '🌐Sync…', success: '🌐Online', toast: true })
-    },
-
-    fetchData() {
-      this.request({ method: "GET_DATA", }) .then((data) => {
-        logger.log("receive data");
-        const { result = {} } = data;
-        const text = JSON.stringify(result);
-
-        if (!textWidget) {
-          textWidget = hmUI.createWidget(hmUI.widget.TEXT, {
-            ...FETCH_RESULT_TEXT,
-            text,
-          });
-        } else {
-          textWidget.setProperty(hmUI.prop.TEXT, text);
-        }
+      setTimeout(() => {
+        console.log('TIMEOUT')
+        send('VEHICLE_DATA', { title: '🌐Sync…', success: '🌐Online', toast: true })
+      }, 500)
+      const scan_success = ble.startScan((scan_result) => {
+        hmUI.showToast({ text: (JSON.stringify(scan_result)) })
       })
-        .catch((res) => {});
     },
-
   })
-)
+  )

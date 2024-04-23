@@ -1,16 +1,19 @@
 import * as hmUI from '@zos/ui'
+import { redraw, deleteWidget } from '@zos/ui'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 
 const { width, height, screenShape } = hmSetting?.getDeviceInfo() || getDeviceInfo()
 let widgets = []
 
 export const page = (x = 0, y = 0) => {
-  return hmUI.createWidget(hmUI.widget.GROUP, {
+  const page = hmUI.createWidget(hmUI.widget.GROUP, {
     x: width * x,
     y: height * y,
     w: width,
     h: height,
   })
+  widgets.push(page)
+  return page
 }
 
 const center = ({ x = 0, y = 0, w = width, h = height, radius = height }) => {
@@ -25,14 +28,17 @@ const center = ({ x = 0, y = 0, w = width, h = height, radius = height }) => {
 }
 
 export const img = (props = {}, group = hmUI) => {
-  return widgets.push(group.createWidget(hmUI.widget.IMG, {
+  const img = group.createWidget(hmUI.widget.IMG, {
+    auto_scale: true,
     ...props,
     ...center(props),
-  }))
+  })
+  widgets.push(img)
+  return img
 }
 
 export const text = (props = {}, group = hmUI) => {
-  return widgets.push(group.createWidget(hmUI.widget.TEXT, {
+  const text = group.createWidget(hmUI.widget.TEXT, {
     color: 0xffffff,
     align_h: hmUI.align.CENTER_H,
     align_v: hmUI.align.CENTER_V,
@@ -40,12 +46,14 @@ export const text = (props = {}, group = hmUI) => {
     text_size: 20,
     ...props,
     ...center(props),
-  }))
+  })
+  widgets.push(text)
+  return text
 }
 
 export const button = (props = {}, group = hmUI) => {
   const { src } = props
-  return widgets.push(group.createWidget(hmUI.widget.BUTTON, {
+  const button = group.createWidget(hmUI.widget.BUTTON, {
     text: props.src || props.normal_src ? '' : '✓',
     normal_color: props.src || props.normal_src ? undefined : 0x333333,
     press_color: props.src || props.normal_src ? undefined : 0x000000,
@@ -55,36 +63,47 @@ export const button = (props = {}, group = hmUI) => {
     press_src: src ? `buttons/_${src}.png` : undefined,
     ...props,
     ...center({ w: 50, h: 50, ...props, }),
-  }))
+  })
+  widgets.push(button)
+  return button
 }
 
 export const circle = (props = {}, group = hmUI) => {
-  return widgets.push(group.createWidget(hmUI.widget.CIRCLE, {
+  const circle = group.createWidget(hmUI.widget.CIRCLE, {
     color: 0x000000,
     radius: Math.floor(height / 2),
     alpha: 150,
     ...props,
     ...center({ radius: props.radius, ...props }),
-  }))
+  })
+  widgets.push(circle)
+  return circle
 }
 
 export const progress = (props = {}, group = hmUI) => {
-  return widgets.push(group.createWidget(hmUI.widget.ARC_PROGRESS, {
+  const progress = group.createWidget(hmUI.widget.ARC_PROGRESS, {
     ...props,
     ...center(props),
-  }))
+  })
+  widgets.push(progress)
+  return progress
 }
 
 export const animation = (props = {}, group = hmUI) => {
-  return widgets.push(group.createWidget(hmUI.widget.IMG_ANIM, {
+  const animation = group.createWidget(hmUI.widget.IMG_ANIM, {
     ...props,
     ...center(props),
-  }))
+  })
+  widgets.push(animation)
+  return animation
 }
 
 export default {
+  get widgets() { return widgets },
   reset: () => {
-    widgets.map(w => w.setProperty(hmUI.prop.VISIBLE, false) && hmUI.deleteWidget(w))
+    // widgets.map(w => w.setProperty(prop.VISIBLE, false))
+    widgets.map(w => deleteWidget(w))
+    redraw()
     widgets = []
     return widgets
   }

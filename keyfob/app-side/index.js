@@ -9,7 +9,7 @@ const camalize =  str => {
 
 const dispatch = async (method, response) => {
   const func = actions[method]
-  const { status } = func ? func() : Api[camalize(method)]()
+  const { status } = func ? await func() : await Api[camalize(method)]()
   response(null, { vehicle: store.vehicle, error: status })
 }
 
