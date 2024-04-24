@@ -1,16 +1,16 @@
 {
   "configVersion": "v3",
   "app": {
-    "appId": 24974,
-    "appName": "AmazlaX",
+    "appId": 1038805,
+    "appName": "Amazla",
     "appType": "app",
     "version": {
-      "code": 1,
-      "name": "1.0.1"
+      "code": 301,
+      "name": "3.0.1"
     },
     "icon": "icon.png",
-    "vender": "zepp",
-    "description": "A sample application to demonstrate the fetch API"
+    "vender": "activebridge",
+    "description": "Control your tesla from your watch"
   },
   "permissions": [
     "data:os.device.info",
@@ -38,17 +38,13 @@
         {
           "st": "r",
           "dw": 480
-        },
-        {
-          "st": "s",
-          "dw": 390
         }
       ]
     }
   },
   "i18n": {
     "en-US": {
-      "appName": "Fetch API"
+      "appName": "Amazla"
     }
   },
   "defaultLanguage": "en-US"

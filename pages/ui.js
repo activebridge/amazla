@@ -19,11 +19,11 @@ export const page = (x = 0, y = 0) => {
 const center = ({ x = 0, y = 0, w = width, h = height, radius = height }) => {
   return {
     x: Math.floor(((width - w) / 2) + x),
-    y: Math.floor(((48 + height - h) / 2) + y),
+    y: Math.floor(((18 + height - h) / 2) + y),
     w,
     h,
     center_x: Math.floor((w / 2) + x),
-    center_y: Math.floor(((h +28) / 2) + y),
+    center_y: Math.floor(((h + 19) / 2) + y),
   }
 }
 
@@ -78,6 +78,16 @@ export const circle = (props = {}, group = hmUI) => {
   })
   widgets.push(circle)
   return circle
+}
+
+export const rect = (props = {}, group = hmUI) => {
+  const rect = group.createWidget(hmUI.widget.FILL_RECT, {
+    color: 0xFFFFFF,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(rect)
+  return rect
 }
 
 export const progress = (props = {}, group = hmUI) => {
