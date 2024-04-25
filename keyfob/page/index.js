@@ -1,5 +1,8 @@
 import * as hmUI from '@zos/ui'
+import { setWakeUpRelaunch, setPageBrightTime } from '@zos/display'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
+import { onKey, KEY_SELECT, KEY_EVENT_CLICK } from '@zos/interaction'
+import { getSwiperIndex } from '@zos/page'
 import { BasePage } from '@zeppos/zml/base-page';
 import { writeFileSync, readFileSync } from '@zos/fs'
 
@@ -36,10 +39,10 @@ import {
 import vibrate from '../../pages/vibrate'
 import { getColor } from '../../pages/paint'
 
-const { height } = hmSetting?.getDeviceInfo() || getDeviceInfo()
+const { height } = getDeviceInfo()
 
 let isRunning = false
-let currentPage
+let currentPage, actions = []
 
 const fetch = (method, onSuccess, onError) => {
   currentPage.request({ method }).then(({ error, ...props }) => {
@@ -56,12 +59,6 @@ const fetch = (method, onSuccess, onError) => {
 const render = (attrs) => {
   console.log('RENDER')
   console.log(JSON.stringify(attrs))
-  UI.reset()
-  const slide2 = page(0, 1)
-  const slide1 = page(0, 0)
-  const slide3 = page(0, 2)
-  const slide4 = page(0, 3)
-  const slide5 = page(0, 4)
 
   let vehicle = attrs || {}
 
@@ -111,6 +108,19 @@ const render = (attrs) => {
   const chargeColor = isCharging ? 0x00EF33 : level_color(battery_level)
   const carColor = color ? `0x${color}` : chargeColor
   const climateColor = is_climate_on ? (isHeating ? 0xFF0000 : 0x0000FF ): 0x777777
+
+  actions = [
+    locked ? unlock : lock,
+    isChargerOpen ? closeCharger : openCharger,
+    is_climate_on ? stopHVAC : startHVAC
+  ]
+
+  UI.reset()
+  const slide2 = page(0, 1)
+  const slide1 = page(0, 0)
+  const slide3 = page(0, 2)
+  const slide4 = page(0, 3)
+  const slide5 = page(0, 4)
 
   img({ w: 700, h: 750, src: `${car}.png` }, slide2)
   circle({ color: carColor, alpha: 155, radius: Math.floor(height / 2) }, slide2)
@@ -259,9 +269,19 @@ Page(
     state: {},
 
     build() {
-      hmApp?.setScreenKeep(true)
-      hmSetting?.setBrightScreen(300)
+      setWakeUpRelaunch(true)
+      setPageBrightTime(300)
       currentPage = this
+
+      onKey({
+        callback: (key, keyEvent) => {
+          if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
+            const action = actions[getSwiperIndex() - 1]
+            if (action) action()
+          }
+          return false
+        },
+      })
 
       render({ ...readFile(), ...{
         online: false,
