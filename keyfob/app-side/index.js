@@ -17,7 +17,7 @@ const actions = {
   VEHICLE_DATA: async() => {
     let { status } = await Api.vehicleData()
 
-    if (status === 401) await Auth.refreshToken()
+    if ([401, 403].includes(status)) await Auth.refreshToken()
     if (status === 408) await Api.wakeUp()
     if (status) ({ status } = await Api.vehicleData())
     return { status }

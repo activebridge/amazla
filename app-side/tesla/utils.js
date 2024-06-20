@@ -1,7 +1,7 @@
 const { settingsStorage: storage } = settings
 
 export const xhr = async (url, method, headers, body = undefined) => {
-  // return stub
+  // return { response: stub, status: 200 }
   try {
     storage.setItem('debug', `API: ${url} ${JSON.stringify(headers)} start`)
     res = await fetch({ url, method, headers, body })
@@ -65,8 +65,8 @@ const stub = {
  "backseat_token_updated_at": null,
  "charge_state": {
   "battery_heater_on": false,
-  "battery_level": 42,
-  "battery_range": 133.99,
+  "battery_level": 62,
+  "battery_range": 173.99,
   "charge_amps": 48,
   "charge_current_request": 48,
   "charge_current_request_max": 48,
@@ -201,7 +201,7 @@ const stub = {
   "ece_restrictions": false,
   "efficiency_package": "MY2021",
   "eu_vehicle": false,
-  "exterior_color": "MidnightSilver",
+  "exterior_color": "Premium Signature Red",
   "exterior_trim": "Black",
   "exterior_trim_override": "",
   "has_air_suspension": false,

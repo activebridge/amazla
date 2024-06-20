@@ -10,5 +10,9 @@
   "license": "ISC",
   "devDependencies": {
     "@zeppos/device-types": "^1.0.0"
+  },
+  "dependencies": {
+    "@silver-zepp/easy-ble": "^1.6.8",
+    "@zeppos/zml": "^0.0.23"
   }
 }

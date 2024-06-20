@@ -42,8 +42,9 @@ const fetchToken = async () => {
 }
 
 const refreshToken = async () => {
-  const { access_token } = await xhr(URL, 'POST', HEADERS, BODY.refresh)
+  const { access_token, refresh_token } = await xhr(URL, 'POST', HEADERS, BODY.refresh)
   setItem('access_token', access_token)
+  setItem('refresh_token', refresh_token)
 }
 
 const Auth = {

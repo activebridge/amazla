@@ -32,14 +32,36 @@
           ]
         },
         "app-side": { "path": "app-side/index" },
-        "setting": { "path": "setting/index" }
+        "setting": { "path": "setting/index" },
+        "secondary-widget": {
+          "widgets": [
+            {
+              "path": "secondary-widget/index",
+              "icon": "icon.png",
+              "name": "Tesla",
+              "preview": "preview",
+              "runtime": {
+                "type": "js"
+              }
+            }
+          ]
+        }
       },
       "platforms": [
         {
+          "st": "s",
+          "dw": 320
+        },
+        {
           "st": "r",
           "dw": 480
+        },
+        {
+          "st": "r",
+          "dw": 366
         }
-      ]
+      ],
+      "designWidth": 480
     }
   },
   "i18n": {

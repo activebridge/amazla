@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@silver-zepp/easy-ble": "^1.6.8",
+    "@zeppos/zeus-cli": "^1.5.15",
     "@zeppos/zml": "^0.0.9"
   }
 }
