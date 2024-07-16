@@ -30,13 +30,15 @@ const onSpin = (key, deg) => {
 
   const y = index * height / 2 - 156
 
-  selected.setProperty(hmUI.prop.MORE, { y, color: 0xFFFFFF })
+  selected?.setProperty(hmUI.prop.MORE, { y, color: 0xFFFFFF })
   hmUI.scrollToPage(Math.floor((index - 1) / 2), (index !== 1 && deg < 0) || (index !== cards.length && deg > 0))
   return true
 }
 
 const onKeyPress = (key, action) => {
   if (key === hmApp.key.BACK) return hmApp.goBack()
+  if (key === hmApp.key.UP && action === hmApp.action.RELEASE) return onSpin(null, 1)
+  if (key === hmApp.key.DOWN && action === hmApp.action.RELEASE) return onSpin(null, -1)
   if (key === hmApp.key.HOME) {
     onClick(index)
     return true
@@ -50,10 +52,10 @@ Page({
     // cards = [{ title: 'First Card with long name', code: '0000000000000' }, {title: 'QR', qr: true, code: 'TEST'}]
     cards = readFileSync()
     // console.log(JSON.stringify(cards))
-    selected = stroke({ line_width: 2, w: 210, h: 130, y: -100, radius: 15, color: 0x000000 })
-
     const Cards = items => {
       UI.reset()
+      selected = stroke({ line_width: 2, w: 210, h: 130, y: -100, radius: 15, color: 0x000000 })
+
       items.map((card, i) => {
         const y = i * height / 2 - 100
         const x = (i % 2 === 0) ? 70 : -90
@@ -70,9 +72,8 @@ Page({
     }
     Cards(cards)
 
-    const getActions = () => {
+    const getCards = () => {
       messageBuilder.request({ method: 'GET_ACTIONS' }).then(({ result }) => {
-        console.log(JSON.stringify(result))
         if (JSON.stringify(cards) === JSON.stringify(result)) return
         writeFileSync(result)
         Cards(result)
@@ -81,8 +82,7 @@ Page({
         hmUI.showToast({ text: error || 'JS error' })
       })
     }
-    getActions()
-    // setTimeout(getActions, 1000)
+    getCards()
 
     hmApp.registerKeyEvent(onKeyPress)
     hmApp.registerSpinEvent(onSpin)
