@@ -1,8 +1,8 @@
-import * as hmUI from '@zos/ui'
-import { redraw, deleteWidget } from '@zos/ui'
-import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
+// import * as hmUI from '@zos/ui'
+// import { redraw, deleteWidget } from '@zos/ui'
+// import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 
-const { width, height, screenShape } = hmSetting?.getDeviceInfo() || getDeviceInfo()
+const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
 let widgets = []
 
 export const page = (x = 0, y = 0) => {
@@ -16,14 +16,14 @@ export const page = (x = 0, y = 0) => {
   return page
 }
 
-const center = ({ x = 0, y = 0, w = width, h = height, radius = height }) => {
+const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 18 }) => {
   return {
     x: Math.floor(((width - w) / 2) + x),
-    y: Math.floor(((18 + height - h) / 2) + y),
+    y: Math.floor(((bar + height - h) / 2) + y),
     w,
     h,
     center_x: Math.floor((w / 2) + x),
-    center_y: Math.floor(((h + 19) / 2) + y),
+    center_y: Math.floor(((h + bar + 1) / 2) + y),
   }
 }
 
@@ -76,6 +76,7 @@ export const circle = (props = {}, group = hmUI) => {
     ...props,
     ...center({ radius: props.radius, ...props }),
   })
+  circle.setEnable(false)
   widgets.push(circle)
   return circle
 }
@@ -83,6 +84,18 @@ export const circle = (props = {}, group = hmUI) => {
 export const rect = (props = {}, group = hmUI) => {
   const rect = group.createWidget(hmUI.widget.FILL_RECT, {
     color: 0xFFFFFF,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(rect)
+  return rect
+}
+
+export const stroke = (props = {}, group = hmUI) => {
+  const rect = group.createWidget(hmUI.widget.STROKE_RECT, {
+    color: 0xFFFFFF,
+    line_width: 10,
+    angle: 0,
     ...props,
     ...center(props),
   })
@@ -112,8 +125,8 @@ export default {
   get widgets() { return widgets },
   reset: () => {
     // widgets.map(w => w.setProperty(prop.VISIBLE, false))
-    widgets.map(w => deleteWidget(w))
-    redraw()
+    widgets.map(w => hmUI.deleteWidget(w))
+    // redraw()
     widgets = []
     return widgets
   }
