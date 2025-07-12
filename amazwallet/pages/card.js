@@ -7,7 +7,7 @@ import UI, {
 } from "./../../pages/ui"
 
 let card = {}
-let brightness, isAutoBriht = false
+let brightness, isAutoBright = false
 
 const { width, height, screenShape } = hmSetting?.getDeviceInfo()
 const isLandscape = height === width && width > 368
@@ -81,7 +81,7 @@ Page({
   onDestroy() {
     hmSetting.setBrightScreenCancel()
     hmSetting.setBrightness(brightness)
-    hmSetting.setScreenAutoBright(isAutoBriht)
+    hmSetting.setScreenAutoBright(isAutoBright)
     UI.reset()
   }
 })
