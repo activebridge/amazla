@@ -51,7 +51,7 @@ export const RAW = {
   placeItems: 'center',
 }
 
-export const H1 = {
+export const HEADER = {
   fontSize: '2rem',
   color: "white",
 }
