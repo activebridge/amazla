@@ -1,8 +1,12 @@
-// import * as hmUI from '@zos/ui'
-// import { redraw, deleteWidget } from '@zos/ui'
-// import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
+// Comment these if you want to use v1 UI
+import * as hmUI from '@zos/ui'
+import { redraw, deleteWidget } from '@zos/ui'
+import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
+// end v1 UI
 
-const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
+const { width, height, screenShape } = getDeviceInfo()
+// const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
+
 let widgets = []
 
 export const page = (x = 0, y = 0) => {
