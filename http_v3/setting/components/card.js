@@ -1,18 +1,33 @@
-import { CARD, BUTTON } from '../styles.js'
+import { CARD, BUTTON, REMOVE_BUTTON, SORT_BUTTON } from '../styles.js'
 import { xSelect } from './x_select.js'
+import { Input } from './input.js'
+import { Hr } from './hr.js'
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map(m => ({ name: m, value: m }))
 const ICONS = ['▶', '★', '☎', '⚠', '☯', '♨', '♻'].map(i => ({ name: i, value: i }))
 
-export const Card = ({ action, i, save, remove }) => {
+export const Card = ({ action, i, save, remove, sort }) => {
   return Section({ style: CARD }, [
-    TextInput({
+    Button({
+      label: '×',
+      style: REMOVE_BUTTON,
+      onClick: () => { remove(i) }
+    }),
+
+    Button({
+      label: '↑',
+      style: SORT_BUTTON,
+      onClick: () => { sort && sort(i) }
+    }),
+
+    Input({
       label: 'Title',
       placeholder: 'Run',
       value: action.title,
-      subStyle: { color: 'white' },
       onChange: value => { save(i, 'title', value) },
     }),
+
+    Hr(),
 
     xSelect({
       label: 'Icon',
@@ -21,46 +36,45 @@ export const Card = ({ action, i, save, remove }) => {
       onChange: value => { save(i, 'icon', value) },
     }),
 
-    TextInput({
+    Hr(),
+
+    Input({
       label: 'URL',
       placeholder: 'https://api.url.com',
       value: action.url || 'https://',
       onChange: value => { save(i, 'url', value) },
     }),
 
+    Hr(),
+
     xSelect({
-      label: 'METHOD',
+      label: 'Method',
       options: METHODS,
       multiple: false,
       value: action.method,
       onChange: value => { save(i, 'method', value) },
     }),
 
-    TextInput({
+    Hr(),
+
+    Input({
       label: 'Headers',
       placeholder: 'Authorization=Token\nAnother header=value',
       value: action.headers,
-      rows: 3,
       multiline: true,
+      rows: 3,
       onChange: value => { save(i, 'headers', value) },
     }),
 
-    TextInput({
+    Hr(),
+
+    Input({
       label: 'Body',
-      labelStyle: {
-        marginTop: '20px',
-      },
       placeholder: 'key=value',
       value: action.body,
       multiline: true,
       rows: 3,
       onChange: value => { save(i, 'body', value) },
-    }),
-
-    Button({
-      label: '×',
-      style: BUTTON,
-      onClick: () => { remove(i) }
     })
   ])
 }

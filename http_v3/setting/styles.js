@@ -17,11 +17,11 @@ export const CARD = {
   position: "relative",
   display: "flex",
   flexDirection: "column",
-  alignItems: "start",
+  alignItems: "stretch",
   padding: "20px",
   color: 'white',
-  gap: "20px",
-  margin: "20px 0",
+  gap: "30px",
+  marginBottom: "40px",
   boxShadow: "0 8px 32px rgba(0, 0, 0, 0.1)",
   backdropFilter: "blur(20px)",
   borderRadius: "20px",
@@ -44,6 +44,74 @@ export const BUTTON = {
   paddingBottom: '14px',
 }
 
+export const CIRCLE_BUTTON_BASE = {
+  position: 'absolute',
+  borderRadius: '15px',
+  width: '30px',
+  height: '30px',
+  minWidth: '30px',
+  minHeight: '30px',
+  maxWidth: '30px',
+  maxHeight: '30px',
+  padding: '0',
+  margin: '0',
+  boxSizing: 'border-box',
+  fontSize: '18px',
+  lineHeight: '30px',
+  textAlign: 'center',
+  backdropFilter: "blur(10px)",
+  color: 'white',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  cursor: 'pointer',
+  flexShrink: 0,
+}
+
+export const REMOVE_BUTTON = {
+  ...CIRCLE_BUTTON_BASE,
+  top: '-15px',
+  right: '-15px',
+  background: 'rgba(255, 70, 70, 0.8)',
+  boxShadow: '0 4px 16px rgba(255, 70, 70, 0.3)',
+}
+
+export const SORT_BUTTON = {
+  ...CIRCLE_BUTTON_BASE,
+  bottom: '-15px',
+  right: '-15px',
+  background: 'rgba(70, 130, 255, 0.8)',
+  boxShadow: '0 4px 16px rgba(70, 130, 255, 0.3)',
+}
+
+export const INPUT_STYLE = {
+  background: 'rgba(255, 255, 255, 0.1)',
+  backdropFilter: "blur(10px)",
+  border: '1px solid rgba(255, 255, 255, 0.2)',
+  borderRadius: '12px',
+  padding: '12px 16px',
+  color: 'white',
+  fontSize: '16px',
+  fontFamily: 'inherit',
+  outline: 'none',
+  boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 4px rgba(0, 0, 0, 0.1)',
+  minHeight: '48px',
+  boxSizing: 'border-box',
+}
+
+export const INPUT_LABEL_STYLE = {
+  color: 'rgba(255, 255, 255, 0.9)',
+  fontSize: '14px',
+  fontWeight: '500',
+  marginBottom: '8px',
+}
+
+export const HR_STYLE = {
+  height: '1px',
+  background: 'linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.3) 50%, rgba(255, 255, 255, 0) 100%)',
+  margin: '10px 0',
+  width: '100%',
+  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+}
+
 export const RAW = {
   display: 'grid',
   gridTemplateColumns: '1fr',
@@ -54,4 +122,8 @@ export const RAW = {
 export const HEADER = {
   fontSize: '2rem',
   color: "white",
+  textShadow: "0 2px 8px rgba(0, 0, 0, 0.4)",
+  fontWeight: "600",
+  marginBottom: "10px",
+  textAlign: "center",
 }
