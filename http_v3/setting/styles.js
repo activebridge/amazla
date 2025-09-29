@@ -5,12 +5,23 @@ export const BODY = {
   flexDirection: "column",
   alignItems: "stretch",
   fontFamily: "Circular,Helvetica,Arial,sans-serif",
-  fontSize: "20px",
+  fontSize: "14px",
   fontWeight: "400",
-  padding: '5%',
   minHeight: '100vh',
   background: "radial-gradient(250px 220px at 80% 10%, rgba(124, 197, 255, 0.95) 0%, rgba(124, 197, 255, 0.35) 38%, rgba(124, 197, 255, 0.15) 58%, rgba(124, 197, 255, 0) 70%), radial-gradient(280px 240px at 12% 88%, rgba(255, 234, 140, 0.95) 0%, rgba(255, 234, 140, 0.35) 40%, rgba(255, 234, 140, 0.12) 60%, rgba(255, 234, 140, 0) 72%), linear-gradient(135deg, #b83be4 0%, #4b33d1 55%, #3a2a8e 100%)",
   backgroundAttachment: "fixed",
+  overflowY: "hidden",
+}
+
+export const MAIN = {
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  width: "100%",
+  margin: "0 auto",
+  overflowY: "auto",
+  maxHeight: "100vh",
+  padding: '5%',
 }
 
 export const CARD = {
@@ -87,13 +98,13 @@ export const INPUT_STYLE = {
   backdropFilter: "blur(10px)",
   border: '1px solid rgba(255, 255, 255, 0.2)',
   borderRadius: '12px',
-  padding: '12px 16px',
+  padding: '6px 16px',
   color: 'white',
   fontSize: '16px',
   fontFamily: 'inherit',
   outline: 'none',
   boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.2), inset 0 1px 4px rgba(0, 0, 0, 0.1)',
-  minHeight: '48px',
+  minHeight: '36px',
   boxSizing: 'border-box',
 }
 
@@ -101,7 +112,7 @@ export const INPUT_LABEL_STYLE = {
   color: 'rgba(255, 255, 255, 0.9)',
   fontSize: '14px',
   fontWeight: '500',
-  marginBottom: '8px',
+  marginTop: '8px',
 }
 
 export const HR_STYLE = {

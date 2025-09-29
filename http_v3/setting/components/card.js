@@ -2,11 +2,13 @@ import { CARD, BUTTON, REMOVE_BUTTON, SORT_BUTTON } from '../styles.js'
 import { xSelect } from './x_select.js'
 import { Input } from './input.js'
 import { Hr } from './hr.js'
+import { Response } from './response.js'
+import { Runner } from './runner.js'
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map(m => ({ name: m, value: m }))
 const ICONS = ['▶', '★', '☎', '⚠', '☯', '♨', '♻'].map(i => ({ name: i, value: i }))
 
-export const Card = ({ action, i, save, remove, sort }) => {
+export const Card = ({ action, i, save, remove, sort, store }) => {
   return Section({ style: CARD }, [
     Button({
       label: '×',
@@ -21,7 +23,7 @@ export const Card = ({ action, i, save, remove, sort }) => {
     }),
 
     Input({
-      label: 'Title',
+      label: '✏️Title',
       placeholder: 'Run',
       value: action.title,
       onChange: value => { save(i, 'title', value) },
@@ -30,7 +32,7 @@ export const Card = ({ action, i, save, remove, sort }) => {
     Hr(),
 
     xSelect({
-      label: 'Icon',
+      label: '🖼️ Icon',
       options: ICONS,
       value: action.icon,
       onChange: value => { save(i, 'icon', value) },
@@ -39,7 +41,7 @@ export const Card = ({ action, i, save, remove, sort }) => {
     Hr(),
 
     Input({
-      label: 'URL',
+      label: '🔗 URL',
       placeholder: 'https://api.url.com',
       value: action.url || 'https://',
       onChange: value => { save(i, 'url', value) },
@@ -48,7 +50,7 @@ export const Card = ({ action, i, save, remove, sort }) => {
     Hr(),
 
     xSelect({
-      label: 'Method',
+      label: '⚙️ Method',
       options: METHODS,
       multiple: false,
       value: action.method,
@@ -58,7 +60,7 @@ export const Card = ({ action, i, save, remove, sort }) => {
     Hr(),
 
     Input({
-      label: 'Headers',
+      label: '👤 Headers',
       placeholder: 'Authorization=Token\nAnother header=value',
       value: action.headers,
       multiline: true,
@@ -69,12 +71,16 @@ export const Card = ({ action, i, save, remove, sort }) => {
     Hr(),
 
     Input({
-      label: 'Body',
+      label: '📄 Body',
       placeholder: 'key=value',
       value: action.body,
       multiline: true,
       rows: 3,
       onChange: value => { save(i, 'body', value) },
-    })
+    }),
+
+    Hr(),
+    Response({ action, i, save }),
+    Runner(action, store),
   ])
 }

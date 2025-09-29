@@ -10,7 +10,7 @@ export const xSelect = ({ value = [], options = [], label, ...props }) => {
       style: {
         ...INPUT_STYLE,
         width: 'fit-content',
-        padding: '5px 16px',
+        padding: '1px 16px',
       }
     }, [
       Select({ value, options, ...props }),
@@ -25,5 +25,5 @@ const VALUE = {
   left: '16px',
   pointerEvents: 'none',
   fontWeight: '400',
-  bottom: '15px',
+  bottom: '8px',
 }
