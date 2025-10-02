@@ -18,21 +18,39 @@ const style = {
   marginTop: '10px',
 }
 
-export const Runner = ({ title, url, method, headers, body, successKey, errorKey }, store) => {
-  const onClick = async () => {
-    const response = await fetch(url, {
-      method,
-      // headers: Object.fromEntries(headers.split('\n').map(line => line.split('=').map(s => s.trim()))),
-      body,
-    })
-    store.result = await response.text()
-    setTimeout(() => {
-      store.result = null
-    }, 2000)
+const truncate = (text, len = 100) => (text.length > len) ? `${text.substring(0, len)}…` : text
+
+export const Runner = ({ title, url, method, headers, body, json, successKey, errorKey }, store) => {
+  const clearResult = () => store.result = null
+  const extract = (response, key) => {
+    return key.split('.').reduce((value, key) => { return value?.[key] }, response)
   }
 
-  const label = `▶️ Test Endpoint ${title}`
-  console.log(store.result)
+  const onClick = async () => {
+    try {
+      const response = await fetch(url, {
+        method,
+        // headers: Object.fromEntries(headers.split('\n').map(line => line.split('=').map(s => s.trim()))),
+        body,
+      })
+      const label = response.ok ? '✅ ' : '❌ '
+      const key = response.ok ? successKey : errorKey
+      if (json) {
+        console.log('Parsing JSON response')
+        const res = extract(await response.json(), key)
+        console.log(res)
+        store.result = truncate(`${label} ${res}`)
+      } else {
+        store.result = truncate(`${label} ${await response.text()}`)
+      }
+    } catch (error) {
+      store.result = `Fetch Error. Verify you entered correct data: ${JSON.stringify(error)}`
+    } finally {
+      setTimeout(clearResult, 2000)
+    }
+  }
+
+  const label = `▶️ Test ${title}`
 
   return View({}, [
     Button({ label, style, onClick }),

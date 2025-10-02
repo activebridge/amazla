@@ -1,27 +1,27 @@
 import { Input } from './input.js'
 
-export const Response = ({ action, i, save }) => {
+export const Response = ({ action: { json, successKey, errorKey }, i, save }) => {
   return View({}, [
     Toggle({
       label: '✂️ Parse JSON response',
-      value: action.json,
+      value: json,
       onChange: value => { save(i, 'json', value) },
     }),
 
-    action.json && View({}, [
+    json && View({}, [
       Text({ paragraph: true, style: SMALL }, "Use dot notation to navigate the JSON structure."),
       Input({
         label: '✅ Success Key',
         placeholder: 'data.0.result',
-        value: action.key,
-        onChange: value => { save(i, 'success_key', value) },
+        value: successKey,
+        onChange: value => { save(i, 'successKey', value) },
       }),
 
       Input({
         label: '❌ Error Key',
         placeholder: 'data.error.message',
-        value: action.key,
-        onChange: value => { save(i, 'error_key', value) },
+        value: errorKey,
+        onChange: value => { save(i, 'errorKey', value) },
       }),
     ])
   ])
