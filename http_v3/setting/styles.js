@@ -22,6 +22,7 @@ export const MAIN = {
   overflowY: "auto",
   maxHeight: "100vh",
   padding: '5%',
+  maxWidth: '500px',
 }
 
 export const CARD = {
@@ -38,6 +39,7 @@ export const CARD = {
   borderRadius: "20px",
   border: "1px solid rgba(255, 255, 255, 0.3)",
   background: "rgba(255, 255, 255, 0.35)",
+  width: "100%",
 }
 
 export const BUTTON = {

@@ -8,25 +8,25 @@ import { Runner } from './runner.js'
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map(m => ({ name: m, value: m }))
 const ICONS = ['▶', '★', '☎', '⚠', '☯', '♨', '♻'].map(i => ({ name: i, value: i }))
 
-export const Card = ({ action, i, save, remove, sort, store }) => {
+export const Card = ({ action, store }) => {
   return Section({ style: CARD }, [
     Button({
       label: '×',
       style: REMOVE_BUTTON,
-      onClick: () => { remove(i) }
+      onClick: () => { action.delete() }
     }),
 
     Button({
       label: '↑',
       style: SORT_BUTTON,
-      onClick: () => { sort && sort(i) }
+      onClick: () => { action.moveUp() }
     }),
 
     Input({
       label: '✏️Title',
       placeholder: 'Run',
       value: action.title,
-      onChange: value => { save(i, 'title', value) },
+      onChange: value => { action.title = value },
     }),
 
     Hr(),
@@ -35,7 +35,7 @@ export const Card = ({ action, i, save, remove, sort, store }) => {
       label: '🖼️ Icon',
       options: ICONS,
       value: action.icon,
-      onChange: value => { save(i, 'icon', value) },
+      onChange: value => { action.icon = value },
     }),
 
     Hr(),
@@ -43,8 +43,8 @@ export const Card = ({ action, i, save, remove, sort, store }) => {
     Input({
       label: '🔗 URL',
       placeholder: 'https://api.url.com',
-      value: action.url || 'https://',
-      onChange: value => { save(i, 'url', value) },
+      value: action.url,
+      onChange: value => { action.url = value },
     }),
 
     Hr(),
@@ -54,7 +54,7 @@ export const Card = ({ action, i, save, remove, sort, store }) => {
       options: METHODS,
       multiple: false,
       value: action.method,
-      onChange: value => { save(i, 'method', value) },
+      onChange: value => { action.method = value },
     }),
 
     Hr(),
@@ -65,7 +65,7 @@ export const Card = ({ action, i, save, remove, sort, store }) => {
       value: action.headers,
       multiline: true,
       rows: 3,
-      onChange: value => { save(i, 'headers', value) },
+      onChange: value => { action.headers = value },
     }),
 
     Hr(),
@@ -76,11 +76,11 @@ export const Card = ({ action, i, save, remove, sort, store }) => {
       value: action.body,
       multiline: true,
       rows: 3,
-      onChange: value => { save(i, 'body', value) },
+      onChange: value => { action.body = value },
     }),
 
     Hr(),
-    Response({ action, i, save }),
+    Response(action),
     Runner(action, store),
   ])
 }

@@ -26,4 +26,5 @@ const VALUE = {
   pointerEvents: 'none',
   fontWeight: '400',
   bottom: '7px',
+  letterSpacing: '0.00938em',
 }

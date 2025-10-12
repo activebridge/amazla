@@ -1,33 +1,22 @@
-export const initStore = settingStorage => {
+import { Actions } from './models/action.js'
+import { Config } from './models/config.js'
+
+let resultTimeout
+
+export const initStore = settingsStorage => {
   return {
-    get actions() {
-      return JSON.parse(settingStorage.getItem('actions') || '[{}]')
-    },
-
-    get settings() {
-      return JSON.parse(settingStorage.getItem('settings') || '{}')
-    },
-
-    set settings(value) {
-      this.settings
-      settingStorage.setItem('settings', JSON.stringify(value))
-      return value
-    },
-
-    set output(value) {
-      const settings = this.settings
-      settings.output = value
-      this.settings = settings
-    },
+    get actions() { return new Actions(settingsStorage) },
+    get config() { return new Config(settingsStorage) },
 
     set result(value) {
-      settingStorage.setItem('result', value)
-      setTimeout(() => { settingStorage.removeItem('result') }, 3000)
+      settingsStorage.setItem('result', value)
+      clearTimeout(resultTimeout)
+      resultTimeout = setTimeout(() => { settingsStorage.removeItem('result') }, 3000)
       return value
     },
 
     get result() {
-      return settingStorage.getItem('result')
+      return settingsStorage.getItem('result')
     }
   }
 }
