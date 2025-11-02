@@ -4,13 +4,15 @@ class Config {
   }
 
   get data() { return JSON.parse(this.settingsStorage.getItem('config') || '{}') }
-  get output() { return this.data.output }
+  get output() { return this.data.output || 'toast' }
   get exit() { return this.data.exit || false }
   get awake() { return this.data.awake || false }
+  get buttons() { return this.data.buttons || 1 }
 
   set output(value) { return this.update('output', value) }
   set exit(value) { return this.update('exit', value) }
   set awake(value) { return this.update('awake', value) }
+  set buttons(value) { return this.update('buttons', value) }
 
   update(name, value) {
     const data = this.data

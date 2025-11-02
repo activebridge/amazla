@@ -4,7 +4,7 @@ import { redraw, deleteWidget } from '@zos/ui'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 // end v1 UI
 
-const { width, height, screenShape } = getDeviceInfo()
+export const { width, height, screenShape } = getDeviceInfo()
 // const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
 
 let widgets = []
@@ -20,7 +20,7 @@ export const page = (x = 0, y = 0) => {
   return page
 }
 
-const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 18 }) => {
+const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0 }) => {
   return {
     x: Math.floor(((width - w) / 2) + x),
     y: Math.floor(((bar + height - h) / 2) + y),

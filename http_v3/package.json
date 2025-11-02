@@ -1,5 +1,5 @@
 {
-  "name": "helloworld",
+  "name": "http",
   "version": "1.0.0",
   "description": "",
   "main": "app.js",
@@ -12,6 +12,7 @@
     "@zeppos/device-types": "^3.0.0"
   },
   "dependencies": {
+    "@silver-zepp/easy-storage": "^2.0.2",
     "@zeppos/zml": "^0.0.9"
   }
 }

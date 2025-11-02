@@ -23,7 +23,7 @@
       "minVersion": "3.0"
     }
   },
-  "debug": false,
+  "debug": true,
   "targets": {
     "gt": {
       "module": {
@@ -31,6 +31,9 @@
           "pages": [
             "page/gt/home/index.page"
           ]
+        },
+        "app-side": {
+          "path": "app-side/index"
         },
         "setting": {
           "path": "setting/index"

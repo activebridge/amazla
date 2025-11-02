@@ -1,10 +1,17 @@
-App({
-  globalData: {},
-  onCreate(options) {
-    console.log("app on create invoke");
-  },
+import { BaseApp } from '@zeppos/zml/base-app'
+import { log as Logger } from '@zos/utils'
 
-  onDestroy(options) {
-    console.log("app on destroy invoke");
-  },
-});
+const logger = Logger.getLogger('http')
+
+App(
+  BaseApp({
+    globalData: {},
+    onCreate() {
+      logger.log('app onCreate invoked')
+    },
+
+    onDestroy() {
+      logger.log('app onDestroy invoked')
+    }
+  })
+)
