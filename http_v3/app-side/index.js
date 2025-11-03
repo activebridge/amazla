@@ -1,6 +1,8 @@
 import { BaseSideService } from '@zeppos/zml/base-side'
 import { settingsLib } from '@zeppos/zml/base-side'
 
+const truncate = (text, len = 200) => (text.length > len) ? `${text.substring(0, len)}…` : text
+
 const store = {
   get actions() {
     return JSON.parse(settingsLib.getItem('actions') || '[]')
@@ -42,7 +44,7 @@ async function fetchData(res, i) {
     const key = response.ok ? action.successKey : action.errorKey
     const body = action.json ? extract(await response.json(), key) : await response.text()
 
-    res(null, { result: { body, status: response.status } })
+    res(null, { result: { body: truncate(body), status: response.status } })
   } catch (error) {
     res(null, { result: { body: 'Invalid request details', status: 0 } })
   }

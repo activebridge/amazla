@@ -11,7 +11,7 @@ Page(
   BasePage({
     state: {
       settings: {
-        actions: [{}],
+        actions: [],
         config: {
           output: 'toast',
           awake: false,
