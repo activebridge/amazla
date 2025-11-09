@@ -1,24 +1,25 @@
 
-import { rect, width as w, height as h, img, circle, text, button } from "./../../../../pages/ui.js";
+import { rect, width as w, height as h, img, circle, text, button, page } from "./../../../../pages/ui.js";
 import { event, prop } from '@zos/ui'
 import { showToast } from '@zos/interaction'
 
-let page = null
+let basePage = null
 
-export const Slide = (p, actions = [], index = 0) => {
-  page = p
-  // actions.map((action, i) => {
-  //   QuarterButton(action, i, index)
-  // })
-  layout[actions.length - 1](actions, index)
+export const Slide = (p, actions = [], index = 0, i = 0) => {
+  basePage = p
+  console.log('actions.length', actions.length)
+  const slide = page(0, i)
+  const view = layout[actions.length - 1]
+  console.log(view)
+  view(actions, index, slide)
 }
 
 const onClick = (i) => {
-  page.fetch(i)
+  basePage.fetch(i)
 }
 
-const Single = (actions, index) => {
-  img({ src: 'singleBg.png' })
+const Single = (actions, index, group) => {
+  img({ src: 'singleBg.png', w: w - 40, h: h - 40 }, group)
 
   const props = [
     { w, h },
@@ -29,14 +30,14 @@ const Single = (actions, index) => {
   ]
 
   actions.map((action, i) => {
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } })
+    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
 
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘' }).setEnable(false)
+    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘' }, group).setEnable(false)
   })
 }
 
-const Double = (actions, index) => {
-  img({ src: 'doubleBg.png' })
+const Double = (actions, index, group) => {
+  img({ src: 'doubleBg.png' }, group)
 
   const props = [
     { y: -w/4 - 14, w, h: w/2 },
@@ -49,14 +50,14 @@ const Double = (actions, index) => {
   ]
 
   actions.map((action, i) => {
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } })
+    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
 
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }).setEnable(false)
+    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
   })
 }
 
-const Triple = (actions, index) => {
-  img({ src: 'tripleBg.png' })
+const Triple = (actions, index, group) => {
+  img({ src: 'tripleBg.png' }, group)
 
   const props = [
     { x: -w/4 - 10, y: -w/4 -10, w: w/2, h: w/2 },
@@ -71,27 +72,15 @@ const Triple = (actions, index) => {
   ]
 
   actions.map((action, i) => {
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } })
+    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
 
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }).setEnable(false)
+    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
   })
 }
 
 const Quad = (actions, index) => {
-  img({ src: 'quadBg.png' })
-  actions.map((action, i) => {
-    QuarterButton(action, i, index)
-  })
-}
+  img({ src: 'quadBg.png' }, group)
 
-const layout = [
-  Single,
-  Double,
-  Triple,
-  Quad,
-]
-
-const QuarterButton = (action, i, index) => {
   const props = [
     { x: -w/4 - 10, y: -w/4 -10 },
     { x: w/4 + 10, y: -w/4 -10 },
@@ -106,8 +95,17 @@ const QuarterButton = (action, i, index) => {
     { x: -w/5, y: w/5 },
   ]
 
-  button({...props[i], text: '', src: 'btnBg', w: w/2, h: w/2, radius: 10, click_func: () => { onClick(i + index) } })
-  // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
+  actions.map((action, i) => {
+    button({...props[i], text: '', src: 'btnBg', w: w/2, h: w/2, radius: 10, click_func: () => { onClick(i + index) } }, group)
+    // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
 
-  text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }).setEnable(false)
+    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
+  })
 }
+
+const layout = [
+  Single,
+  Double,
+  Triple,
+  Quad,
+]

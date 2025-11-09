@@ -16,7 +16,7 @@ AppSettingsPage({
         H1('⚙️ Settings'),
         Config(config),
         H1('🌎 Actions'),
-        actions.all.map(action => { return Card({ action, store }) }),
+        actions.all.map((action, index) => { return Card({ action, index, store }) }),
 
         Button({
           label: '+',

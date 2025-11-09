@@ -17,6 +17,15 @@ export const initStore = settingsStorage => {
 
     get result() {
       return settingsStorage.getItem('result')
-    }
+    },
+
+    set test(value) {
+      settingsStorage.setItem('test', value)
+      return value
+    },
+
+    get test() {
+      return settingsStorage.getItem('test')
+    },
   }
 }

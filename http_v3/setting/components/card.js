@@ -8,7 +8,7 @@ import { Runner } from './runner.js'
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map(m => ({ name: m, value: m }))
 const ICONS = ['▶', '★', '☎', '⚠', '☯', '♨', '♻'].map(i => ({ name: i, value: i }))
 
-export const Card = ({ action, store }) => {
+export const Card = ({ action, index, store }) => {
   return Section({ style: CARD }, [
     Button({
       label: '×',
@@ -81,6 +81,6 @@ export const Card = ({ action, store }) => {
 
     Hr(),
     Response(action),
-    Runner(action, store),
+    Runner(action, index, store),
   ])
 }

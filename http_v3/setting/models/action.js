@@ -60,6 +60,7 @@ class Actions {
   constructor(settingsStorage) {
     this.settingsStorage = settingsStorage
     const items = JSON.parse(settingsStorage.getItem('actions') || '[]')
+    this.data = items
     this.all = items.map((_, i) => new Action(this.settingsStorage, i))
   }
 

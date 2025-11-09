@@ -22,10 +22,15 @@ Page(
     },
     render() {
       const { actions, config: { buttons } } = this.state.settings
+      let index = 0
+
       UI.reset()
-      for(let i=0; i<actions.length; i += buttons) {
+      for(let i = 0; i < actions.length; i += buttons) {
+
         const chunk = actions.slice(i, i + buttons)
-        Slide(this, chunk, i)
+        Slide(this, chunk, i, index)
+        console.log('render slide index:', index)
+        index += 1
       }
     },
 

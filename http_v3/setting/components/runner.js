@@ -18,42 +18,10 @@ const style = {
   wordBreak: 'break-all',
 }
 
-const truncate = (text, len = 100) => (text.length > len) ? `${text.substring(0, len)}…` : text
-
-const parse = str => {
-  try {
-    const matches = [...str.matchAll(/^(?<key>.*)=(?<value>.*)$/gm)]
-    const pairs = matches.reduce((object, { groups: { key, value } }) => {
-      object[key] = value
-      return object
-    }, {})
-    return pairs
-  } catch(error) {
-    return { Error: error }
-  }
-}
-
-export const Runner = ({ title, url, method, headers, body, json, successKey, errorKey }, store) => {
-  const extract = (response, key) => {
-    if (!key) return response
-    return key.split('.').reduce((value, key) => { return value?.[key] }, response)
-  }
-
+export const Runner = ({ title }, index, store) => {
   const onClick = async () => {
     store.result = '⏳ Running…'
-    try {
-      const response = await fetch(url, {
-        method,
-        headers: parse(headers),
-        body: method == 'GET' ? null : JSON.stringify(parse(body)),
-      })
-      const label = response.ok ? '✅' : '❌'
-      const key = response.ok ? successKey : errorKey
-      const res = JSON.stringify(json ? extract(await response.json(), key) : await response.text())
-      store.result = truncate(`${label} | ${response.status} ➜ ${res}`)
-    } catch (error) {
-      store.result = `❌ Invalid request details ${error}`
-    }
+    store.test = index
   }
 
   const label = `▶️ Test ${title}`
