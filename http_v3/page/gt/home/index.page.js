@@ -1,11 +1,13 @@
 import * as hmUI from "@zos/ui";
 import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
-import UI, { text, img } from "./../../../../pages/ui.js"
+import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
 import { BasePage } from '@zeppos/zml/base-page'
 import { AsyncStorage } from "@silver-zepp/easy-storage"
 import { refreshSettings } from "./utils.js"
 import { showToast } from '@zos/interaction'
+import { notify } from '@zos/notification'
+
 
 Page(
   BasePage({
@@ -29,16 +31,18 @@ Page(
 
         const chunk = actions.slice(i, i + buttons)
         Slide(this, chunk, i, index)
-        console.log('render slide index:', index)
         index += 1
+        hmUI.setScrollView(true, h, index, true)
+        hmUI.setStatusBarVisible(false)
+      // hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
       }
     },
 
     fetch(index) {
-      console.log('fetch invoked')
       this.request({ method: 'FETCH', params: { index } }).then(({ result }) => {
         console.log('fetch result:', JSON.stringify(result))
         showToast({ content: result.body })
+        // notify({ title: 'HTTP', content: result.body, actions: [] })
       })
     },
 
