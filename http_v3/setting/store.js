@@ -11,7 +11,7 @@ export const initStore = settingsStorage => {
     set result(value) {
       settingsStorage.setItem('result', value)
       clearTimeout(resultTimeout)
-      resultTimeout = setTimeout(() => { settingsStorage.removeItem('result') }, 3000)
+      resultTimeout = setTimeout(() => { settingsStorage.removeItem('result') }, 5000)
       return value
     },
 

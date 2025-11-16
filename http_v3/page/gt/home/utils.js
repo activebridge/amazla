@@ -9,6 +9,7 @@ export const refreshSettings = (page) => {
       if (result) page.state.settings = result
       page.render()
       AsyncStorage.WriteJson('settings.json', result)
+      console.log(JSON.stringify(result))
       console.log('config saved!')
     }).catch(error => console.log('request error', error))
   })

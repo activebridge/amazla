@@ -27,4 +27,5 @@ const VALUE = {
   fontWeight: '400',
   bottom: '7px',
   letterSpacing: '0.00938em',
+  fontFamily: "Nerd,Circular,Helvetica,Arial,sans-serif",
 }

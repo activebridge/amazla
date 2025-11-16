@@ -13,7 +13,7 @@ Page(
   BasePage({
     state: {
       settings: {
-        actions: [],
+        actions: [{ title: 'Loading...' }],
         config: {
           output: 'toast',
           awake: false,
@@ -48,6 +48,7 @@ Page(
 
     build() {
       // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
+      text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
       this.render()
       refreshSettings(this)
     },

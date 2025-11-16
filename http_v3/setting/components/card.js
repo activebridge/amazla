@@ -6,7 +6,14 @@ import { Response } from './response.js'
 import { Runner } from './runner.js'
 
 const METHODS = ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map(m => ({ name: m, value: m }))
-const ICONS = ['▶', '★', '☎', '⚠', '☯', '♨', '♻'].map(i => ({ name: i, value: i }))
+
+const ICONS = [
+  '•', '★', '☆', '☉', '☏', '☜', '☞', '☟', '♡', '♢', '♤', '♧', '♪',
+  '♫', '♬', '♲', '♳', '♴', '♵', '♶', '♷', '♸', '♹',
+  '♺', '♼', '♽', '✓', '✚', '✽', '℻', '☖', '☗',
+  '✿', '❀', '❖', '❶', '❷', '❸', '❹', '❺', '❻', '❼',
+  '❽', '❾', '❿', '℀', '℃', '℉', 'Ω', '℧', 'ℵ',
+].map(i => ({ name: i, value: i }))
 
 export const Card = ({ action, index, store }) => {
   return Section({ style: CARD }, [
@@ -34,6 +41,7 @@ export const Card = ({ action, index, store }) => {
     xSelect({
       label: '🖼️ Icon',
       options: ICONS,
+      multiple: false,
       value: action.icon,
       onChange: value => { action.icon = value },
     }),

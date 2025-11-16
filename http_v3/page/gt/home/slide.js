@@ -22,12 +22,17 @@ const Single = (actions, index, group) => {
     { w, h },
   ]
 
-  const textProps = [
+  const iconProps = [
     { w, h, text_size: 120 },
   ]
 
+  const textProps = [
+    { w: w - 140, h, text_size: 40 },
+  ]
+
   actions.map((action, i) => {
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘' }, group)
+    text({ ...iconProps[i], w: w/2, text: action.icon }, group).setEnable(false)
+    text({ ...textProps[i], text: action.title || '*' }, group).setEnable(false)
     button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
   })
 }
@@ -41,13 +46,19 @@ const Double = (actions, index, group) => {
   ]
 
   const textProps = [
+    { y: -w/5 + 34 },
+    { y: w/5 - 34 },
+  ]
+
+  const iconProps = [
     { y: -w/5 - 14 },
     { y: w/5 + 14 },
   ]
 
   actions.map((action, i) => {
+    text({ ...iconProps[i], w: w/2, text: action.icon || '*', text_size: 80, font: 'fonts/nerd.ttf' }, group).setEnable(false)
+    text({ ...textProps[i], w: w - 140, text: action.title || '*', text_size: 40 }, group).setEnable(false)
     button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
   })
 }
 
@@ -60,14 +71,21 @@ const Triple = (actions, index, group) => {
     { y: w/4 + 14, w, h: w/2 },
   ]
 
-  const textProps = [
+  const iconProps = [
     { x: -w/5, y: -w/5 },
     { x: w/5, y: -w/5 },
     { y: w/5 },
   ]
 
+  const textProps = [
+    { x: -w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 30 },
+    { x: w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 30 },
+    { y: w/5 + 50, w: w - 140, text_size: 40 },
+  ]
+
   actions.map((action, i) => {
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
+    text({ ...iconProps[i], w: w/2, text: action.icon || '*', text_size: 80 }, group)
+    text({ ...textProps[i], text: action.title || '*', text_size: 40 }, group).setEnable(false)
     button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
   })
 }
@@ -91,7 +109,7 @@ const Quad = (actions, index) => {
 
   actions.map((action, i) => {
     // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
-    text({ ...textProps[i], w: w/2, text: action.icon || '*⎘', text_size: 80 }, group).setEnable(false)
+    text({ ...textProps[i], w: w/2, text: action.icon || '*', text_size: 80, font: "fonts/nerd-mono.ttf" }, group)
     button({...props[i], text: '', src: 'btnBg', w: w/2, h: w/2, radius: 10, click_func: () => { onClick(i + index) } }, group)
   })
 }
