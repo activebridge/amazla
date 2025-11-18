@@ -1,6 +1,7 @@
 import { CARD } from '../styles.js'
 import { xSelect } from './x_select.js'
 import { Hr } from './hr.js'
+import { Br } from './br.js'
 
 const OUTPUTS = [
   { name: '🍞 Toast', value: 'toast' },
@@ -17,7 +18,6 @@ const BUTTONS = [
 
 export const Config = (config, actions) => {
   const options = actions.map(a => ({ name: a.title, value: a.id }))
-  console.log(actions)
 
   return Section({ style: CARD }, [
     xSelect({
@@ -26,7 +26,7 @@ export const Config = (config, actions) => {
       value: [config.buttons],
       onChange: value => { config.buttons = value },
     }),
-    Hr(),
+    Br(),
     xSelect({
       label: '👀 Result Display',
       options: OUTPUTS,
@@ -39,7 +39,7 @@ export const Config = (config, actions) => {
       value: config.awake,
       onChange: value => { config.awake = value },
     }),
-    Hr(),
+    Br(),
     Toggle({
       label: '🔚 Exit on Success',
       value: config.exit,
@@ -52,18 +52,21 @@ export const Config = (config, actions) => {
       value: config.long,
       onChange: value => { config.long = value },
     }),
+    Br(),
     xSelect({
       label: '🔘 Button Double Press Action',
       options: options,
       value: config.double,
       onChange: value => { config.double = value },
     }),
+    Hr(),
     xSelect({
       label: '⌚ Primary Widget Action',
       options: options,
       value: config.widget,
       onChange: value => { config.widget = value },
     }),
+    Br(),
     xSelect({
       label: '⌚ Secondary Widget Action',
       options: options,

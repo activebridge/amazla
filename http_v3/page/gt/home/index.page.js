@@ -8,7 +8,7 @@ import { AsyncStorage } from "@silver-zepp/easy-storage"
 import { refreshSettings } from "./utils.js"
 import { showToast } from '@zos/interaction'
 import { notify } from '@zos/notification'
-
+import { keepScreenOn } from './screen.js'
 
 Page(
   BasePage({
@@ -24,7 +24,7 @@ Page(
       },
     },
     render() {
-      const { actions, config: { buttons = 2 } } = this.state.settings
+      const { actions, config: { buttons = 4, awake } } = this.state.settings
       let index = 0
 
       UI.reset()
@@ -37,12 +37,15 @@ Page(
         hmUI.setStatusBarVisible(false)
         hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
       }
+
       onKey({
         callback: (key, keyEvent) => {
           console.log(keyEvent)
           return true
         },
       })
+
+      if (awake) keepScreenOn(true)
     },
 
     fetch(id) {
@@ -67,6 +70,7 @@ Page(
 
     onDestroy() {
       // AsyncStorage.SaveAndQuit()
+      if (awake) keepScreenOn(false)
       console.log('page onDestroy invoked')
     },
   }),

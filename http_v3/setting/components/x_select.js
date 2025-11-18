@@ -3,7 +3,7 @@
 import { INPUT_LABEL_STYLE, INPUT_STYLE } from '../styles.js'
 
 export const xSelect = ({ value = [], options = [], label, ...props }) => {
-  const selectedValue = options.filter(o => value.includes(o.value)).map(o => o.name).join(', ')
+  const selectedValue = options.find(o => value.includes(o.value))?.name
   return View({}, [
     label && Text({ style: INPUT_LABEL_STYLE }, label),
     View({
