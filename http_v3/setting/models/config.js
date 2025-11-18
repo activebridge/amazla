@@ -8,7 +8,7 @@ class Config {
   get exit() { return this.data.exit || false }
   get awake() { return this.data.awake || false }
   get buttons() { return this.data.buttons || 1 }
-  get long() { return this.data.long }
+  get press() { return this.data.press }
   get double() { return this.data.double }
   get widget() { return this.data.widget }
   get secondary() { return this.data.secondary }
@@ -17,7 +17,7 @@ class Config {
   set exit(value) { return this.update('exit', value) }
   set awake(value) { return this.update('awake', value) }
   set buttons(value) { return this.update('buttons', value) }
-  set long(value) { return this.update('long', value) }
+  set press(value) { return this.update('press', value) }
   set double(value) { return this.update('double', value) }
   set widget(value) { return this.update('widget', value) }
   set secondary(value) { return this.update('secondary', value) }

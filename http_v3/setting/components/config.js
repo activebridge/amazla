@@ -47,18 +47,18 @@ export const Config = (config, actions) => {
     }),
     Hr(),
     xSelect({
-      label: '🔘 Button Long Press Action',
+      label: '🔘 Button Press Action (Long Press to exit)',
       options: options,
-      value: config.long,
-      onChange: value => { config.long = value },
+      value: config.press,
+      onChange: value => { config.press = value },
     }),
-    Br(),
-    xSelect({
-      label: '🔘 Button Double Press Action',
-      options: options,
-      value: config.double,
-      onChange: value => { config.double = value },
-    }),
+    // Br(),
+    // xSelect({
+    //   label: '🔘 Button Double Press Action',
+    //   options: options,
+    //   value: config.double,
+    //   onChange: value => { config.double = value },
+    // }),
     Hr(),
     xSelect({
       label: '⌚ Primary Widget Action',

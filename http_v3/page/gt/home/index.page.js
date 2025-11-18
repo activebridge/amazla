@@ -1,5 +1,5 @@
 import * as hmUI from "@zos/ui";
-import { onKey, KEY_UP, KEY_EVENT_DOUBLE_CLICK, KEY_EVENT_LONG_PRESS } from '@zos/interaction'
+import { onKey } from '@zos/interaction'
 import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
 import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
@@ -8,13 +8,29 @@ import { AsyncStorage } from "@silver-zepp/easy-storage"
 import { refreshSettings } from "./utils.js"
 import { showToast } from '@zos/interaction'
 import { notify } from '@zos/notification'
+import { exit } from '@zos/router'
 import { keepScreenOn } from './screen.js'
+import { keyListener, crownListener } from './keys.js'
+
+let isBusy = false
+let widgets = []
+let currentFocus = -1
+let app = null
+
+const focus = (i) => {
+  currentFocus += i
+  if (currentFocus >= widgets.length) currentFocus = 0
+  if (currentFocus < 0) currentFocus = widgets.length - 1
+
+  widgets.map(w => w.setProperty(hmUI.prop.VISIBLE, false))
+  widgets[currentFocus].setProperty(hmUI.prop.VISIBLE, true)
+}
 
 Page(
   BasePage({
     state: {
       settings: {
-        actions: [{ title: 'Loading...' }],
+        actions: [],
         config: {
           output: 'toast',
           awake: false,
@@ -26,34 +42,44 @@ Page(
     render() {
       const { actions, config: { buttons = 4, awake } } = this.state.settings
       let index = 0
+      widgets = []
+      currentFocus = -1
 
       UI.reset()
       for(let i = 0; i < actions.length; i += buttons) {
 
         const chunk = actions.slice(i, i + buttons)
-        Slide(this, chunk, i, index)
+        const slide = Slide(this, chunk, i, index)
+        console.log('Slide created for actions:', JSON.stringify(slide))
+        widgets = widgets.concat(slide)
         index += 1
-        hmUI.setScrollView(true, h, index, true)
-        hmUI.setStatusBarVisible(false)
-        hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
       }
-
-      onKey({
-        callback: (key, keyEvent) => {
-          console.log(keyEvent)
-          return true
-        },
-      })
+      hmUI.setScrollView(true, h, index, true)
+      hmUI.setStatusBarVisible(false)
+      hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
 
       if (awake) keepScreenOn(true)
+      keyListener(focus, this.execFocus)
     },
 
     fetch(id) {
+      if (isBusy) return showToast({ content: 'Busy...' })
+      isBusy = true
+      const action = this.state.settings.actions.find(a => a.id === String(id))
+      showToast({ content:  `Running ${action.title}` })
       this.request({ method: 'FETCH', params: { id } }).then(({ result }) => {
+        isBusy = false
         console.log('fetch result:', JSON.stringify(result))
         showToast({ content: result.body })
+        if (this.state.settings.config.exit && result.success) setTimeout(() => exit(), 2000)
         // notify({ title: 'HTTP', content: result.body, actions: [] })
       })
+    },
+
+    execFocus() {
+      console.log('execFocus', currentFocus)
+      console.log('action', app.state.settings.actions[currentFocus])
+      app.fetch(app.state.settings.actions[currentFocus].id)
     },
 
     build() {
@@ -64,6 +90,7 @@ Page(
     },
 
     onInit() {
+      app = this
       // const db = DB(this)
       // logger.log(JSON.stringify(this.state))
     },

@@ -1,11 +1,12 @@
 
-import { pauseDropWristScreenOff, pausePalmScreenOff, setWakeUpRelaunch, resetDropWristScreeOff, resetPalmScreenOff } from '@zos/display'
+import { pauseDropWristScreenOff, pausePalmScreenOff, setWakeUpRelaunch, resetDropWristScreeOff, resetPalmScreenOff, setPageBrightTime } from '@zos/display'
 
 export const keepScreenOn = (enable = true) => {
   if (enable) {
     pauseDropWristScreenOff(0)
     pausePalmScreenOff(0)
     setWakeUpRelaunch(true)
+    setPageBrightTime(60000)
   } else {
     resetDropWristScreeOff()
     resetPalmScreenOff()
