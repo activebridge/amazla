@@ -5,6 +5,7 @@ class Action {
     this.data = JSON.parse(settingsStorage.getItem('actions') || '[]')[i] || {}
   }
 
+  get id() { return this.data.id }
   get title() { return this.data.title }
   get icon() { return this.data.icon || '▶' }
   get url() { return this.data.url }

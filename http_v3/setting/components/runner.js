@@ -18,10 +18,10 @@ const style = {
   wordBreak: 'break-all',
 }
 
-export const Runner = ({ title }, index, store) => {
+export const Runner = ({ title, id }, store) => {
   const onClick = async () => {
     store.result = '⏳ Running…'
-    store.test = index
+    store.test = String(id)
   }
 
   const label = `▶️ Test ${title}`

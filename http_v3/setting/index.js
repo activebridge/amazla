@@ -16,14 +16,14 @@ AppSettingsPage({
       View({ style: MAIN, onClick: loadFont }, [
 
         H1('⚙️ Settings'),
-        Config(config),
+        Config(config, actions.data),
         H1('🌎 Actions'),
         actions.all.map((action, index) => { return Card({ action, index, store }) }),
 
         Button({
           label: '+',
           style: BUTTON,
-          onClick: () => { actions.create({ title: "Test" }) }
+          onClick: () => { actions.create({ title: "Test", id: String(Date.now()) }) }
         }),
       ]),
 

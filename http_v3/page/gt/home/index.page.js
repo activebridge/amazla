@@ -1,4 +1,5 @@
 import * as hmUI from "@zos/ui";
+import { onKey, KEY_UP, KEY_EVENT_DOUBLE_CLICK, KEY_EVENT_LONG_PRESS } from '@zos/interaction'
 import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
 import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
@@ -23,7 +24,7 @@ Page(
       },
     },
     render() {
-      const { actions, config: { buttons } } = this.state.settings
+      const { actions, config: { buttons = 2 } } = this.state.settings
       let index = 0
 
       UI.reset()
@@ -34,12 +35,18 @@ Page(
         index += 1
         hmUI.setScrollView(true, h, index, true)
         hmUI.setStatusBarVisible(false)
-      // hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
+        hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
       }
+      onKey({
+        callback: (key, keyEvent) => {
+          console.log(keyEvent)
+          return true
+        },
+      })
     },
 
-    fetch(index) {
-      this.request({ method: 'FETCH', params: { index } }).then(({ result }) => {
+    fetch(id) {
+      this.request({ method: 'FETCH', params: { id } }).then(({ result }) => {
         console.log('fetch result:', JSON.stringify(result))
         showToast({ content: result.body })
         // notify({ title: 'HTTP', content: result.body, actions: [] })
@@ -48,7 +55,7 @@ Page(
 
     build() {
       // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
-      text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
+      // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
       this.render()
       refreshSettings(this)
     },

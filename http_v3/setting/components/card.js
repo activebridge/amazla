@@ -89,6 +89,6 @@ export const Card = ({ action, index, store }) => {
 
     Hr(),
     Response(action),
-    Runner(action, index, store),
+    Runner(action, store),
   ])
 }

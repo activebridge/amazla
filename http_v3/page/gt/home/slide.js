@@ -23,18 +23,14 @@ const Single = (actions, index, group) => {
   ]
 
   const iconProps = [
-    { w, h, text_size: 120 },
+    { w, h, text_size: 120, y: -20 },
   ]
 
   const textProps = [
-    { w: w - 140, h, text_size: 40 },
+    { w: w - 140, h, text_size: 40, y: 60, color: 0xC0C0C0 },
   ]
 
-  actions.map((action, i) => {
-    text({ ...iconProps[i], w: w/2, text: action.icon }, group).setEnable(false)
-    text({ ...textProps[i], text: action.title || '*' }, group).setEnable(false)
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
-  })
+  renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Double = (actions, index, group) => {
@@ -46,20 +42,16 @@ const Double = (actions, index, group) => {
   ]
 
   const textProps = [
-    { y: -w/5 + 34 },
-    { y: w/5 - 34 },
+    { y: -w/5 + 40, w: w - 140, text_size: 40, color: 0xC0C0C0 },
+    { y: w/5 - 50, w: w - 140, text_size: 40, color: 0xC0C0C0 },
   ]
 
   const iconProps = [
-    { y: -w/5 - 14 },
-    { y: w/5 + 14 },
+    { y: -w/5 - 20, w: w/2, text_size: 80 },
+    { y: w/5 + 20, w: w/2, text_size: 80 },
   ]
 
-  actions.map((action, i) => {
-    text({ ...iconProps[i], w: w/2, text: action.icon || '*', text_size: 80, font: 'fonts/nerd.ttf' }, group).setEnable(false)
-    text({ ...textProps[i], w: w - 140, text: action.title || '*', text_size: 40 }, group).setEnable(false)
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
-  })
+  renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Triple = (actions, index, group) => {
@@ -72,46 +64,45 @@ const Triple = (actions, index, group) => {
   ]
 
   const iconProps = [
-    { x: -w/5, y: -w/5 },
-    { x: w/5, y: -w/5 },
-    { y: w/5 },
+    { x: -w/5, y: -w/5, text_size: 80 },
+    { x: w/5, y: -w/5, text_size: 80 },
+    { y: w/5 + 20, w: w/2, text_size: 80 },
   ]
 
   const textProps = [
-    { x: -w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 30 },
-    { x: w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 30 },
-    { y: w/5 + 50, w: w - 140, text_size: 40 },
+    { x: -w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 20, color: 0xC0C0C0 },
+    { x: w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 20, color: 0xC0C0C0 },
+    { y: w/5 - 50, w: w - 140, text_size: 40, color: 0xC0C0C0 },
   ]
 
-  actions.map((action, i) => {
-    text({ ...iconProps[i], w: w/2, text: action.icon || '*', text_size: 80 }, group)
-    text({ ...textProps[i], text: action.title || '*', text_size: 40 }, group).setEnable(false)
-    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(i + index) } }, group)
-  })
+  renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Quad = (actions, index) => {
   img({ src: 'quadBg.png', w: w - 40, h: h - 40 }, group)
 
   const props = [
-    { x: -w/4 - 10, y: -w/4 -10 },
-    { x: w/4 + 10, y: -w/4 -10 },
-    { x: w/4 + 10, y: w/4 +10 },
-    { x: -w/4 - 10, y: w/4 +10 },
+    { x: -w/4 - 10, y: -w/4 -10, w: w/2, h: w/2 },
+    { x: w/4 + 10, y: -w/4 -10, w: w/2, h: w/2 },
+    { x: w/4 + 10, y: w/4 +10, w: w/2, h: w/2 },
+    { x: -w/4 - 10, y: w/4 +10, w: w/2, h: w/2 },
   ]
 
   const textProps = [
-    { x: -w/5, y: -w/5 },
-    { x: w/5, y: -w/5 },
-    { x: w/5, y: w/5 },
-    { x: -w/5, y: w/5 },
+    { x: -w/5, w: w/4, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { x: w/5, w: w/4, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { x: w/5, w: w/4, y: 40, text_size: 20, color: 0xC0C0C0 },
+    { x: -w/5, w: w/4, y: 40, text_size: 20, color: 0xC0C0C0 },
   ]
 
-  actions.map((action, i) => {
-    // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
-    text({ ...textProps[i], w: w/2, text: action.icon || '*', text_size: 80, font: "fonts/nerd-mono.ttf" }, group)
-    button({...props[i], text: '', src: 'btnBg', w: w/2, h: w/2, radius: 10, click_func: () => { onClick(i + index) } }, group)
-  })
+  const iconProps = [
+    { x: -w/5, y: -w/5, text_size: 80 },
+    { x: w/5, y: -w/5, text_size: 80 },
+    { x: w/5, y: w/5, text_size: 80 },
+    { x: -w/5, y: w/5, text_size: 80 },
+  ]
+
+  renderActions(actions, props, textProps, iconProps, group)
 }
 
 const layout = [
@@ -120,3 +111,11 @@ const layout = [
   Triple,
   Quad,
 ]
+
+const renderActions = (actions, props, textProps, iconProps, group) => {
+  actions.map((action, i) => {
+    text({ ...iconProps[i], w: w/2, text: action.icon || '*' }, group).setEnable(false)
+    text({ ...textProps[i], text: action.title || '*' }, group).setEnable(false)
+    button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(action.id) } }, group)
+  })
+}

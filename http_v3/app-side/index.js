@@ -5,8 +5,9 @@ import { xhr } from './xhr.js'
 
 const store = initStore(settingsLib)
 
-const testRequest = async (index) => {
-  const { body, status, success } = await xhr(store.actions.data[index])
+const testRequest = async (id) => {
+  const action = store.actions.data.find(a => a.id === String(id))
+  const { body, status, success } = await xhr(action)
 
   const label = success ? '✅' : '❌'
   store.result = `${label} | ${status} ➜ ${body}`
@@ -22,7 +23,7 @@ AppSideService(
           res(null, { result: { actions: store.actions.data, config: store.config.data } })
         },
         FETCH: async () => {
-          res(null, { result: await xhr(store.actions.data[req.params.index]) })
+          res(null, { result: await xhr(store.actions.data.find(a => a.id === req.params.id)) })
         },
       }
       methods[req.method]?.()

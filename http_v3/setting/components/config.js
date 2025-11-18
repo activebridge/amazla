@@ -11,10 +11,14 @@ const OUTPUTS = [
 const BUTTONS = [
   { name: '1️⃣', value: 1 },
   { name: '2️⃣', value: 2 },
+  { name: '3️⃣', value: 3 },
   { name: '4️⃣', value: 4 },
 ]
 
-export const Config = (config) => {
+export const Config = (config, actions) => {
+  const options = actions.map(a => ({ name: a.title, value: a.id }))
+  console.log(actions)
+
   return Section({ style: CARD }, [
     xSelect({
       label: '⌚ № of Buttons per Page',
@@ -40,6 +44,31 @@ export const Config = (config) => {
       label: '🔚 Exit on Success',
       value: config.exit,
       onChange: value => { config.exit = value },
+    }),
+    Hr(),
+    xSelect({
+      label: '🔘 Button Long Press Action',
+      options: options,
+      value: config.long,
+      onChange: value => { config.long = value },
+    }),
+    xSelect({
+      label: '🔘 Button Double Press Action',
+      options: options,
+      value: config.double,
+      onChange: value => { config.double = value },
+    }),
+    xSelect({
+      label: '⌚ Primary Widget Action',
+      options: options,
+      value: config.widget,
+      onChange: value => { config.widget = value },
+    }),
+    xSelect({
+      label: '⌚ Secondary Widget Action',
+      options: options,
+      value: config.secondary,
+      onChange: value => { config.secondary = value },
     }),
   ])
 }
