@@ -1,5 +1,4 @@
 import * as hmUI from "@zos/ui";
-import { onKey } from '@zos/interaction'
 import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
 import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
@@ -9,8 +8,9 @@ import { refreshSettings } from "./utils.js"
 import { showToast } from '@zos/interaction'
 import { notify } from '@zos/notification'
 import { exit } from '@zos/router'
+// import { scrollTo } from '@zos/page'
 import { keepScreenOn } from './screen.js'
-import { keyListener, crownListener } from './keys.js'
+import { keyListener } from './keys.js'
 
 let isBusy = false
 let widgets = []
@@ -18,9 +18,16 @@ let currentFocus = -1
 let app = null
 
 const focus = (i) => {
+  const prevFocus = currentFocus
   currentFocus += i
   if (currentFocus >= widgets.length) currentFocus = 0
   if (currentFocus < 0) currentFocus = widgets.length - 1
+  const { state: { settings: { actions, config: { buttons = 4 } } } } = app
+
+  const animate = !(Math.abs(currentFocus - prevFocus) > 1)
+  // scrollTo({ y: -h * Math.floor(currentFocus / buttons), animConfig: { anim_duration: 100 } })
+
+  hmUI.scrollToPage(Math.floor(currentFocus / buttons), animate)
 
   widgets.map(w => w.setProperty(hmUI.prop.VISIBLE, false))
   widgets[currentFocus].setProperty(hmUI.prop.VISIBLE, true)
@@ -56,7 +63,7 @@ Page(
       }
       hmUI.setScrollView(true, h, index, true)
       hmUI.setStatusBarVisible(false)
-      hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
+      // hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
 
       if (awake) keepScreenOn(true)
       keyListener(focus, this.execFocus)
@@ -76,10 +83,10 @@ Page(
       })
     },
 
-    execFocus() {
-      console.log('execFocus', currentFocus)
-      console.log('action', app.state.settings.actions[currentFocus])
-      app.fetch(app.state.settings.actions[currentFocus].id)
+    execFocus(isShortcut = false) {
+      const { state: { settings: { actions, config: { press } } } } = app
+      const action = !isShortcut ? actions[currentFocus] || actions[0] : actions.find(a => a.id === String(press))
+      if (action) app.fetch(action.id)
     },
 
     build() {
