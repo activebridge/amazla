@@ -9,6 +9,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@biomejs/biome": "^2.3.7",
     "@zeppos/device-types": "^3.0.0"
   },
   "dependencies": {

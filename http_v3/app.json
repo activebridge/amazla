@@ -33,6 +33,27 @@
             "page/gt/home/index.page"
           ]
         },
+        "secondary-widget": {
+          "widgets": [
+            {
+              "path": "page/gt/home/widget.js",
+              "icon": "icon.png",
+              "name": "HTTP Widget",
+              "preview": "icon.png",
+              "runtime": { "type": "js" }
+            }
+          ]
+        },
+        "app-widget": {
+          "widgets": [
+            {
+              "path": "page/gt/card",
+              "icon": "icon.png",
+              "name": "HTTP Card",
+              "runtime": { "type": "js" }
+            }
+          ]
+        },
         "app-side": {
           "path": "app-side/index"
         },
@@ -41,12 +62,9 @@
         }
       },
       "platforms": [
-        {
-          "st": "r"
-        },
-        {
-          "st": "s"
-        }
+        { "st": "r" },
+        { "st": "s" },
+        { "st": "b" }
       ],
       "designWidth": 480
     }

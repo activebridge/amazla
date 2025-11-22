@@ -1,16 +1,25 @@
-import { AsyncStorage } from "@silver-zepp/easy-storage"
 import { showToast } from '@zos/interaction'
+import { writeFileSync, readFileSync } from '@zos/fs'
 
-export const refreshSettings = (page) => {
-  AsyncStorage.ReadJson('settings.json', (error, result) => {
-    if (result) page.state.settings = result
-    page.render()
-    page.request({ method: 'SETTINGS' }).then(({ result }) => {
-      if (result) page.state.settings = result
-      page.render()
-      AsyncStorage.WriteJson('settings.json', result)
-      console.log(JSON.stringify(result))
-      console.log('config saved!')
-    }).catch(error => console.log('request error', error))
-  })
+export const localStorage = {
+  get settings() {
+    try {
+      const settings = readFileSync({ path: 'settings.json', options: { encoding: 'utf8' } })
+      return JSON.parse(settings || '{}')
+    } catch (e) {
+      console.log(`ERROR: ${e}`)
+      return {}
+    }
+  },
+
+  set settings(value) {
+    try {
+      writeFileSync({ path: 'settings.json', data: JSON.stringify(value), options: { encoding: 'utf8' } })
+    } catch (e) {
+      console.log(`ERROR: ${e}`)
+    }
+  },
+
+  sync: () => {
+  }
 }

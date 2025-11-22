@@ -3,14 +3,11 @@ import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
 import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
 import { BasePage } from '@zeppos/zml/base-page'
-import { AsyncStorage } from "@silver-zepp/easy-storage"
-import { refreshSettings } from "./utils.js"
+import { localStorage } from "./utils.js"
 import { showToast } from '@zos/interaction'
-import { notify } from '@zos/notification'
-import { exit } from '@zos/router'
-// import { scrollTo } from '@zos/page'
 import { keepScreenOn } from './screen.js'
 import { keyListener } from './keys.js'
+import { response } from './response.js'
 
 let isBusy = false
 let widgets = []
@@ -25,7 +22,6 @@ const focus = (i) => {
   const { state: { settings: { actions, config: { buttons = 4 } } } } = app
 
   const animate = !(Math.abs(currentFocus - prevFocus) > 1)
-  // scrollTo({ y: -h * Math.floor(currentFocus / buttons), animConfig: { anim_duration: 100 } })
 
   hmUI.scrollToPage(Math.floor(currentFocus / buttons), animate)
 
@@ -36,28 +32,20 @@ const focus = (i) => {
 Page(
   BasePage({
     state: {
-      settings: {
-        actions: [],
-        config: {
-          output: 'toast',
-          awake: false,
-          exit: false,
-          buttons: 1,
-        },
-      },
+      settings: localStorage.settings || { actions: [], config: {} },
     },
-    render() {
-      const { actions, config: { buttons = 4, awake } } = this.state.settings
+    render(settings = this.state.settings) {
+      const { actions, config: { buttons = 4, awake } } = settings
       let index = 0
       widgets = []
       currentFocus = -1
+      console.log('Rendering home with settings:', JSON.stringify(settings))
 
       UI.reset()
       for(let i = 0; i < actions.length; i += buttons) {
 
         const chunk = actions.slice(i, i + buttons)
         const slide = Slide(this, chunk, i, index)
-        console.log('Slide created for actions:', JSON.stringify(slide))
         widgets = widgets.concat(slide)
         index += 1
       }
@@ -67,6 +55,7 @@ Page(
 
       if (awake) keepScreenOn(true)
       keyListener(focus, this.execFocus)
+      console.log('RENDER COMPLETE')
     },
 
     fetch(id) {
@@ -75,35 +64,46 @@ Page(
       const action = this.state.settings.actions.find(a => a.id === String(id))
       showToast({ content:  `Running ${action.title}` })
       this.request({ method: 'FETCH', params: { id } }).then(({ result }) => {
-        isBusy = false
-        console.log('fetch result:', JSON.stringify(result))
-        showToast({ content: result.body })
-        if (this.state.settings.config.exit && result.success) setTimeout(() => exit(), 2000)
-        // notify({ title: 'HTTP', content: result.body, actions: [] })
-      })
+        response(result, this.state.settings)
+      }).catch(error => { showToast({ content: `ERROR: ${error}` })
+      }).finally(() => { isBusy = false })
     },
 
     execFocus(isShortcut = false) {
       const { state: { settings: { actions, config: { press } } } } = app
       const action = !isShortcut ? actions[currentFocus] || actions[0] : actions.find(a => a.id === String(press))
-      if (action) app.fetch(action.id)
+      if (action) {
+        app.fetch(action.id)
+      } else {
+        showToast({ content: 'No action assigned' })
+      }
     },
 
     build() {
-      // text({ text: "   ", text_size: 40, font: "fonts/nerd-mono.ttf" });
-      // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
       this.render()
-      refreshSettings(this)
+      this.sync()
     },
 
-    onInit() {
+    sync() {
+      this.request({ method: 'SETTINGS' }).then(({ result }) => {
+        if (!result) return
+        if (JSON.stringify(this.state.settings) === JSON.stringify(result)) return
+
+        this.state.settings = result
+        // setTimeout(() => { this.render() }, 0)
+        this.render()
+        localStorage.settings = result
+        showToast({ content: 'Update' })
+      }).catch(error => showToast({ content: `ERROR: ${error}` }))
+    },
+
+    onInit(params) {
       app = this
-      // const db = DB(this)
-      // logger.log(JSON.stringify(this.state))
+      if (params) this.fetch(params)
+      // this.state.settings = localStorage.settings
     },
 
     onDestroy() {
-      // AsyncStorage.SaveAndQuit()
       if (awake) keepScreenOn(false)
       console.log('page onDestroy invoked')
     },

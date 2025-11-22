@@ -115,12 +115,12 @@ const layout = [
 const renderActions = (actions, props, textProps, iconProps, group) => {
   return actions.map((action, i) => {
     const icon = text({ ...iconProps[i], w: w/2, text: action.icon || 'o' }, group)
-    icon.setEnable(false)
+    icon?.setEnable(false)
     const title = text({ ...textProps[i], text: action.title || '*' }, group)
-    title.setEnable(false)
+    title?.setEnable(false)
     const hi = text({ ...iconProps[i], w: w/2, text_size: iconProps[i].text_size - 6, text: action.icon || 'o', color: 0xD71920 }, group)
-    hi.setEnable(false)
-    hi.setProperty(prop.VISIBLE, false)
+    hi?.setEnable(false)
+    hi?.setProperty(prop.VISIBLE, false)
     btn = button({...props[i], text: '', src: 'btnBg', radius: 10, click_func: () => { onClick(action.id) } }, group)
     return hi
   })
