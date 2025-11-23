@@ -36,7 +36,7 @@
         "secondary-widget": {
           "widgets": [
             {
-              "path": "page/gt/home/widget.js",
+              "path": "page/gt/widget.js",
               "icon": "icon.png",
               "name": "HTTP Widget",
               "preview": "icon.png",

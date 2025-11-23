@@ -16,25 +16,25 @@ const onClick = (i) => {
 }
 
 const Single = (actions, index, group) => {
-  img({ src: 'singleBg.png', w: w - 40, h: h - 40 }, group)
+  img({ src: 'singleBg.png', w, h: w }, group)
 
   const props = [
     { w, h },
   ]
 
   const iconProps = [
-    { w, h, text_size: 120, y: -20 },
+    { w, h, text_size: 120, y: -30 },
   ]
 
   const textProps = [
-    { w: w - 140, h, text_size: 40, y: 60, color: 0xC0C0C0 },
+    { w: w - 100, h, text_size: 40, y: 60, color: 0xC0C0C0 },
   ]
 
   return renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Double = (actions, index, group) => {
-  img({ src: 'doubleBg.png', w: w - 40, h: h - 40 }, group)
+  img({ src: 'doubleBg.png', w, h: w }, group)
 
   const props = [
     { y: -w/4 - 14, w, h: w/2 },
@@ -42,64 +42,64 @@ const Double = (actions, index, group) => {
   ]
 
   const textProps = [
-    { y: -w/5 + 40, w: w - 140, text_size: 40, color: 0xC0C0C0 },
-    { y: w/5 - 50, w: w - 140, text_size: 40, color: 0xC0C0C0 },
+    { y: -50, w: w - 100, text_size: 40, color: 0xC0C0C0 },
+    { y: 50, w: w - 100, text_size: 40, color: 0xC0C0C0 },
   ]
 
   const iconProps = [
-    { y: -w/5 - 20, w: w/2, text_size: 80 },
-    { y: w/5 + 20, w: w/2, text_size: 80 },
+    { y: -110, w: w/2, text_size: 80 },
+    { y: 110, w: w/2, text_size: 80 },
   ]
 
   return renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Triple = (actions, index, group) => {
-  img({ src: 'tripleBg.png', w: w - 40, h: h - 40 }, group)
+  img({ src: 'tripleBg.png', w, h: w }, group)
 
   const props = [
-    { x: -w/4 - 10, y: -w/4 -10, w: w/2, h: w/2 },
-    { x: w/4 + 10, y: -w/4 -10, w: w/2, h: w/2 },
+    { x: -w/4, y: -w/4, w: w/2, h: w/2 },
+    { x: w/4, y: -w/4, w: w/2, h: w/2 },
     { y: w/4 + 14, w, h: w/2 },
   ]
 
   const iconProps = [
-    { x: -w/5, y: -w/5, text_size: 80 },
-    { x: w/5, y: -w/5, text_size: 80 },
-    { y: w/5 + 30, w: w/2, text_size: 80 },
+    { x: -w/4 + 20, y: -w/4, w: w/4, text_size: 80 },
+    { x: w/4 - 20, y: -w/4, w: w/4, text_size: 80 },
+    { y: 110, w: w/2, text_size: 80 },
   ]
 
   const textProps = [
-    { x: -w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 20, color: 0xC0C0C0 },
-    { x: w/5, y: -w/5 + 50, w: w/2 - 80, text_size: 20, color: 0xC0C0C0 },
-    { y: 60, w: w - 140, text_size: 40, color: 0xC0C0C0 },
+    { x: -w/4 + 10, w: w/4 + 50, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { x: w/4 - 10, w: w/4 + 50, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { y: 50, w: w - 100, text_size: 40, color: 0xC0C0C0 },
   ]
 
   return renderActions(actions, props, textProps, iconProps, group)
 }
 
 const Quad = (actions, index) => {
-  img({ src: 'quadBg.png', w: w - 40, h: h - 40 }, group)
+  img({ src: 'quadBg.png', w, h: w }, group)
 
   const props = [
-    { x: -w/4 - 10, y: -w/4 -10, w: w/2, h: w/2 },
-    { x: w/4 + 10, y: -w/4 -10, w: w/2, h: w/2 },
-    { x: w/4 + 10, y: w/4 +10, w: w/2, h: w/2 },
-    { x: -w/4 - 10, y: w/4 +10, w: w/2, h: w/2 },
+    { x: -w/4, y: -w/4, w: w/2, h: w/2 },
+    { x: w/4, y: -w/4, w: w/2, h: w/2 },
+    { x: w/4, y: w/4, w: w/2, h: w/2 },
+    { x: -w/4, y: w/4, w: w/2, h: w/2 },
   ]
 
   const textProps = [
-    { x: -w/5, w: w/4, y: -40, text_size: 20, color: 0xC0C0C0 },
-    { x: w/5, w: w/4, y: -40, text_size: 20, color: 0xC0C0C0 },
-    { x: w/5, w: w/4, y: 40, text_size: 20, color: 0xC0C0C0 },
-    { x: -w/5, w: w/4, y: 40, text_size: 20, color: 0xC0C0C0 },
+    { x: -w/4 + 10, w: w/4 + 50, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { x: w/4 - 10, w: w/4 + 50, y: -40, text_size: 20, color: 0xC0C0C0 },
+    { x: w/4 - 10, w: w/4 + 50, y: 30, text_size: 20, color: 0xC0C0C0 },
+    { x: -w/4 + 10, w: w/4 + 50, y: 30, text_size: 20, color: 0xC0C0C0 },
   ]
 
   const iconProps = [
-    { x: -w/5, y: -w/5, text_size: 80 },
-    { x: w/5, y: -w/5, text_size: 80 },
-    { x: w/5, y: w/5, text_size: 80 },
-    { x: -w/5, y: w/5, text_size: 80 },
+    { x: -w/4 + 20, y: -w/4, w: w/4, text_size: 80 },
+    { x: w/4 - 20, y: -w/4, w: w/4, text_size: 80 },
+    { x: w/4 - 20, y: w/4 - 10, w: w/4, text_size: 80 },
+    { x: -w/4 + 20, y: w/4 - 10, w: w/4, text_size: 80 },
   ]
 
   return renderActions(actions, props, textProps, iconProps, group)

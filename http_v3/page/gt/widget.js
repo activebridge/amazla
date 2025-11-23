@@ -6,23 +6,24 @@ import { localStorage } from './home/utils.js'
 const { w, h, margin = 0 } = getAppWidgetSize()
 const COLORS = [0xAA30BE, 0xFBDf89, 0x8CC9FC, 0x5723B5]
 
-AppWidget({
+SecondaryWidget({
   state: {
     settings: localStorage.settings || { },
   },
 
   onInit() {
-    console.log('ShortCard onInit called')
+    console.log('Widget onInit called')
   },
 
   onResume() {
-    console.log('ShortCard onResume called')
+    console.log('Widget onResume called')
     // this.build()
   },
 
   build() {
     setAppWidgetSize({ h: 140 })
     const { settings: { actions, config: { secondary } } } = localStorage
+    console.log('App widget size:', JSON.stringify(getAppWidgetSize()))
     const firstFourActions = actions.slice(0, 4)
     // const bg = createWidget(widget.IMG, {
     //   x: margin,

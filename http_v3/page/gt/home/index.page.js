@@ -34,8 +34,11 @@ Page(
     state: {
       settings: localStorage.settings || { actions: [], config: {} },
     },
-    render(settings = this.state.settings) {
-      const { actions, config: { buttons = 4, awake } } = settings
+
+    render() {
+      console.log('Rendering home page...')
+      const { actions = [], config: { buttons = 4, awake } = {} } = this.state.settings
+      console.log(`State settings: ${JSON.stringify(this.state.settings)}`)
       let index = 0
       widgets = []
       currentFocus = -1
@@ -97,9 +100,9 @@ Page(
       }).catch(error => showToast({ content: `ERROR: ${error}` }))
     },
 
-    onInit(params) {
+    onInit(id) {
       app = this
-      if (params) this.fetch(params)
+      if (id) this.fetch(id)
       // this.state.settings = localStorage.settings
     },
 

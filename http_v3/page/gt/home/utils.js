@@ -19,7 +19,4 @@ export const localStorage = {
       console.log(`ERROR: ${e}`)
     }
   },
-
-  sync: () => {
-  }
 }
