@@ -28,10 +28,17 @@ export const Config = (config, actions) => {
     }),
     Br(),
     xSelect({
-      label: '👀 Result Display',
+      label: '👀 Result Display (Alert is not available for Widget)',
       options: OUTPUTS,
       value: config.output,
       onChange: value => { config.output = value },
+    }),
+    Hr(),
+    xSelect({
+      label: '🔘 Button Press Action (Long Press to exit)',
+      options: options,
+      value: config.press,
+      onChange: value => { config.press = value },
     }),
     Hr(),
     Toggle({
@@ -45,13 +52,6 @@ export const Config = (config, actions) => {
       value: config.exit,
       onChange: value => { config.exit = value },
     }),
-    Hr(),
-    xSelect({
-      label: '🔘 Button Press Action (Long Press to exit)',
-      options: options,
-      value: config.press,
-      onChange: value => { config.press = value },
-    }),
     // Br(),
     // xSelect({
     //   label: '🔘 Button Double Press Action',
@@ -59,19 +59,5 @@ export const Config = (config, actions) => {
     //   value: config.double,
     //   onChange: value => { config.double = value },
     // }),
-    Hr(),
-    xSelect({
-      label: '⌚ Primary Widget Action',
-      options: options,
-      value: config.widget,
-      onChange: value => { config.widget = value },
-    }),
-    Br(),
-    xSelect({
-      label: '⌚ Secondary Widget Action',
-      options: options,
-      value: config.secondary,
-      onChange: value => { config.secondary = value },
-    }),
   ])
 }

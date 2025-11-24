@@ -10,8 +10,6 @@ class Config {
   get buttons() { return this.data.buttons || 1 }
   get press() { return this.data.press }
   get double() { return this.data.double }
-  get widget() { return this.data.widget }
-  get secondary() { return this.data.secondary }
 
   set output(value) { return this.update('output', value) }
   set exit(value) { return this.update('exit', value) }
@@ -19,8 +17,6 @@ class Config {
   set buttons(value) { return this.update('buttons', value) }
   set press(value) { return this.update('press', value) }
   set double(value) { return this.update('double', value) }
-  set widget(value) { return this.update('widget', value) }
-  set secondary(value) { return this.update('secondary', value) }
 
   update(name, value) {
     const data = this.data

@@ -7,7 +7,7 @@ export const localStorage = {
       const settings = readFileSync({ path: 'settings.json', options: { encoding: 'utf8' } })
       return JSON.parse(settings || '{}')
     } catch (e) {
-      console.log(`ERROR: ${e}`)
+      showToast({ content: `ERROR: ${e}` })
       return {}
     }
   },
@@ -16,7 +16,7 @@ export const localStorage = {
     try {
       writeFileSync({ path: 'settings.json', data: JSON.stringify(value), options: { encoding: 'utf8' } })
     } catch (e) {
-      console.log(`ERROR: ${e}`)
+      showToast({ content: `ERROR: ${e}` })
     }
   },
 }

@@ -1,37 +1,17 @@
-import { createWidget, widget, align, text_style, setAppWidgetSize, getAppWidgetSize, event } from '@zos/ui'
-import { button } from "./../../../pages/ui.js"
-import { push } from '@zos/router'
+import { createWidget, widget, setAppWidgetSize, getAppWidgetSize } from '@zos/ui'
 import { localStorage } from './home/utils.js'
 
 const { w, h, margin = 0 } = getAppWidgetSize()
 const COLORS = [0xAA30BE, 0xFBDf89, 0x8CC9FC, 0x5723B5]
 
 AppWidget({
-  state: {
-    settings: localStorage.settings || { },
-  },
-
-  onInit() {
-    console.log('ShortCard onInit called')
-  },
-
-  onResume() {
-    console.log('ShortCard onResume called')
-    // this.build()
-  },
+  state: { settings: localStorage.settings || {} },
 
   build() {
     setAppWidgetSize({ h: 140 })
-    const { settings: { actions, config: { secondary } } } = localStorage
-    const firstFourActions = actions.slice(0, 4)
-    // const bg = createWidget(widget.IMG, {
-    //   x: margin,
-    //   y: 0,
-    //   w: w,
-    //   h: w/5 + 40,
-    //   src: 'cardBg.png',
-    //   auto_scale: true,
-    // })
+    const { settings: { actions, config: { buttons = 4 } } } = this.state
+    const firstFourActions = actions.slice(0, buttons)
+
     firstFourActions.map((action, index) => {
       createWidget(widget.BUTTON, {
         x: margin + 5 + ((index) * w/firstFourActions.length),
@@ -40,8 +20,6 @@ AppWidget({
         h: 100,
         radius: 40,
         text_size: 60,
-        // normal_scr: 'buttons/_btnBg.png',
-        // press_src: 'buttons/_btnBg.png',
         normal_color: COLORS[index],
         press_color: COLORS[index] - 0x002222,
         text: action.icon,

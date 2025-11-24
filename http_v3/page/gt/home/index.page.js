@@ -1,5 +1,4 @@
 import * as hmUI from "@zos/ui";
-import { TEXT_STYLE } from "zosLoader:./index.page.[pf].layout.js"
 import UI, { text, img, height as h } from "./../../../../pages/ui.js"
 import { Slide } from "./slide.js"
 import { BasePage } from '@zeppos/zml/base-page'
@@ -31,18 +30,13 @@ const focus = (i) => {
 
 Page(
   BasePage({
-    state: {
-      settings: localStorage.settings || { actions: [], config: {} },
-    },
+    state: { settings: localStorage.settings || { actions: [], config: {} } },
 
     render() {
-      console.log('Rendering home page...')
       const { actions = [], config: { buttons = 4, awake } = {} } = this.state.settings
-      console.log(`State settings: ${JSON.stringify(this.state.settings)}`)
       let index = 0
       widgets = []
       currentFocus = -1
-      console.log('Rendering home with settings:', JSON.stringify(settings))
 
       UI.reset()
       for(let i = 0; i < actions.length; i += buttons) {
@@ -58,7 +52,6 @@ Page(
 
       if (awake) keepScreenOn(true)
       keyListener(focus, this.execFocus)
-      console.log('RENDER COMPLETE')
     },
 
     fetch(id) {
@@ -103,12 +96,10 @@ Page(
     onInit(id) {
       app = this
       if (id) this.fetch(id)
-      // this.state.settings = localStorage.settings
     },
 
     onDestroy() {
       if (awake) keepScreenOn(false)
-      console.log('page onDestroy invoked')
     },
   }),
 )

@@ -2,7 +2,6 @@ import { BODY, MAIN, CARD, BUTTON, RAW } from './styles.js'
 import { Card } from './components/card.js'
 import { Config } from './components/config.js'
 import { H1 } from './components/h1.js'
-import { loadFont } from './components/font.js'
 import { initStore } from './store.js'
 
 AppSettingsPage({
@@ -13,7 +12,7 @@ AppSettingsPage({
     const { actions, config } = store
 
     return View({ style: BODY }, [
-      View({ style: MAIN, onClick: loadFont }, [
+      View({ style: MAIN }, [
 
         H1('⚙️ Settings'),
         Config(config, actions.data),
