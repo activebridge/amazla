@@ -29,9 +29,7 @@
     "gt": {
       "module": {
         "page": {
-          "pages": [
-            "page/gt/home/index.page"
-          ]
+          "pages": ["page/gt/home/index.page"]
         },
         "secondary-widget": {
           "widgets": [
@@ -39,7 +37,7 @@
               "path": "page/gt/widget",
               "icon": "icon.png",
               "name": "HTTP Widget",
-              "preview": "icon.png",
+              "preview": "quadBg.png",
               "runtime": { "type": "js" }
             }
           ]
@@ -61,11 +59,7 @@
           "path": "setting/index"
         }
       },
-      "platforms": [
-        { "st": "r" },
-        { "st": "s" },
-        { "st": "b" }
-      ],
+      "platforms": [{ "st": "r" }, { "st": "s" }, { "st": "b" }],
       "designWidth": 480
     }
   },
