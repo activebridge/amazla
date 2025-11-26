@@ -9,21 +9,16 @@ let isBusy = false
 
 SecondaryWidget(
   BasePage({
-    state: { settings: localStorage.settings || { actions: [], config: {} } },
+    state: { settings: localStorage.settings },
 
     onInit() {
-      this.state.settings = localStorage.settings || {
-        actions: [],
-        config: {},
-      }
+      this.state.settings = localStorage.settings
     },
 
     fetch(id) {
       if (isBusy) return showToast({ content: 'Busy...' })
       isBusy = true
-      const action = this.state.settings.actions.find(
-        (a) => a.id === String(id),
-      )
+      const action = this.state.settings.actions.find((a) => a.id === String(id))
       showToast({ content: `Running ${action.title}` })
       this.request({ method: 'FETCH', params: { id } })
         .then(({ result }) => {
@@ -41,7 +36,7 @@ SecondaryWidget(
       const {
         settings: {
           actions,
-          config: { buttons = 4 },
+          config: { buttons },
         },
       } = this.state
       const firstFourActions = actions.slice(0, buttons)

@@ -1,20 +1,15 @@
-import {
-  align,
-  createWidget,
-  getAppWidgetSize,
-  setAppWidgetSize,
-  widget,
-} from '@zos/ui'
+import { push } from '@zos/router'
+import { align, createWidget, getAppWidgetSize, setAppWidgetSize, widget } from '@zos/ui'
 import { localStorage } from './home/utils.js'
 
-const { w, h, margin = 0 } = getAppWidgetSize()
+const { w, margin = 0 } = getAppWidgetSize()
 const COLORS = [0xaa30be, 0xfbdf89, 0x8cc9fc, 0x5723b5]
 
 AppWidget({
-  state: { settings: localStorage.settings || { actions: [], config: {} } },
+  state: { settings: localStorage.settings },
 
   onInit() {
-    this.state.settings = localStorage.settings || { actions: [], config: {} }
+    this.state.settings = localStorage.settings
   },
 
   build() {
@@ -42,7 +37,7 @@ AppWidget({
       return
     }
 
-    firstFourActions.map((action, index) => {
+    firstFourActions.forEach((action, index) => {
       createWidget(widget.BUTTON, {
         x: margin + 5 + (index * w) / firstFourActions.length,
         y: 20,
@@ -52,7 +47,7 @@ AppWidget({
         text_size: 60,
         normal_color: COLORS[index],
         press_color: COLORS[index] - 0x002222,
-        text: action.icon,
+        text: action.icon || '✽',
         click_func: () => {
           push({ url: 'page/gt/home/index.page', params: action.id })
         },

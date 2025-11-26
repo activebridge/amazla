@@ -19,13 +19,10 @@ const focus = (i) => {
   if (currentFocus >= widgets.length) currentFocus = 0
   if (currentFocus < 0) currentFocus = widgets.length - 1
   const {
-    state: {
-      settings: {
-        actions,
-        config: { buttons = 4 },
-      },
+    settings: {
+      config: { buttons = 4 },
     },
-  } = app
+  } = app.state
 
   const animate = !(Math.abs(currentFocus - prevFocus) > 1)
 
@@ -37,11 +34,10 @@ const focus = (i) => {
 
 Page(
   BasePage({
-    state: { settings: localStorage.settings || { actions: [], config: {} } },
+    state: { settings: localStorage.settings },
 
     render() {
-      const { actions = [], config: { buttons = 4, awake } = {} } =
-        this.state.settings
+      const { actions = [], config: { buttons = 4, awake } = {} } = app.state.settings
       let index = 0
       widgets = []
       currentFocus = -1
@@ -70,12 +66,11 @@ Page(
     fetch(id) {
       if (isBusy) return showToast({ content: 'Busy...' })
       isBusy = true
-      const action = this.state.settings.actions.find(
-        (a) => a.id === String(id),
-      )
+      const action = this.state.settings.actions.find((a) => a.id === String(id))
       showToast({ content: `Running ${action.title}` })
       this.request({ method: 'FETCH', params: { id } })
         .then(({ result }) => {
+          console.log('FETCH result:', JSON.stringify(result))
           response(result, this.state.settings)
         })
         .catch((error) => {
@@ -95,9 +90,7 @@ Page(
           },
         },
       } = app
-      const action = !isShortcut
-        ? actions[currentFocus] || actions[0]
-        : actions.find((a) => a.id === String(press))
+      const action = !isShortcut ? actions[currentFocus] || actions[0] : actions.find((a) => a.id === String(press))
       if (action) {
         app.fetch(action.id)
       } else {
@@ -114,14 +107,11 @@ Page(
       this.request({ method: 'SETTINGS' })
         .then(({ result }) => {
           if (!result) return
-          if (JSON.stringify(this.state.settings) === JSON.stringify(result))
-            return
+          if (JSON.stringify(app.state.settings) === JSON.stringify(result)) return
 
-          this.state.settings = result
-          // setTimeout(() => { this.render() }, 0)
-          this.render()
+          app.state.settings = result
+          setTimeout(this.render, 100)
           localStorage.settings = result
-          // showToast({ content: 'Update' })
         })
         .catch((error) => showToast({ content: `ERROR: ${error}` }))
     },

@@ -1,12 +1,5 @@
 import { prop } from '@zos/ui'
-import {
-  button,
-  height as h,
-  img,
-  page,
-  text,
-  width as w,
-} from './../../../../pages/ui.js'
+import { button, height as h, img, page, text, width as w } from './../../../../pages/ui.js'
 
 let basePage = null
 
@@ -108,19 +101,16 @@ const layout = [Single, Double, Triple, Quad]
 
 const renderActions = (actions, props, textProps, iconProps, group) => {
   return actions.map((action, i) => {
-    const icon = text(
-      { ...iconProps[i], w: w / 2, text: action.icon || '✽' },
-      group,
-    )
+    const icon = text({ ...iconProps[i], w: w / 2, text: action.icon || '✽' }, group)
     icon?.setEnable(false)
-    const title = text({ ...textProps[i], text: action.title || '*' }, group)
+    const title = text({ ...textProps[i], text: action.title || 'Action' }, group)
     title?.setEnable(false)
     const hi = text(
       {
         ...iconProps[i],
         w: w / 2,
         text_size: iconProps[i].text_size - 6,
-        text: action.icon || 'o',
+        text: action.icon || '✽',
         color: 0xd71920,
       },
       group,

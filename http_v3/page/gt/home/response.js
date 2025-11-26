@@ -1,33 +1,32 @@
-import { showToast, createModal, MODAL_CONFIRM } from '@zos/interaction'
+import { createModal, showToast } from '@zos/interaction'
 import { notify } from '@zos/notification'
-import { exit, home } from '@zos/router'
-import { Vibrator, VIBRATOR_SCENE_NOTIFICATION, VIBRATOR_SCENE_DURATION, } from '@zos/sensor'
+import { home } from '@zos/router'
+import { VIBRATOR_SCENE_DURATION, VIBRATOR_SCENE_NOTIFICATION, Vibrator } from '@zos/sensor'
 
 const vibrator = new Vibrator()
 
 export const response = (result, { config: { output, exit: close } }, widget = false) => {
   if (close && result.success) setTimeout(home, 2000)
-  if (output == 'alert' && !widget) {
-    const alert = createModal({
+  if (output === 'alert' && !widget) {
+    const _alert = createModal({
       content: result.status,
       text: result.body,
       src: 'alert_icon.png',
       show: true,
       okButton: 'x.png',
-      onClick: () => {
-      }
+      onClick: () => {},
       // autoHide: true,
     })
     return
   }
-  if (output == 'notification') return notice(result)
+  if (output === 'notification') return notice(result)
   showToast({ content: result.body })
   const scene = result.success ? VIBRATOR_SCENE_NOTIFICATION : VIBRATOR_SCENE_DURATION
   vibrator.setMode(scene)
   vibrator.start()
 }
 
-const notice = result => {
+const notice = (result) => {
   notify({
     title: `${result.status}`,
     content: result.body,

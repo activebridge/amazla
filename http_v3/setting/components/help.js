@@ -55,7 +55,7 @@ const HELP_BUTTON = {
   ...BUTTON,
   width: '48px',
   height: '48px',
-  fontSize: '48px',
+  fontSize: '32px',
   minWidth: '48px',
   minHeight: '48px',
   paddingBottom: '2px',
@@ -85,9 +85,7 @@ export const Help = (store) => {
 
         View({ style: POPUP_CONTENT }, [
           H1('🚀 Getting Started'),
-          P(
-            'HTTP Client is a Postman-like app for your watch. Send HTTP requests directly from your wrist!',
-          ),
+          P('HTTP Client is a Postman-like app for your watch. Send HTTP requests directly from your wrist!'),
 
           Hr(),
 
@@ -157,9 +155,7 @@ export const Help = (store) => {
           Br(),
           P('• Widgets can display maximum 4 actions (first four will be shown)'),
           Br(),
-          P(
-            '• After changing settings, remove and re-add the widget on your watch to refresh',
-          ),
+          P('• After changing settings, Reopen the app, remove and re-add the widget on your watch to refresh'),
 
           Hr(),
 

@@ -5,33 +5,71 @@ class Action {
     this.data = JSON.parse(settingsStorage.getItem('actions') || '[]')[i] || {}
   }
 
-  get id() { return this.data.id }
-  get title() { return this.data.title }
-  get icon() { return this.data.icon || '▶' }
-  get url() { return this.data.url }
-  get method() { return this.data.method || 'GET' }
-  get headers() { return this.data.headers }
-  get body() { return this.data.body }
-  get json() { return this.data.json || false }
-  get successKey() { return this.data.successKey }
-  get errorKey() { return this.data.errorKey }
+  get id() {
+    return this.data.id
+  }
+  get title() {
+    return this.data.title
+  }
+  get icon() {
+    return this.data.icon || '▶'
+  }
+  get url() {
+    return this.data.url
+  }
+  get method() {
+    return this.data.method || 'GET'
+  }
+  get headers() {
+    return this.data.headers
+  }
+  get body() {
+    return this.data.body
+  }
+  get json() {
+    return this.data.json || false
+  }
+  get successKey() {
+    return this.data.successKey
+  }
+  get errorKey() {
+    return this.data.errorKey
+  }
 
-  set title(value) { return this.update('title', value) }
-  set icon(value) { return this.update('icon', value) }
-  set url(value) { return this.update('url', value) }
-  set method(value) { return this.update('method', value) }
-  set headers(value) { return this.update('headers', value) }
-  set body(value) { return this.update('body', value) }
-  set json(value) { return this.update('json', value) }
-  set successKey(value) { return this.update('successKey', value) }
-  set errorKey(value) { return this.update('errorKey', value) }
+  set title(value) {
+    this.update('title', value)
+  }
+  set icon(value) {
+    this.update('icon', value)
+  }
+  set url(value) {
+    this.update('url', value)
+  }
+  set method(value) {
+    this.update('method', value)
+  }
+  set headers(value) {
+    this.update('headers', value)
+  }
+  set body(value) {
+    this.update('body', value)
+  }
+  set json(value) {
+    this.update('json', value)
+  }
+  set successKey(value) {
+    this.update('successKey', value)
+  }
+  set errorKey(value) {
+    this.update('errorKey', value)
+  }
 
   get actions() {
     return JSON.parse(this.settingsStorage.getItem('actions') || '[]')
   }
 
   set actions(value) {
-    return this.settingsStorage.setItem('actions', JSON.stringify(value))
+    this.settingsStorage.setItem('actions', JSON.stringify(value))
   }
 
   update(name, value) {
@@ -51,8 +89,8 @@ class Action {
 
   moveUp() {
     if (this.i < 1) return
-    const actions = this.actions;
-    [actions[this.i - 1], actions[this.i]] = [actions[this.i], actions[this.i - 1]]
+    const actions = this.actions
+    ;[actions[this.i - 1], actions[this.i]] = [actions[this.i], actions[this.i - 1]]
     this.actions = actions
   }
 }
@@ -66,7 +104,7 @@ class Actions {
   }
 
   create(attrs = {}) {
-    const items = this.all.map(a => a.data)
+    const items = this.all.map((a) => a.data)
     items.push(attrs)
     this.settingsStorage.setItem('actions', JSON.stringify(items))
   }
