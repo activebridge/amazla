@@ -62,6 +62,14 @@ export const Config = (config, actions) => {
         config.exit = value
       },
     }),
+    Toggle({
+      label: '📳 Vibration feadback',
+      value: config.vibrate,
+      onChange: (value) => {
+        config.vibrate = value
+      },
+    }),
+    Br(),
     // Br(),
     // xSelect({
     //   label: '🔘 Button Double Press Action',

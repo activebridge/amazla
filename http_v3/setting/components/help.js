@@ -81,6 +81,26 @@ export const Help = (store) => {
             },
           }),
           H1('📡 HTTP Help'),
+          View(
+            {
+              style: {
+                marginTop: '10px',
+                padding: '5px',
+                color: 'white',
+                fontSize: '18px',
+                cursor: 'pointer',
+                border: '2px solid rgba(255, 255, 255, 0.3)',
+                borderRadius: '10px',
+                textAlign: 'center',
+              },
+            },
+            [
+              Auth({
+                label: '❓ Feadback or Suggestions 🗯️',
+                authorizeUrl: 'https://buymeacoffee.com/galulex',
+              }),
+            ],
+          ),
         ]),
 
         View({ style: POPUP_CONTENT }, [

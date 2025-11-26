@@ -24,6 +24,9 @@ class Config {
   get double() {
     return this.data.double
   }
+  get vibrate() {
+    return this.data.vibrate || false
+  }
 
   set output(value) {
     this.update('output', value)
@@ -42,6 +45,9 @@ class Config {
   }
   set double(value) {
     this.update('double', value)
+  }
+  set vibrate(value) {
+    this.update('vibrate', value)
   }
 
   update(name, value) {

@@ -5,7 +5,7 @@ import { VIBRATOR_SCENE_DURATION, VIBRATOR_SCENE_NOTIFICATION, Vibrator } from '
 
 const vibrator = new Vibrator()
 
-export const response = (result, { config: { output, exit: close } }, widget = false) => {
+export const response = (result, { config: { output, exit: close, vibrate } }, widget = false) => {
   if (close && result.success) setTimeout(home, 2000)
   if (output === 'alert' && !widget) {
     const _alert = createModal({
@@ -21,6 +21,7 @@ export const response = (result, { config: { output, exit: close } }, widget = f
   }
   if (output === 'notification') return notice(result)
   showToast({ content: result.body })
+  if (!vibrate) return
   const scene = result.success ? VIBRATOR_SCENE_NOTIFICATION : VIBRATOR_SCENE_DURATION
   vibrator.setMode(scene)
   vibrator.start()
