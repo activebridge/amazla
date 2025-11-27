@@ -67,17 +67,17 @@ export const Help = (store) => {
       label: '❓',
       style: HELP_BUTTON,
       onClick: () => {
-        store.help = true
+        store.help = 'true'
       },
     }),
-    store.help &&
+    store.help === 'true' &&
       View({ style: POPUP }, [
         View({ style: POPUP_HEADER }, [
           Button({
             label: '×',
             style: CLOSE_BUTTON,
             onClick: () => {
-              store.help = false
+              store.help = 'false'
             },
           }),
           H1('📡 HTTP Help'),

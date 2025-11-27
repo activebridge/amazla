@@ -33,7 +33,7 @@ export const initStore = (settingsStorage) => {
     },
 
     get help() {
-      return settingsStorage.getItem('help')
+      return settingsStorage.getItem('help') || 'true'
     },
 
     set help(value) {
