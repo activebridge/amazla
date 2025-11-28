@@ -51,7 +51,7 @@ Page(
       }
       for (let i = 0; i < actions.length; i += buttons) {
         const chunk = actions.slice(i, i + buttons)
-        const slide = Slide(this, chunk, i, index)
+        const slide = Slide(app, chunk, i, index)
         widgets = widgets.concat(slide)
         index += 1
       }
@@ -60,18 +60,19 @@ Page(
       // hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
 
       if (awake) keepScreenOn(true)
-      keyListener(focus, this.execFocus)
+      keyListener(focus, app.execFocus)
     },
 
     fetch(id) {
       if (isBusy) return showToast({ content: 'Busy...' })
       isBusy = true
-      const action = this.state.settings.actions.find((a) => a.id === String(id))
+      const action = app.state.settings.actions.find((a) => a.id === String(id))
       showToast({ content: `Running ${action.title}` })
-      this.request({ method: 'FETCH', params: { id } })
+      app
+        .request({ method: 'FETCH', params: { id } })
         .then(({ result }) => {
           console.log('FETCH result:', JSON.stringify(result))
-          response(result, this.state.settings)
+          response(result, app.state.settings)
         })
         .catch((error) => {
           showToast({ content: `ERROR: ${error}` })
@@ -99,18 +100,19 @@ Page(
     },
 
     build() {
-      this.render()
-      this.sync()
+      app.render()
+      app.sync()
     },
 
     sync() {
-      this.request({ method: 'SETTINGS' })
+      app
+        .request({ method: 'SETTINGS' })
         .then(({ result }) => {
           if (!result) return
           if (JSON.stringify(app.state.settings) === JSON.stringify(result)) return
 
           app.state.settings = result
-          setTimeout(this.render, 100)
+          setTimeout(app.render, 100)
           localStorage.settings = result
         })
         .catch((error) => showToast({ content: `ERROR: ${error}` }))
@@ -118,7 +120,7 @@ Page(
 
     onInit(id) {
       app = this
-      if (id) this.fetch(id)
+      if (id) app.fetch(id)
     },
 
     onDestroy() {

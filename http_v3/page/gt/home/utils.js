@@ -13,7 +13,7 @@ export const localStorage = {
   get settings() {
     try {
       const settings = readFileSync({
-        path: '_settings.json',
+        path: 'settings.json',
         options: { encoding: 'utf8' },
       })
       return JSON.parse(settings)
@@ -25,7 +25,7 @@ export const localStorage = {
   set settings(value) {
     try {
       writeFileSync({
-        path: '_settings.json',
+        path: 'settings.json',
         data: JSON.stringify(value),
         options: { encoding: 'utf8' },
       })
