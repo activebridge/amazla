@@ -14,7 +14,8 @@
   },
   "permissions": [
     "data:os.device.info",
-    "device:os.local_storage"
+    "device:os.local_storage",
+    "device:os.ble"
   ],
   "runtime": {
     "apiVersion": {
@@ -28,7 +29,8 @@
       "module": {
         "page": {
           "pages": [
-            "page/index"
+            "page/index",
+            "page/crypto/index"
           ]
         },
         "app-side": { "path": "app-side/index" },
