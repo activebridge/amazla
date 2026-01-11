@@ -1,7 +1,7 @@
 const { settingsStorage: storage } = settings
 
 export const xhr = async (url, method, headers, body = undefined) => {
-  // return { response: stub, status: 200 }
+  return { response: stub, status: 200 }
   try {
     storage.setItem('debug', `API: ${url} ${JSON.stringify(headers)} start`)
     res = await fetch({ url, method, headers, body })

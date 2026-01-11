@@ -55,8 +55,21 @@ const initBLE = () => {
   try {
     const result = getBleService().init()
     console.log('BLE init:', JSON.stringify(result))
-    bleStatus = result.hasKeys ? 'ready' : 'no_keys'
-    bleMessage = result.hasKeys ? 'Ready' : 'No keys'
+
+    const keyCount = result.sessionKeyCount || 0
+    if (!result.hasKeys) {
+      bleStatus = 'no_keys'
+      bleMessage = 'No keys in secrets.js'
+    } else if (keyCount === 0) {
+      bleStatus = 'no_session_keys'
+      bleMessage = 'Sync keys with phone'
+    } else {
+      bleStatus = 'ready'
+      bleMessage = `Ready (${keyCount} keys)`
+    }
+
+    // Set the request function for app-side crypto calls
+    getBleService().setRequestFunc((req) => currentPage.request(req))
 
     // Set up status listener after init
     getBleService().onStatusChange(({ status, message }) => {
@@ -235,6 +248,117 @@ const blePair = () => {
   })
 }
 
+// Sync session keys from phone
+const bleSyncKeys = () => {
+  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
+  isRunning = true
+  hmUI.updateStatusBarTitle('Syncing…')
+  console.log('[UI] Starting key sync...')
+
+  // Call directly without params (app-side has default count=5)
+  currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS' })
+    .then((result) => {
+      isRunning = false
+      console.log('[UI] Sync result:', JSON.stringify(result).slice(0, 100))
+      if (result.success && result.keys) {
+        // Store keys in service
+        result.keys.forEach(key => getBleService().sessionKeyPool.push(key))
+        getBleService().saveSessionKeys()
+        const count = getBleService().getSessionKeyCount()
+        hmUI.updateStatusBarTitle(`Ready (${count})`)
+        hmUI.showToast({ text: `${count} keys synced` })
+        if (bleStatusWidget) {
+          bleStatusWidget.setProperty(hmUI.prop.TEXT, `Ready (${count} keys)`)
+        }
+      } else {
+        hmUI.updateStatusBarTitle('Sync failed')
+        hmUI.showToast({ text: result.error || 'Sync failed' })
+      }
+    })
+    .catch((err) => {
+      isRunning = false
+      console.log('[UI] Sync error:', err)
+      hmUI.updateStatusBarTitle('Sync error')
+      hmUI.showToast({ text: err.message || 'Sync error' })
+    })
+}
+
+// Combined connect + pair flow
+const bleSetup = () => {
+  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
+  isRunning = true
+  hmUI.updateStatusBarTitle('Connecting…')
+
+  const doPair = () => {
+    hmUI.updateStatusBarTitle('Pairing…')
+    getBleService().pair((result) => {
+      isRunning = false
+      if (result.success) {
+        hmUI.showToast({ text: 'Tap key card on car!' })
+        hmUI.updateStatusBarTitle('Tap card on car')
+        vibrate(24)
+      } else {
+        hmUI.showToast({ text: result.error })
+        hmUI.updateStatusBarTitle('BLE Error')
+      }
+    })
+  }
+
+  const connectAndPair = (mac) => {
+    getBleService().connectToMAC(mac, (res) => {
+      if (res.success) {
+        hmUI.showToast({ text: 'Connected!' })
+        doPair()
+      } else {
+        isRunning = false
+        hmUI.showToast({ text: res.error || 'Connection failed' })
+        hmUI.updateStatusBarTitle('BLE Error')
+      }
+    })
+  }
+
+  // Try saved MAC first, otherwise scan
+  getBleService().connect((result) => {
+    if (result.success) {
+      hmUI.showToast({ text: 'Connected!' })
+      doPair()
+    } else if (result.error && result.error.includes('No saved')) {
+      // No saved vehicle - scan for Tesla
+      hmUI.updateStatusBarTitle('Scanning…')
+      getBleService().scan((scanResult) => {
+        if (scanResult.type === 'device') {
+          hmUI.showToast({ text: `Found: ${scanResult.device.name || scanResult.device.mac}` })
+        }
+        if (scanResult.type === 'complete') {
+          if (scanResult.devices && scanResult.devices.length > 0) {
+            const tesla = scanResult.devices[0]
+            hmUI.showToast({ text: `Connecting to ${tesla.name || tesla.mac}` })
+            connectAndPair(tesla.mac)
+          } else {
+            isRunning = false
+            hmUI.showToast({ text: 'No Tesla found' })
+            hmUI.updateStatusBarTitle('No Tesla')
+          }
+        }
+      }, 15000)
+    } else {
+      isRunning = false
+      hmUI.showToast({ text: result.error || 'Connection failed' })
+      hmUI.updateStatusBarTitle('BLE Error')
+    }
+  })
+}
+
+const bleClear = () => {
+  getBleService().clear()
+  bleStatus = 'disconnected'
+  bleMessage = 'Cleared'
+  renderBLEStatus()
+  hmUI.showToast({ text: 'BLE data cleared' })
+  hmUI.updateStatusBarTitle('Cleared')
+  vibrate(24)
+}
+
 const fetch = (method, onSuccess, onError) => {
   currentPage.request({ method }).then(({ error, ...props }) => {
     isRunning = false
@@ -351,10 +475,10 @@ const render = (attrs) => {
   text({ ...ODOMETER, y: height / 2 - 80, text_size: 30, color: 0x777777, text: `${odometer}${unit}` }, slide2)
   text({ ...BATTERY_LEVEL, y: -height / 2 + 70, w: 140, align_h: hmUI.align.LEFT, color: chargeColor, text_size: 40, text: `${battery_level || '--'}%` }, slide2)
   text({ ...BATTERY_RANGE, y: -height / 2 + 70, w: 140, x: 60, align_h: hmUI.align.RIGHT, h: 50, color: chargeColor, text_size: 40, text: `${battery_range}${unit}` }, slide2)
-  rect({w: 40, h: 20, y: height/2 - 18, color: 0x000000 }, slide1)
+  rect({w: 40, h: 20, y: height/2, color: 0x000000 }, slide1)
 
-  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
-  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, level: battery_level, color: chargeColor }, slide2)
+  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
+  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, level: battery_level, color: chargeColor }, slide2)
 
   const limit = Math.floor(3.1 * soc_limit) + 41
 
@@ -364,7 +488,7 @@ const render = (attrs) => {
     end_angle: limit + 3,
     line_width: 12,
     x: 0,
-    y: -10,
+    y: 0,
     radius: height / 2 - 5,
     color: 0x000000,
   }, slide2)
@@ -377,7 +501,7 @@ const render = (attrs) => {
     color: 0xffffff,
     radius: height / 2 - 5,
     x: 0,
-    y: -10,
+    y: 0,
   }, slide2)
 
   text({ text: `ϟ`, w: 50, y: -height/2 + 10, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
@@ -404,24 +528,22 @@ const render = (attrs) => {
   text({ h: 30, y: -180, text_size: 20, text: "BLE Direct Control", color: 0x00AAFF }, slide4)
   bleStatusWidget = text({ h: 30, y: -140, text_size: 16, text: bleMessage, color: 0x777777 }, slide4)
 
-  // Connect button (use refresh icon)
-  button({ x: 0, y: -70, w: 80, h: 80, src: 'refresh', click_func: bleConnect }, slide4)
-  text({ x: 0, y: -5, w: 80, h: 20, text_size: 14, text: "Connect" }, slide4)
+  // Setup and Sync buttons
+  button({ x: -50, y: -70, w: 80, h: 40, radius: 20, text: "Setup", text_size: 16, normal_color: 0x336633, press_color: 0x448844, click_func: bleSetup }, slide4)
+  button({ x: 50, y: -70, w: 80, h: 40, radius: 20, text: "Sync", text_size: 16, normal_color: 0x333366, press_color: 0x444488, click_func: bleSyncKeys }, slide4)
 
   // Lock / Unlock row
-  button({ x: -60, y: 50, w: 80, h: 80, src: 'lock', click_func: bleLock }, slide4)
-  button({ x: 60, y: 50, w: 80, h: 80, src: 'unlock', click_func: bleUnlock }, slide4)
+  button({ x: -60, y: 30, w: 80, h: 80, src: 'lock', click_func: bleLock }, slide4)
+  button({ x: 60, y: 30, w: 80, h: 80, src: 'unlock', click_func: bleUnlock }, slide4)
 
   // Trunk / Frunk row
-  button({ x: -60, y: 140, w: 60, h: 60, src: 'open', click_func: bleFrunk }, slide4)
-  button({ x: 60, y: 140, w: 60, h: 60, src: 'open', click_func: bleTrunk }, slide4)
-  text({ x: -60, y: 195, w: 80, h: 20, text_size: 14, text: "Frunk" }, slide4)
-  text({ x: 60, y: 195, w: 80, h: 20, text_size: 14, text: "Trunk" }, slide4)
+  button({ x: -60, y: 120, w: 60, h: 60, src: 'open', click_func: bleFrunk }, slide4)
+  button({ x: 60, y: 120, w: 60, h: 60, src: 'open', click_func: bleTrunk }, slide4)
+  text({ x: -60, y: 175, w: 80, h: 20, text_size: 14, text: "Frunk" }, slide4)
+  text({ x: 60, y: 175, w: 80, h: 20, text_size: 14, text: "Trunk" }, slide4)
 
-  // Pair button
-  button({ x: -80, y: -220, w: 80, h: 36, radius: 18, text: "Pair", text_size: 14, normal_color: 0x336633, press_color: 0x448844, click_func: blePair }, slide4)
-  // Crypto test button (top of page)
-  button({ x: 80, y: -220, w: 100, h: 36, radius: 18, text: "Crypto", text_size: 14, normal_color: 0x333333, press_color: 0x555555, click_func: testCrypto }, slide4)
+  // Clear button (clears saved BLE data)
+  button({ x: 0, y: -220, w: 80, h: 36, radius: 18, text: "Clear", text_size: 14, normal_color: 0x663333, press_color: 0x884444, click_func: bleClear }, slide4)
   // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
   // text({ text: "", text_size: 30 }, slide4)
 

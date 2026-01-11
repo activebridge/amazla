@@ -107,6 +107,14 @@ class TeslaSession {
     return this.pregenReady || this.loadPregenFromStorage()
   }
 
+  // Set pre-generated keypair from external source (e.g., session key pool from phone)
+  setPregenKeypair(privateKeyHex, publicKeyHex) {
+    this.pregenPrivateKey = hexToBytes(privateKeyHex)
+    this.pregenPublicKey = hexToBytes(publicKeyHex)
+    this.pregenReady = true
+    console.log('[Session] Loaded keypair from pool')
+  }
+
   // Use pre-generated keypair (consumes it)
   usePregenKeypair() {
     // Try storage first

@@ -49,20 +49,7 @@
           ]
         }
       },
-      "platforms": [
-        {
-          "st": "s",
-          "dw": 320
-        },
-        {
-          "st": "r",
-          "dw": 480
-        },
-        {
-          "st": "r",
-          "dw": 366
-        }
-      ],
+      "platforms": [{ "st": "r" }, { "st": "s" }, { "st": "b" }],
       "designWidth": 480
     }
   },

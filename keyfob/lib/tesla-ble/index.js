@@ -1,25 +1,11 @@
 // Tesla BLE API for ZeppOS
 // Main entry point for Tesla vehicle control via Bluetooth
+// NOTE: Crypto operations delegated to phone app-side to save memory
 
 import teslaBLE from './ble.js'
 
-// Lazy-loaded modules (contain heavy crypto)
-let _teslaSession = null
-let _teslaKeyManager = null
-
-const getSession = () => {
-  if (!_teslaSession) {
-    _teslaSession = require('./session.js').default
-  }
-  return _teslaSession
-}
-
-const getKeyManager = () => {
-  if (!_teslaKeyManager) {
-    _teslaKeyManager = require('./keys.js').default
-  }
-  return _teslaKeyManager
-}
+let _privateKeyHex = null
+let _publicKeyHex = null
 
 class TeslaBleApi {
   constructor() {
@@ -39,25 +25,8 @@ class TeslaBleApi {
 
     return {
       success: true,
-      savedMAC: this.savedMAC
-    }
-  }
-
-  // Load crypto modules and keys (call before commands)
-  loadCrypto() {
-    if (!this._storage) return { success: false, error: 'Not initialized' }
-
-    // Initialize key manager
-    getKeyManager().init(this._storage)
-
-    // Load private key into session
-    if (getKeyManager().hasKeys()) {
-      getSession().setPrivateKey(getKeyManager().getPrivateKeyHex())
-    }
-
-    return {
-      success: true,
-      hasKeys: getKeyManager().hasKeys()
+      savedMAC: this.savedMAC,
+      hasKeys: !!_privateKeyHex
     }
   }
 
@@ -95,7 +64,6 @@ class TeslaBleApi {
 
   // Disconnect
   disconnect() {
-    if (_teslaSession) _teslaSession.reset()
     teslaBLE.disconnect()
   }
 
@@ -104,128 +72,51 @@ class TeslaBleApi {
     return teslaBLE.isConnected()
   }
 
-  // Set private key (from secrets) - loads crypto
+  // Set private key (from secrets) - caches for later use
   setPrivateKey(privateKeyHex, publicKeyHex) {
-    const result = getKeyManager().setKeysHex(privateKeyHex, publicKeyHex)
-    if (result.success) {
-      getSession().setPrivateKey(privateKeyHex, publicKeyHex)
-    }
-    return result
-  }
-
-  // Import key from PEM - loads crypto
-  importKeyPEM(pemString) {
-    const result = getKeyManager().importFromPEM(pemString)
-    if (result.success) {
-      getSession().setPrivateKey(getKeyManager().getPrivateKeyHex())
-    }
-    return result
+    _privateKeyHex = privateKeyHex
+    _publicKeyHex = publicKeyHex
+    return { success: true }
   }
 
   // Check if keys are configured
   hasKeys() {
-    return _teslaKeyManager ? getKeyManager().hasKeys() : false
+    return !!_privateKeyHex
   }
 
-  // Get key fingerprint
-  getKeyFingerprint() {
-    return _teslaKeyManager ? getKeyManager().getFingerprint() : null
+  // Get public key hex
+  getPublicKeyHex() {
+    return _publicKeyHex
   }
 
-  // Lock vehicle - loads crypto on first use
+  // Get private key hex
+  getPrivateKeyHex() {
+    return _privateKeyHex
+  }
+
+  // Lock vehicle - TODO: delegate to phone app-side
   lock(callback) {
-    if (!this.isConnected()) {
-      callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    // Load crypto if needed
-    if (!_teslaKeyManager) {
-      this.loadCrypto()
-    }
-
-    if (!this.hasKeys()) {
-      callback({ success: false, error: 'No keys configured' })
-      return
-    }
-
-    getSession().lock(callback)
+    callback({ success: false, error: 'Use phone app for commands' })
   }
 
-  // Unlock vehicle
+  // Unlock vehicle - TODO: delegate to phone app-side
   unlock(callback) {
-    if (!this.isConnected()) {
-      callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    if (!_teslaKeyManager) {
-      this.loadCrypto()
-    }
-
-    if (!this.hasKeys()) {
-      callback({ success: false, error: 'No keys configured' })
-      return
-    }
-
-    getSession().unlock(callback)
+    callback({ success: false, error: 'Use phone app for commands' })
   }
 
-  // Open trunk
+  // Open trunk - TODO: delegate to phone app-side
   openTrunk(callback) {
-    if (!this.isConnected()) {
-      callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    if (!_teslaKeyManager) {
-      this.loadCrypto()
-    }
-
-    if (!this.hasKeys()) {
-      callback({ success: false, error: 'No keys configured' })
-      return
-    }
-
-    getSession().openTrunk(callback)
+    callback({ success: false, error: 'Use phone app for commands' })
   }
 
-  // Open frunk
+  // Open frunk - TODO: delegate to phone app-side
   openFrunk(callback) {
-    if (!this.isConnected()) {
-      callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    if (!_teslaKeyManager) {
-      this.loadCrypto()
-    }
-
-    if (!this.hasKeys()) {
-      callback({ success: false, error: 'No keys configured' })
-      return
-    }
-
-    getSession().openFrunk(callback)
+    callback({ success: false, error: 'Use phone app for commands' })
   }
 
-  // Pair key with vehicle
+  // Pair key with vehicle - TODO: delegate to phone app-side
   pair(callback) {
-    if (!this.isConnected()) {
-      callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    if (!_teslaKeyManager) {
-      this.loadCrypto()
-    }
-
-    if (!this.hasKeys()) {
-      callback({ success: false, error: 'No keys configured' })
-      return
-    }
-
-    getSession().pair(callback)
+    callback({ success: false, error: 'Use phone app for pairing' })
   }
 
   // Get full status
@@ -235,20 +126,20 @@ class TeslaBleApi {
       connected: teslaBLE.isConnected(),
       mac: teslaBLE.getMAC(),
       savedMAC: this.savedMAC,
-      cryptoLoaded: !!_teslaKeyManager
+      hasKeys: this.hasKeys()
     }
   }
 
   // Clear saved data
   clear(settingsStorage) {
-    if (_teslaKeyManager) getKeyManager().clear()
-    if (_teslaSession) getSession().reset()
     teslaBLE.disconnect()
 
     if (settingsStorage) {
       settingsStorage.removeItem('tesla_ble_mac')
     }
 
+    _privateKeyHex = null
+    _publicKeyHex = null
     this.savedMAC = null
   }
 }

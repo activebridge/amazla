@@ -1,5 +1,8 @@
 import { BLEMaster } from "@silver-zepp/easy-ble"
 
+// Enable mock mode for testing without real Tesla
+const MOCK_MODE = false
+
 // Tesla BLE UUIDs (from tesla-motors/vehicle-command)
 const TESLA_SERVICE_UUID = "00000211-b2d1-43f0-9b88-960cebf8b91e"
 const TESLA_WRITE_UUID = "00000212-b2d1-43f0-9b88-960cebf8b91e"
@@ -38,6 +41,24 @@ class TeslaBLE {
 
   // Scan for Tesla vehicles
   scan(callback, duration = 10000) {
+    // Mock mode - return fake Tesla after short delay
+    if (MOCK_MODE) {
+      console.log('[BLE MOCK] Scanning...')
+      setTimeout(() => {
+        const mockDevice = {
+          name: 'S1234567890abcdefC',
+          mac: 'AA:BB:CC:DD:EE:FF',
+          rssi: -50,
+          type: 'tesla'
+        }
+        callback({ type: 'device', device: mockDevice })
+        setTimeout(() => {
+          callback({ type: 'complete', devices: [mockDevice] })
+        }, 500)
+      }, 1000)
+      return true
+    }
+
     const devices = []
     let completed = false
 
@@ -77,11 +98,23 @@ class TeslaBLE {
 
   // Stop scanning
   stopScan() {
+    if (MOCK_MODE) return true
     return this._ensureBLE().stopScan()
   }
 
   // Connect to Tesla vehicle
   connect(mac, callback) {
+    // Mock mode - simulate successful connection
+    if (MOCK_MODE) {
+      console.log('[BLE MOCK] Connecting to:', mac)
+      setTimeout(() => {
+        this.connected = true
+        this.mac = mac
+        console.log('[BLE MOCK] Connected!')
+        callback({ success: true, mac: mac })
+      }, 500)
+      return
+    }
     let callbackCalled = false
 
     console.log('[BLE] Connecting to:', mac)
@@ -148,6 +181,12 @@ class TeslaBLE {
 
   // Disconnect from vehicle
   disconnect() {
+    if (MOCK_MODE) {
+      console.log('[BLE MOCK] Disconnected')
+      this.connected = false
+      this.mac = null
+      return
+    }
     if (this.ble) {
       this._ensureBLE().off.deregisterAll()
       this._ensureBLE().quit()
@@ -162,6 +201,17 @@ class TeslaBLE {
   send(data, callback) {
     if (!this.connected) {
       callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    // Mock mode - simulate successful send with fake response
+    if (MOCK_MODE) {
+      console.log('[BLE MOCK] Sending', data.length, 'bytes')
+      setTimeout(() => {
+        // Simulate successful response
+        console.log('[BLE MOCK] Command sent successfully')
+        callback({ success: true, data: new Uint8Array([0x00]) })
+      }, 300)
       return
     }
 
