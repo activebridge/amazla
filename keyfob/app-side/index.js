@@ -2,7 +2,7 @@ import { BaseSideService } from '@zeppos/zml/base-side';
 import Auth from '../../app-side/tesla/auth'
 import Api from '../../app-side/tesla/api'
 import { store } from '../../app-side/tesla/utils'
-import bleCrypto, { generatePrivateKey, getPublicKey, bytesToHex } from './ble-crypto.js'
+import bleCrypto, { generatePrivateKey, getPublicKey, bytesToHex, hexToBytes } from './ble-crypto.js'
 
 const camalize =  str => {
   return str.toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g, (m, chr) => chr.toUpperCase())
@@ -31,8 +31,11 @@ const actions = {
 
   // BLE Pairing - build message bytes for watch to send
   BLE_PAIR: async (params) => {
-    console.log('[BLE] Building pair message for public key')
-    return bleCrypto.buildPairMessage(params.publicKeyHex)
+    console.log('[BLE] Building pair message...')
+    console.log('[BLE] Public key length:', params.publicKeyHex?.length || 0)
+    const result = bleCrypto.buildPairMessage(params.publicKeyHex)
+    console.log('[BLE] Pair message built, hex length:', result.messageHex?.length || 0)
+    return result
   },
 
   // Generate session key pool for standalone operation
@@ -51,6 +54,30 @@ const actions = {
     console.log(`[BLE] Done generating ${keys.length} keys`)
     return { success: true, keys }
   },
+
+  // Session: build request using pre-generated keypair from watch
+  BLE_SESSION_REQUEST: async ({ privateKeyHex, publicKeyHex }) => {
+    console.log('[BLE] Building session request...')
+    // Store keypair for later ECDH derivation
+    bleCrypto.ephemeralPrivateKey = hexToBytes(privateKeyHex)
+    bleCrypto.ephemeralPublicKey = hexToBytes(publicKeyHex)
+    bleCrypto.routingAddress = new Uint8Array(16)
+    for (let i = 0; i < 16; i++) bleCrypto.routingAddress[i] = Math.floor(Math.random() * 256)
+
+    const result = bleCrypto.buildSessionInfoRequestMessage()
+    console.log('[BLE] Session request built, hex length:', result.messageHex?.length || 0)
+    return result
+  },
+
+  // Session: process Tesla's response and derive session key via ECDH
+  BLE_SESSION_RESPONSE: async ({ responseHex }) => {
+    console.log('[BLE] Processing session response...')
+    console.log('[BLE] Response hex length:', responseHex?.length || 0)
+    const result = bleCrypto.processSessionInfoResponse(responseHex)
+    console.log('[BLE] Session result:', result.success, 'established:', result.established)
+    return result
+  },
+
 }
 
 AppSideService(

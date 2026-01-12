@@ -71,6 +71,11 @@ const initBLE = () => {
     // Set the request function for app-side crypto calls
     getBleService().setRequestFunc((req) => currentPage.request(req))
 
+    // Set up debug callback to show toasts
+    getBleService().setDebugCallback((msg) => {
+      hmUI.showToast({ text: msg })
+    })
+
     // Set up status listener after init
     getBleService().onStatusChange(({ status, message }) => {
       bleStatus = status

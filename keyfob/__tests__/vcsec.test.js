@@ -6,6 +6,9 @@ import {
   RKE_ACTION_OPEN_TRUNK,
   KEY_ROLE_OWNER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,
+  OPERATIONSTATUS_OK,
+  OPERATIONSTATUS_WAIT,
+  OPERATIONSTATUS_ERROR,
   buildRoutableMessage,
   buildSessionInfoRequest,
   buildUnsignedMessage,
@@ -16,6 +19,8 @@ import {
   buildUnsignedMessageWithWhitelist,
   parseSessionInfo,
   parseRoutableMessage,
+  parseCommandStatus,
+  parsePairingResponse,
   generateUUID,
   generateRoutingAddress
 } from '../lib/tesla-ble/protocol/vcsec.js'
@@ -95,21 +100,22 @@ describe('VCSEC Protocol', () => {
       expect(message).toBeInstanceOf(Uint8Array)
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBe(RKE_ACTION_UNLOCK)
+      // RKE action is now field 2 (not field 1)
+      expect(decoded[2]).toBe(RKE_ACTION_UNLOCK)
     })
 
     test('builds lock message', () => {
       const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_LOCK })
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBe(RKE_ACTION_LOCK)
+      expect(decoded[2]).toBe(RKE_ACTION_LOCK)
     })
 
     test('builds trunk message', () => {
       const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_OPEN_TRUNK })
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBe(RKE_ACTION_OPEN_TRUNK)
+      expect(decoded[2]).toBe(RKE_ACTION_OPEN_TRUNK)
     })
   })
 
@@ -162,34 +168,50 @@ describe('VCSEC Protocol', () => {
   })
 
   describe('buildKeyToAdd', () => {
-    test('builds key with default role and form factor', () => {
+    test('builds PublicKey message with raw key bytes', () => {
       const publicKey = new Uint8Array(65)
       publicKey[0] = 0x04
 
       const keyToAdd = buildKeyToAdd(publicKey)
 
+      // Now buildKeyToAdd creates a proper PublicKey message with just PublicKeyRaw (field 1)
       const decoded = decodeMessage(keyToAdd)
-      expect(decoded[1].length).toBe(65) // public key
-      expect(decoded[2]).toBe(KEY_ROLE_OWNER) // role
-      expect(decoded[6]).toBe(KEY_FORM_FACTOR_ANDROID_DEVICE) // form factor
+      expect(decoded[1].length).toBe(65) // PublicKeyRaw field
+      // Role and formFactor are no longer included (they belong in PermissionChange message)
+      expect(decoded[2]).toBeUndefined()
+      expect(decoded[6]).toBeUndefined()
     })
 
-    test('builds key with custom role', () => {
+    test('ignores role and formFactor parameters (deprecated)', () => {
       const publicKey = new Uint8Array(65)
-      const keyToAdd = buildKeyToAdd(publicKey, 1, KEY_FORM_FACTOR_ANDROID_DEVICE) // DRIVER role
+      // These params are now ignored - buildKeyToAdd just creates PublicKey message
+      const keyToAdd = buildKeyToAdd(publicKey, 1, KEY_FORM_FACTOR_ANDROID_DEVICE)
 
       const decoded = decodeMessage(keyToAdd)
-      expect(decoded[2]).toBe(1)
+      expect(decoded[1].length).toBe(65)
+      // Role/formFactor not included
+      expect(decoded[2]).toBeUndefined()
     })
   })
 
   describe('buildWhitelistOperation', () => {
-    test('wraps key in whitelist operation', () => {
+    test('wraps key in whitelist operation with metadata', () => {
       const keyToAdd = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
       const operation = buildWhitelistOperation(keyToAdd)
 
       const decoded = decodeMessage(operation)
-      expect(decoded[1]).toBeDefined()
+      expect(decoded[1]).toBeDefined() // addPublicKeyToWhitelist
+      expect(decoded[16]).toBeDefined() // metadataForKey with keyFormFactor
+    })
+
+    test('includes KeyMetadata with keyFormFactor', () => {
+      const keyToAdd = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
+      const operation = buildWhitelistOperation(keyToAdd, KEY_FORM_FACTOR_ANDROID_DEVICE)
+
+      const decoded = decodeMessage(operation)
+      // metadataForKey field 16 should contain KeyMetadata
+      const metadata = decodeMessage(decoded[16])
+      expect(metadata[1]).toBe(KEY_FORM_FACTOR_ANDROID_DEVICE) // keyFormFactor is field 1
     })
   })
 
@@ -213,8 +235,9 @@ describe('VCSEC Protocol', () => {
       expect(message).toBeInstanceOf(Uint8Array)
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBeDefined() // to_destination
-      expect(decoded[12]).toBeDefined() // uuid
+      // Correct field numbers from universal_message.proto
+      expect(decoded[6]).toBeDefined() // to_destination (field 6)
+      expect(decoded[50]).toBeDefined() // request_uuid (field 50)
     })
 
     test('builds message with routing address', () => {
@@ -226,8 +249,8 @@ describe('VCSEC Protocol', () => {
       })
 
       const decoded = decodeMessage(message)
-      expect(decoded[2]).toBeDefined() // from_destination
-      expect(decoded[3]).toBeDefined() // payload
+      expect(decoded[7]).toBeDefined() // from_destination (field 7)
+      expect(decoded[10]).toBeDefined() // protobuf_message_as_bytes (field 10)
     })
 
     test('builds message with session info request', () => {
@@ -239,7 +262,7 @@ describe('VCSEC Protocol', () => {
       })
 
       const decoded = decodeMessage(message)
-      expect(decoded[6]).toBeDefined() // session_info_request
+      expect(decoded[14]).toBeDefined() // session_info_request (field 14)
     })
 
     test('builds complete pairing message structure', () => {
@@ -293,14 +316,102 @@ describe('VCSEC Protocol', () => {
       const payload = new Uint8Array([0x01, 0x02, 0x03])
       const uuid = new Uint8Array(16)
 
+      // Use correct field numbers: payload=10, uuid=50
       const message = concat(
-        encodeBytes(3, payload),
-        encodeBytes(12, uuid)
+        encodeBytes(10, payload),
+        encodeBytes(50, uuid)
       )
 
       const parsed = parseRoutableMessage(message)
       expect(Array.from(parsed.payload)).toEqual([0x01, 0x02, 0x03])
       expect(parsed.uuid.length).toBe(16)
+    })
+  })
+
+  describe('parseCommandStatus', () => {
+    test('parses OPERATIONSTATUS_WAIT', async () => {
+      const { concat, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // CommandStatus { operationStatus (field 1) = WAIT (1) }
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
+
+      const parsed = parseCommandStatus(commandStatus)
+      expect(parsed.operationStatus).toBe(OPERATIONSTATUS_WAIT)
+    })
+
+    test('parses OPERATIONSTATUS_OK', async () => {
+      const { encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_OK)
+      const parsed = parseCommandStatus(commandStatus)
+      expect(parsed.operationStatus).toBe(OPERATIONSTATUS_OK)
+    })
+
+    test('parses OPERATIONSTATUS_ERROR with fault', async () => {
+      const { concat, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // CommandStatus with error and whitelist fault
+      const commandStatus = concat(
+        encodeEnum(1, OPERATIONSTATUS_ERROR),
+        encodeEnum(3, 5) // whitelistOperationFault
+      )
+
+      const parsed = parseCommandStatus(commandStatus)
+      expect(parsed.operationStatus).toBe(OPERATIONSTATUS_ERROR)
+      expect(parsed.whitelistOperationFault).toBe(5)
+    })
+  })
+
+  describe('parsePairingResponse', () => {
+    test('parses wait response', async () => {
+      const { concat, encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // Build FromVCSECMessage { commandStatus (field 4) = CommandStatus { operationStatus = WAIT } }
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      // Build RoutableMessage { payload (field 10) = FromVCSECMessage }
+      const routableMessage = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routableMessage)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('wait')
+      expect(parsed.message).toBe('Tap key card on car')
+    })
+
+    test('parses ok response', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_OK)
+      const fromVcsec = encodeBytes(4, commandStatus)
+      const routableMessage = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routableMessage)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('ok')
+      expect(parsed.message).toBe('Key added successfully')
+    })
+
+    test('parses error response', async () => {
+      const { concat, encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = concat(
+        encodeEnum(1, OPERATIONSTATUS_ERROR),
+        encodeEnum(3, 10) // whitelistOperationFault
+      )
+      const fromVcsec = encodeBytes(4, commandStatus)
+      const routableMessage = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routableMessage)
+      expect(parsed.success).toBe(false)
+      expect(parsed.status).toBe('error')
+    })
+
+    test('handles missing payload', () => {
+      const emptyMessage = new Uint8Array(0)
+      const parsed = parsePairingResponse(emptyMessage)
+      expect(parsed.success).toBe(false)
+      expect(parsed.error).toBe('No payload in response')
     })
   })
 })

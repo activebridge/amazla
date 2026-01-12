@@ -41,49 +41,54 @@ const KEY_FORM_FACTOR_IOS_DEVICE = 6
 const KEY_FORM_FACTOR_ANDROID_DEVICE = 7
 const KEY_FORM_FACTOR_CLOUD_KEY = 9
 
+// Operation status from vcsec.proto OperationStatus_E
+const OPERATIONSTATUS_OK = 0
+const OPERATIONSTATUS_WAIT = 1
+const OPERATIONSTATUS_ERROR = 2
+
 // Build RoutableMessage
-// Fields:
-//   1: to_destination (Destination)
-//   2: from_destination (Destination)
-//   3: protobuf_message_as_bytes (bytes)
-//   6: session_info_request (SessionInfoRequest)
-//   7: session_info (SessionInfo)
-//   8: signedMessageStatus
-//   12: uuid (bytes)
-//   50: flags (uint32)
+// Fields from universal_message.proto:
+//   6: to_destination (Destination)
+//   7: from_destination (Destination)
+//   10: protobuf_message_as_bytes (bytes)
+//   14: session_info_request (SessionInfoRequest)
+//   15: session_info (bytes)
+//   50: request_uuid (bytes)
+//   51: uuid (bytes)
+//   52: flags (uint32)
 function buildRoutableMessage(options) {
   const parts = []
 
-  // to_destination (field 1) - Destination message
+  // to_destination (field 6) - Destination message with domain
   if (options.toDomain !== undefined) {
-    const destination = encodeEnum(1, options.toDomain) // domain field
-    parts.push(encodeBytes(1, destination))
+    const destination = encodeEnum(1, options.toDomain) // Destination.domain is field 1
+    parts.push(encodeBytes(6, destination))
   }
 
-  // from_destination (field 2) - routing address
+  // from_destination (field 7) - Destination message with routing address
   if (options.routingAddress) {
-    const destination = encodeBytes(2, options.routingAddress) // routing_address field
-    parts.push(encodeBytes(2, destination))
+    const destination = encodeBytes(2, options.routingAddress) // Destination.routing_address is field 2
+    parts.push(encodeBytes(7, destination))
   }
 
-  // protobuf_message_as_bytes (field 3)
+  // protobuf_message_as_bytes (field 10)
   if (options.payload) {
-    parts.push(encodeBytes(3, options.payload))
+    parts.push(encodeBytes(10, options.payload))
   }
 
-  // session_info_request (field 6)
+  // session_info_request (field 14)
   if (options.sessionInfoRequest) {
-    parts.push(encodeBytes(6, options.sessionInfoRequest))
+    parts.push(encodeBytes(14, options.sessionInfoRequest))
   }
 
-  // uuid (field 12)
+  // request_uuid (field 50)
   if (options.uuid) {
-    parts.push(encodeBytes(12, options.uuid))
+    parts.push(encodeBytes(50, options.uuid))
   }
 
-  // flags (field 50)
+  // flags (field 52)
   if (options.flags !== undefined) {
-    parts.push(encodeVarintField(50, options.flags))
+    parts.push(encodeVarintField(52, options.flags))
   }
 
   return concat(...parts)
@@ -108,21 +113,22 @@ function buildSessionInfoRequest(publicKey, challenge) {
 }
 
 // Build UnsignedMessage (for VCSEC)
-// Fields:
-//   1: RKEAction (enum)
-//   16: closures (ClosuresState)
-//   17: InformationRequest (message)
+// Fields from vcsec.proto:
+//   1: InformationRequest
+//   2: RKEAction (enum)
+//   4: closureMoveRequest
+//   16: WhitelistOperation
 function buildUnsignedMessage(options) {
   const parts = []
 
-  // RKE action (field 1)
+  // RKE action (field 2)
   if (options.rkeAction !== undefined) {
-    parts.push(encodeEnum(1, options.rkeAction))
+    parts.push(encodeEnum(2, options.rkeAction))
   }
 
-  // Information request (field 17)
+  // Information request (field 1)
   if (options.informationRequest) {
-    parts.push(encodeBytes(17, options.informationRequest))
+    parts.push(encodeBytes(1, options.informationRequest))
   }
 
   return concat(...parts)
@@ -219,15 +225,17 @@ function parseSessionInfo(data) {
 }
 
 // Parse RoutableMessage response
+// Fields: 6=to_dest, 7=from_dest, 10=payload, 12=signedMessageStatus, 15=session_info, 50=request_uuid
 function parseRoutableMessage(data) {
   const fields = decodeMessage(data)
 
   return {
-    fromDestination: fields[2] ? decodeMessage(fields[2]) : null,
-    payload: fields[3] || null,
-    sessionInfo: fields[7] ? parseSessionInfo(fields[7]) : null,
-    signedMessageStatus: fields[8] || null,
-    uuid: fields[12] || null
+    toDestination: fields[6] ? decodeMessage(fields[6]) : null,
+    fromDestination: fields[7] ? decodeMessage(fields[7]) : null,
+    payload: fields[10] || null,
+    signedMessageStatus: fields[12] || null,
+    sessionInfo: fields[15] ? parseSessionInfo(fields[15]) : null,
+    uuid: fields[50] || null
   }
 }
 
@@ -253,36 +261,42 @@ function buildKeyPermissions(options = {}) {
   return new Uint8Array(0)
 }
 
-// Build KeyToAdd message
-// Fields:
-//   1: publicKey (bytes) - 65 bytes uncompressed public key
-//   2: role (enum) - KEY_ROLE_OWNER, KEY_ROLE_DRIVER, etc.
-//   6: formFactor (enum) - what type of device this key is
+// Build PublicKey message
+// Fields from vcsec.proto:
+//   1: PublicKeyRaw (bytes) - 65 bytes uncompressed public key
+function buildPublicKey(publicKeyBytes) {
+  return encodeBytes(1, publicKeyBytes)
+}
+
+// Build KeyToAdd message (deprecated - use buildPublicKey for simple whitelist add)
+// For compatibility, this now just wraps buildPublicKey
 function buildKeyToAdd(publicKey, role = KEY_ROLE_OWNER, formFactor = KEY_FORM_FACTOR_ANDROID_DEVICE) {
-  const parts = []
+  // Note: role and formFactor are ignored - PublicKey message only has PublicKeyRaw
+  // For adding keys with specific roles, use PermissionChange message instead
+  return buildPublicKey(publicKey)
+}
 
-  // publicKey (field 1)
-  parts.push(encodeBytes(1, publicKey))
-
-  // role (field 2)
-  parts.push(encodeEnum(2, role))
-
-  // formFactor (field 6)
-  parts.push(encodeEnum(6, formFactor))
-
-  return concat(...parts)
+// Build KeyMetadata message
+// Fields:
+//   1: keyFormFactor (enum)
+function buildKeyMetadata(keyFormFactor) {
+  return encodeEnum(1, keyFormFactor)
 }
 
 // Build WhitelistOperation message
 // This is the main message for adding/removing keys from the vehicle
 // Fields:
-//   1: addKeyToWhitelistRequest (KeyToAdd message)
+//   1: addPublicKeyToWhitelist (PublicKey message)
 //   16: metadataForKey (KeyMetadata)
-function buildWhitelistOperation(keyToAdd) {
+function buildWhitelistOperation(keyToAdd, keyFormFactor = KEY_FORM_FACTOR_ANDROID_DEVICE) {
   const parts = []
 
-  // addKeyToWhitelistRequest (field 1)
+  // addPublicKeyToWhitelist (field 1)
   parts.push(encodeBytes(1, keyToAdd))
+
+  // metadataForKey (field 16) - required for Tesla to process pairing
+  const metadata = buildKeyMetadata(keyFormFactor)
+  parts.push(encodeBytes(16, metadata))
 
   return concat(...parts)
 }
@@ -294,15 +308,89 @@ function buildUnsignedMessageWithWhitelist(whitelistOperation) {
   return encodeBytes(16, whitelistOperation)
 }
 
-// Parse WhitelistOperation response
-// Returns operation status
+// Parse CommandStatus from FromVCSECMessage
+// Fields from vcsec.proto:
+//   1: operationStatus (OperationStatus_E enum)
+//   2: signedMessageFault (SignedMessage_information_E)
+//   3: whitelistOperationFault (WhitelistOperation_information_E)
+function parseCommandStatus(data) {
+  const fields = decodeMessage(data)
+
+  return {
+    operationStatus: fields[1] !== undefined ? fields[1] : null,
+    signedMessageFault: fields[2] !== undefined ? fields[2] : null,
+    whitelistOperationFault: fields[3] !== undefined ? fields[3] : null
+  }
+}
+
+// Parse FromVCSECMessage response
+// Fields from vcsec.proto:
+//   1: vehicleStatus
+//   4: commandStatus (CommandStatus)
+//   16: whitelistInfo
+//   17: whitelistEntryInfo
+function parseFromVCSECMessage(data) {
+  const fields = decodeMessage(data)
+
+  const result = {
+    type: null,
+    commandStatus: null,
+    vehicleStatus: null,
+    rawFields: fields
+  }
+
+  if (fields[4]) {
+    result.type = 'commandStatus'
+    result.commandStatus = parseCommandStatus(fields[4])
+  } else if (fields[1]) {
+    result.type = 'vehicleStatus'
+    result.vehicleStatus = fields[1]
+  } else if (fields[16]) {
+    result.type = 'whitelistInfo'
+  } else if (fields[17]) {
+    result.type = 'whitelistEntryInfo'
+  }
+
+  return result
+}
+
+// Parse complete pairing response from RoutableMessage
+// Extracts the FromVCSECMessage from the payload
+function parsePairingResponse(data) {
+  try {
+    const routable = parseRoutableMessage(data)
+
+    if (!routable.payload) {
+      return { success: false, error: 'No payload in response' }
+    }
+
+    const fromVcsec = parseFromVCSECMessage(routable.payload)
+
+    if (fromVcsec.type === 'commandStatus' && fromVcsec.commandStatus) {
+      const status = fromVcsec.commandStatus.operationStatus
+
+      if (status === OPERATIONSTATUS_OK) {
+        return { success: true, status: 'ok', message: 'Key added successfully' }
+      } else if (status === OPERATIONSTATUS_WAIT) {
+        return { success: true, status: 'wait', message: 'Tap key card on car' }
+      } else if (status === OPERATIONSTATUS_ERROR) {
+        const fault = fromVcsec.commandStatus.whitelistOperationFault
+        return { success: false, status: 'error', error: `Whitelist error: ${fault}` }
+      }
+    }
+
+    return { success: false, error: 'Unknown response format', rawFields: fromVcsec.rawFields }
+  } catch (e) {
+    return { success: false, error: e.message }
+  }
+}
+
+// Parse WhitelistOperation response (deprecated - use parsePairingResponse)
 function parseWhitelistOperationStatus(data) {
   const fields = decodeMessage(data)
 
-  // Field 17 contains the whitelist operation status
-  // Field 1 of that is signedMessageStatus or operationStatus
   return {
-    success: true, // If we got here without error, likely success
+    success: true,
     rawFields: fields
   }
 }
@@ -328,6 +416,9 @@ export {
   KEY_ROLE_DRIVER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,
   KEY_FORM_FACTOR_CLOUD_KEY,
+  OPERATIONSTATUS_OK,
+  OPERATIONSTATUS_WAIT,
+  OPERATIONSTATUS_ERROR,
 
   // Builders
   buildRoutableMessage,
@@ -336,13 +427,18 @@ export {
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
+  buildPublicKey,
   buildKeyToAdd,
+  buildKeyMetadata,
   buildWhitelistOperation,
   buildUnsignedMessageWithWhitelist,
 
   // Parsers
   parseSessionInfo,
   parseRoutableMessage,
+  parseCommandStatus,
+  parseFromVCSECMessage,
+  parsePairingResponse,
   parseWhitelistOperationStatus,
 
   // Utilities

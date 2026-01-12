@@ -163,7 +163,7 @@ describe('BLECryptoSession', () => {
       expect(result.messageHex.length).toBeGreaterThan(100)
     })
 
-    test('message starts with length prefix', () => {
+    test('message does not include length prefix (added by BLE send)', () => {
       const privateKey = generatePrivateKey()
       const publicKey = getPublicKey(privateKey)
       const publicKeyHex = bytesToHex(publicKey)
@@ -171,9 +171,10 @@ describe('BLECryptoSession', () => {
       const result = bleCryptoSession.buildPairMessage(publicKeyHex)
       const messageBytes = hexToBytes(result.messageHex)
 
-      // First 2 bytes are length prefix (big-endian)
-      const length = (messageBytes[0] << 8) | messageBytes[1]
-      expect(length).toBe(messageBytes.length - 2)
+      // Message should NOT have length prefix - that's added by teslaBLE.send()
+      // First byte should be a protobuf field key, not a length byte
+      // Field 6 (to_destination) with wire type 2 = (6 << 3) | 2 = 50 = 0x32
+      expect(messageBytes[0]).toBe(0x32)
     })
 
     test('sets routing address', () => {

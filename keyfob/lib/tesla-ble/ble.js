@@ -1,6 +1,6 @@
 import { BLEMaster } from "@silver-zepp/easy-ble"
 
-// Enable mock mode for testing without real Tesla
+// Enable mock mode for testing without real Tesla (simulator)
 const MOCK_MODE = false
 
 // Tesla BLE UUIDs (from tesla-motors/vehicle-command)
@@ -19,6 +19,8 @@ class TeslaBLE {
     this.mac = null
     this.profile = null
     this.responseCallback = null
+    this.writeCompleteHandler = null
+    this.charaValueHandler = null
 
     // Tesla service profile for easy-ble
     // Write characteristic: no descriptor needed
@@ -149,13 +151,14 @@ class TeslaBLE {
           callbackCalled = true
 
           if (response.success) {
-            // Set up response handler
-            this._ensureBLE().on.charaValueArrived((uuid, data, len) => {
+            // Set up response handler - store reference to prevent memory leak
+            this.charaValueHandler = (uuid, data, len) => {
               console.log('[BLE] Data arrived:', uuid, len)
               if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) {
                 this._handleResponse(data, len)
               }
-            })
+            }
+            this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
 
             // Enable notifications on read characteristic
             console.log('[BLE] Enabling notifications...')
@@ -187,14 +190,26 @@ class TeslaBLE {
       this.mac = null
       return
     }
+
+    // Clean up handlers to prevent memory leaks
     if (this.ble) {
+      if (this.writeCompleteHandler) {
+        this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+        this.writeCompleteHandler = null
+      }
+      if (this.charaValueHandler) {
+        this._ensureBLE().off.charaValueArrived(this.charaValueHandler)
+        this.charaValueHandler = null
+      }
       this._ensureBLE().off.deregisterAll()
       this._ensureBLE().quit()
       this.ble = null
     }
+
     this.connected = false
     this.mac = null
     this.profile = null
+    this.responseCallback = null
   }
 
   // Send command to vehicle (with 2-byte length prefix)
@@ -225,23 +240,105 @@ class TeslaBLE {
     message[1] = length & 0xFF          // Low byte
     message.set(data, 2)
 
+    console.log('[BLE] Preparing to write', message.length, 'bytes to Tesla')
+    console.log('[BLE] First 20 bytes:', Array.from(message.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' '))
+
+    // Set up write complete handler - use single handler to prevent memory leak
+    // Remove previous handler before adding new one
+    if (this.writeCompleteHandler) {
+      this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+    }
+
+    this.writeCompleteHandler = (uuid, status) => {
+      if (uuid.toUpperCase() === TESLA_WRITE_UUID.toUpperCase()) {
+        console.log('[BLE] Write complete, status:', status)
+        if (status !== 0) {
+          if (this.responseCallback) {
+            this.responseCallback({ success: false, error: `Write failed: ${status}` })
+            this.responseCallback = null
+          }
+        } else {
+          // Write succeeded - for pairing, Tesla responds after keycard tap
+          // Call success immediately so UI can prompt user
+          if (this.responseCallback) {
+            this.responseCallback({ success: true })
+            this.responseCallback = null
+          }
+        }
+      }
+    }
+
+    this._ensureBLE().on.charaWriteComplete(this.writeCompleteHandler)
+
     // Write to Tesla write characteristic
+    console.log('[BLE] Writing to characteristic...')
     this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer)
+  }
+
+  // Send command and wait for Tesla's response via BLE notification
+  // Use this for operations that expect a response (pairing, commands)
+  sendAndWaitForResponse(data, callback, timeout = 30000) {
+    if (!this.connected) {
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    // Mock mode
+    if (MOCK_MODE) {
+      console.log('[BLE MOCK] Sending', data.length, 'bytes and waiting for response')
+      setTimeout(() => {
+        callback({ success: true, data: new Uint8Array([0x52, 0x03, 0x08, 0x01]) })
+      }, 500)
+      return
+    }
+
+    // Set up timeout for response
+    const responseTimeout = setTimeout(() => {
+      console.log('[BLE] Response timeout')
+      this.responseCallback = null
+      callback({ success: false, error: 'Response timeout' })
+    }, timeout)
+
+    // Store callback that will be triggered when data arrives
+    this.responseCallback = (result) => {
+      clearTimeout(responseTimeout)
+      callback(result)
+    }
+
+    // Add 2-byte big-endian length prefix
+    const length = data.length
+    const message = new Uint8Array(2 + length)
+    message[0] = (length >> 8) & 0xFF
+    message[1] = length & 0xFF
+    message.set(data, 2)
+
+    console.log('[BLE] Sending', message.length, 'bytes and waiting for response')
 
     // Set up write complete handler
-    this._ensureBLE().on.charaWriteComplete((uuid, status) => {
+    if (this.writeCompleteHandler) {
+      this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+    }
+
+    this.writeCompleteHandler = (uuid, status) => {
       if (uuid.toUpperCase() === TESLA_WRITE_UUID.toUpperCase()) {
+        console.log('[BLE] Write complete, status:', status, '- waiting for response...')
         if (status !== 0) {
-          this.responseCallback({ success: false, error: `Write failed: ${status}` })
+          clearTimeout(responseTimeout)
           this.responseCallback = null
+          callback({ success: false, error: `Write failed: ${status}` })
         }
-        // Otherwise wait for response via charaValueArrived
+        // On success, don't call callback - wait for response via _handleResponse
       }
-    })
+    }
+
+    this._ensureBLE().on.charaWriteComplete(this.writeCompleteHandler)
+    this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer)
   }
 
   // Handle response from vehicle
   _handleResponse(data, len) {
+    console.log('[BLE] _handleResponse called, have callback:', !!this.responseCallback)
+
     if (!this.responseCallback) return
 
     // Parse length prefix
@@ -254,6 +351,8 @@ class TeslaBLE {
 
     const messageLength = (view[0] << 8) | view[1]
     const payload = view.slice(2, 2 + messageLength)
+
+    console.log('[BLE] Got response payload:', messageLength, 'bytes')
 
     this.responseCallback({ success: true, data: payload })
     this.responseCallback = null

@@ -361,35 +361,44 @@ function ecdh(privateKeyBytes, publicKeyBytes) {
 
 const DOMAIN_VEHICLE_SECURITY = 2
 const SIGNATURE_TYPE_HMAC = 5
+
+// RKE Actions from vcsec.proto RKEAction_E enum
 const RKE_ACTION_UNLOCK = 0
 const RKE_ACTION_LOCK = 1
 const RKE_ACTION_OPEN_TRUNK = 2
 const RKE_ACTION_OPEN_FRUNK = 3
-const KEY_ROLE_OWNER = 0
-const KEY_FORM_FACTOR_ANDROID_DEVICE = 7
 
 // ============================================
 // Tesla VCSEC Message Builders
 // ============================================
 
 function buildRoutableMessage(options) {
+  // RoutableMessage field numbers from universal_message.proto:
+  // 6: to_destination (Destination)
+  // 7: from_destination (Destination)
+  // 10: protobuf_message_as_bytes (payload)
+  // 14: session_info_request
+  // 50: request_uuid
+  // 51: uuid
   const parts = []
   if (options.toDomain !== undefined) {
+    // Destination { domain (field 1) = value }
     const destination = encodeEnum(1, options.toDomain)
-    parts.push(encodeBytes(1, destination))
+    parts.push(encodeBytes(6, destination))  // to_destination is field 6
   }
   if (options.routingAddress) {
+    // Destination { routing_address (field 2) = bytes }
     const destination = encodeBytes(2, options.routingAddress)
-    parts.push(encodeBytes(2, destination))
+    parts.push(encodeBytes(7, destination))  // from_destination is field 7
   }
   if (options.payload) {
-    parts.push(encodeBytes(3, options.payload))
+    parts.push(encodeBytes(10, options.payload))  // protobuf_message_as_bytes is field 10
   }
   if (options.sessionInfoRequest) {
-    parts.push(encodeBytes(6, options.sessionInfoRequest))
+    parts.push(encodeBytes(14, options.sessionInfoRequest))  // session_info_request is field 14
   }
   if (options.uuid) {
-    parts.push(encodeBytes(12, options.uuid))
+    parts.push(encodeBytes(50, options.uuid))  // request_uuid is field 50
   }
   return concat(...parts)
 }
@@ -401,16 +410,32 @@ function buildSessionInfoRequest(publicKey, challenge) {
   return concat(...parts)
 }
 
-function buildKeyToAdd(publicKey, role, formFactor) {
-  return concat(
-    encodeBytes(1, publicKey),
-    encodeEnum(2, role),
-    encodeEnum(6, formFactor)
-  )
+function buildPublicKey(publicKeyBytes) {
+  // PublicKey { PublicKeyRaw (field 1) = bytes }
+  return encodeBytes(1, publicKeyBytes)
 }
 
-function buildWhitelistOperation(keyToAdd) {
-  return encodeBytes(1, keyToAdd)
+// Key form factors from vcsec.proto
+const KEY_FORM_FACTOR_ANDROID_DEVICE = 7
+
+function buildKeyMetadata(keyFormFactor) {
+  // KeyMetadata { keyFormFactor (field 1) = enum }
+  return encodeEnum(1, keyFormFactor)
+}
+
+function buildWhitelistOperation(publicKey, keyFormFactor = KEY_FORM_FACTOR_ANDROID_DEVICE) {
+  // WhitelistOperation {
+  //   addPublicKeyToWhitelist (field 1) = PublicKey
+  //   metadataForKey (field 16) = KeyMetadata
+  // }
+  const parts = []
+  parts.push(encodeBytes(1, publicKey))
+
+  // Add metadata with key form factor - required for Tesla to process pairing
+  const metadata = buildKeyMetadata(keyFormFactor)
+  parts.push(encodeBytes(16, metadata))
+
+  return concat(...parts)
 }
 
 function buildUnsignedMessageWithWhitelist(whitelistOp) {
@@ -418,9 +443,14 @@ function buildUnsignedMessageWithWhitelist(whitelistOp) {
 }
 
 function buildUnsignedMessage(options) {
+  // UnsignedMessage field numbers from vcsec.proto:
+  // 1: InformationRequest
+  // 2: RKEAction
+  // 4: closureMoveRequest
+  // 16: WhitelistOperation
   const parts = []
   if (options.rkeAction !== undefined) {
-    parts.push(encodeEnum(1, options.rkeAction))
+    parts.push(encodeEnum(2, options.rkeAction))  // RKEAction is field 2
   }
   return concat(...parts)
 }
@@ -483,15 +513,10 @@ class BLECryptoSession {
       uuid: randomBytes(16)
     })
 
-    // Add 2-byte length prefix
-    const result = new Uint8Array(2 + message.length)
-    result[0] = (message.length >> 8) & 0xFF
-    result[1] = message.length & 0xFF
-    result.set(message, 2)
-
+    // Note: teslaBLE.send() adds the 2-byte length prefix
     return {
       success: true,
-      messageHex: bytesToHex(result),
+      messageHex: bytesToHex(message),
       ephemeralPublicKeyHex: bytesToHex(this.ephemeralPublicKey),
       routingAddressHex: bytesToHex(this.routingAddress)
     }
@@ -502,24 +527,43 @@ class BLECryptoSession {
     try {
       const response = hexToBytes(responseHex)
 
-      // Skip 2-byte length prefix if present
-      let data = response
-      if (response.length > 2) {
-        const len = (response[0] << 8) | response[1]
-        if (len === response.length - 2) {
-          data = response.slice(2)
-        }
+      // Parse RoutableMessage to get session_info (field 15)
+      const routableFields = this._decodeMessage(response)
+      console.log('[Session] Routable fields:', Object.keys(routableFields))
+
+      // Session info is in field 15
+      const sessionInfoBytes = routableFields[15]
+      if (!sessionInfoBytes) {
+        return { success: false, error: 'No session info in response' }
       }
 
-      // Parse response (simplified - extract session info)
-      // The actual parsing would be more complex
-      // For now, we'll extract the vehicle public key from the response
+      // Parse SessionInfo message
+      // Fields: 1=publicKey, 2=epoch, 3=clockTime, 4=counter
+      const sessionFields = this._decodeMessage(sessionInfoBytes)
+      console.log('[Session] Session fields:', Object.keys(sessionFields))
 
-      // Store session info (would parse from response in real implementation)
-      this.vehiclePublicKey = data.slice(2, 67) // Placeholder - needs proper parsing
-      this.epoch = randomBytes(16) // Placeholder
-      this.counter = 1
-      this.clockTime = Math.floor(Date.now() / 1000)
+      // Extract vehicle public key (field 1)
+      this.vehiclePublicKey = sessionFields[1]
+      if (!this.vehiclePublicKey || this.vehiclePublicKey.length !== 65) {
+        return { success: false, error: 'Invalid vehicle public key' }
+      }
+
+      // Extract epoch (field 2) - 16 bytes
+      this.epoch = sessionFields[2]
+      if (!this.epoch) {
+        return { success: false, error: 'No epoch in session info' }
+      }
+
+      // Extract clock time (field 3) - uint32
+      this.clockTime = sessionFields[3] || Math.floor(Date.now() / 1000)
+
+      // Extract counter (field 4) - uint32
+      this.counter = sessionFields[4] || 0
+
+      console.log('[Session] Vehicle public key length:', this.vehiclePublicKey.length)
+      console.log('[Session] Epoch length:', this.epoch.length)
+      console.log('[Session] Clock time:', this.clockTime)
+      console.log('[Session] Counter:', this.counter)
 
       // Derive session key: K = SHA1(ECDH_x)[:16]
       const sharedSecret = ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
@@ -528,32 +572,89 @@ class BLECryptoSession {
 
       this.established = true
 
+      console.log('[Session] Session established successfully')
+
       return {
         success: true,
         established: true,
-        counter: this.counter
+        counter: this.counter,
+        clockTime: this.clockTime,
+        epochHex: bytesToHex(this.epoch)
       }
     } catch (e) {
+      console.log('[Session] Error processing response:', e.message)
       return { success: false, error: e.message }
     }
   }
 
+  // Simple protobuf decoder for session parsing
+  _decodeMessage(data) {
+    const fields = {}
+    let offset = 0
+
+    while (offset < data.length) {
+      // Decode field key (varint)
+      let fieldKey = 0
+      let shift = 0
+      while (offset < data.length) {
+        const byte = data[offset++]
+        fieldKey |= (byte & 0x7f) << shift
+        if ((byte & 0x80) === 0) break
+        shift += 7
+      }
+
+      const fieldNumber = fieldKey >> 3
+      const wireType = fieldKey & 0x07
+
+      if (wireType === 0) {
+        // Varint
+        let value = 0
+        shift = 0
+        while (offset < data.length) {
+          const byte = data[offset++]
+          value |= (byte & 0x7f) << shift
+          if ((byte & 0x80) === 0) break
+          shift += 7
+        }
+        fields[fieldNumber] = value
+      } else if (wireType === 2) {
+        // Length-delimited
+        let length = 0
+        shift = 0
+        while (offset < data.length) {
+          const byte = data[offset++]
+          length |= (byte & 0x7f) << shift
+          if ((byte & 0x80) === 0) break
+          shift += 7
+        }
+        fields[fieldNumber] = data.slice(offset, offset + length)
+        offset += length
+      } else if (wireType === 5) {
+        // 32-bit fixed
+        fields[fieldNumber] = data[offset] | (data[offset + 1] << 8) |
+                              (data[offset + 2] << 16) | (data[offset + 3] << 24)
+        offset += 4
+      } else {
+        // Unknown wire type, skip
+        break
+      }
+    }
+
+    return fields
+  }
+
   // Build pairing message (add key to whitelist)
   buildPairMessage(publicKeyHex) {
-    const publicKey = hexToBytes(publicKeyHex)
+    const publicKeyBytes = hexToBytes(publicKeyHex)
 
-    // Generate routing address
+    // Generate routing address for response routing
     this.routingAddress = randomBytes(16)
 
-    // Build key to add
-    const keyToAdd = buildKeyToAdd(
-      publicKey,
-      KEY_ROLE_OWNER,
-      KEY_FORM_FACTOR_ANDROID_DEVICE
-    )
+    // Build PublicKey message: { PublicKeyRaw (field 1) = bytes }
+    const publicKey = buildPublicKey(publicKeyBytes)
 
-    // Build whitelist operation
-    const whitelistOp = buildWhitelistOperation(keyToAdd)
+    // Build WhitelistOperation: { addPublicKeyToWhitelist (field 1) = PublicKey }
+    const whitelistOp = buildWhitelistOperation(publicKey)
 
     // Build unsigned message with whitelist
     const unsignedMessage = buildUnsignedMessageWithWhitelist(whitelistOp)
@@ -566,15 +667,10 @@ class BLECryptoSession {
       uuid: randomBytes(16)
     })
 
-    // Add 2-byte length prefix
-    const result = new Uint8Array(2 + message.length)
-    result[0] = (message.length >> 8) & 0xFF
-    result[1] = message.length & 0xFF
-    result.set(message, 2)
-
+    // Note: teslaBLE.send() adds the 2-byte length prefix
     return {
       success: true,
-      messageHex: bytesToHex(result)
+      messageHex: bytesToHex(message)
     }
   }
 
@@ -625,15 +721,10 @@ class BLECryptoSession {
       uuid: randomBytes(16)
     })
 
-    // Add 2-byte length prefix
-    const result = new Uint8Array(2 + message.length)
-    result[0] = (message.length >> 8) & 0xFF
-    result[1] = message.length & 0xFF
-    result.set(message, 2)
-
+    // Note: teslaBLE.send() adds the 2-byte length prefix
     return {
       success: true,
-      messageHex: bytesToHex(result),
+      messageHex: bytesToHex(message),
       counter: this.counter
     }
   }

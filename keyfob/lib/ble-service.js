@@ -1,8 +1,10 @@
 // BLE Service for Tesla control
 // Wraps tesla-ble library for use in watch pages
-// Pairing uses phone app-side for crypto
+// All crypto runs on watch - no phone needed
 
 import teslaBleApi, { teslaBLE } from './tesla-ble/index.js'
+import teslaSession from './tesla-ble/session.js'
+import { parsePairingResponse } from './tesla-ble/protocol/vcsec.js'
 import { TESLA_PRIVATE_KEY, TESLA_PUBLIC_KEY } from '../../secrets.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 
@@ -56,6 +58,20 @@ class BleService {
     this.initialized = false
     this.requestFunc = null // Function to call app-side
     this.sessionKeyPool = [] // Pre-generated session keys for standalone operation
+    this.debugCallback = null // Callback for showing debug toasts
+  }
+
+  // Set debug callback for showing toast messages
+  setDebugCallback(callback) {
+    this.debugCallback = callback
+  }
+
+  // Show debug toast (if callback set)
+  debug(message) {
+    console.log('[BLE Debug]', message)
+    if (this.debugCallback) {
+      this.debugCallback(message)
+    }
   }
 
   // Initialize the BLE service
@@ -205,6 +221,11 @@ class BleService {
     return bytes
   }
 
+  // Helper: convert bytes to hex
+  bytesToHex(bytes) {
+    return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+  }
+
   // Scan for Tesla vehicles
   scan(callback, duration = 15000) {
     this.notify('scanning', 'Scanning...')
@@ -270,61 +291,274 @@ class BleService {
   }
 
   // Pair key with vehicle - uses app-side crypto
+  // Flow: Send pairing request -> Wait for WAIT status -> User taps keycard -> Wait for OK status
   pair(callback) {
+    this.debug('pair() called')
+
     if (!this.isConnected()) {
+      this.debug('Not connected!')
       callback({ success: false, error: 'Not connected' })
       return
     }
 
     if (!TESLA_PUBLIC_KEY) {
+      this.debug('No public key!')
       callback({ success: false, error: 'No public key' })
       return
     }
 
     this.notify('busy', 'Pairing...')
+    this.debug('Building pair msg...')
 
     // Get pair message from app-side (phone does the crypto)
     this.callAppSide('BLE_PAIR', { publicKeyHex: TESLA_PUBLIC_KEY })
       .then(result => {
+        this.debug(`Msg built: ${result.success}`)
         if (!result.success) {
+          this.debug(`Error: ${result.error}`)
           this.notify('error', result.error)
           callback({ success: false, error: result.error })
           return
         }
 
-        // Send message via BLE to Tesla
+        // Send message via BLE and wait for Tesla's response
         const messageBytes = this.hexToBytes(result.messageHex)
-        teslaBLE.send(messageBytes, (bleResult) => {
-          if (bleResult.success) {
-            this.notify('connected', 'Tap key card on car')
-            callback({ success: true, message: 'Tap key card on car' })
-          } else {
+        this.debug(`Sending ${messageBytes.length}B...`)
+
+        teslaBLE.sendAndWaitForResponse(messageBytes, (bleResult) => {
+          this.debug(`Response: ${bleResult.success}`)
+
+          if (!bleResult.success) {
+            this.debug(`BLE err: ${bleResult.error}`)
             this.notify('error', bleResult.error)
             callback({ success: false, error: bleResult.error })
+            return
           }
-        })
+
+          // Log raw response bytes for debugging
+          if (bleResult.data) {
+            const hex = this.bytesToHex(bleResult.data).slice(0, 40)
+            this.debug(`Data: ${hex}...`)
+          }
+
+          // Parse the response
+          const parsed = parsePairingResponse(bleResult.data)
+          this.debug(`Status: ${parsed.status || 'unknown'}`)
+
+          if (parsed.status === 'wait') {
+            // Tesla is waiting for keycard - notify user and wait for second response
+            this.notify('busy', 'Tap key card on car')
+            this.debug('Waiting for keycard...')
+            callback({ success: true, status: 'waiting', message: 'Tap key card on car' })
+
+            // Wait for the confirmation response after keycard tap (60 second timeout)
+            this._waitForPairingConfirmation(callback)
+          } else if (parsed.status === 'ok') {
+            // Key added successfully (unlikely on first response)
+            this.notify('connected', 'Key added!')
+            this.debug('Key added OK!')
+            callback({ success: true, status: 'complete', message: 'Key added successfully' })
+          } else {
+            // Error or unknown status
+            this.debug(`Err: ${parsed.error || 'unknown'}`)
+            this.notify('error', parsed.error || 'Pairing failed')
+            callback({ success: false, error: parsed.error || 'Pairing failed' })
+          }
+        }, 15000) // 15 second timeout for first response
       })
       .catch(err => {
+        this.debug(`Exception: ${err.message}`)
         this.notify('error', err.message)
         callback({ success: false, error: err.message })
       })
   }
 
-  // Commands not yet implemented - need session establishment
+  // Wait for pairing confirmation after keycard tap
+  _waitForPairingConfirmation(callback) {
+    this.debug('Waiting for tap...')
+
+    // Set up a 60 second timeout for keycard tap
+    const timeout = setTimeout(() => {
+      this.debug('Tap timeout!')
+      teslaBLE.responseCallback = null
+      this.notify('error', 'Keycard tap timeout')
+      callback({ success: false, error: 'Keycard tap timeout - try again' })
+    }, 60000)
+
+    // Wait for the response that comes after keycard tap
+    teslaBLE.responseCallback = (result) => {
+      clearTimeout(timeout)
+      this.debug(`Tap response: ${result.success}`)
+
+      if (!result.success) {
+        this.debug(`Tap err: ${result.error}`)
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+        return
+      }
+
+      // Log raw response for debugging
+      if (result.data) {
+        const hex = this.bytesToHex(result.data).slice(0, 40)
+        this.debug(`Tap data: ${hex}...`)
+      }
+
+      const parsed = parsePairingResponse(result.data)
+      this.debug(`Tap status: ${parsed.status || 'unknown'}`)
+
+      if (parsed.status === 'ok') {
+        this.notify('connected', 'Key added!')
+        this.debug('SUCCESS! Key added!')
+        callback({ success: true, status: 'complete', message: 'Key added successfully' })
+      } else if (parsed.status === 'error') {
+        this.debug(`Tap error: ${parsed.error}`)
+        this.notify('error', parsed.error)
+        callback({ success: false, error: parsed.error })
+      } else {
+        this.debug('Unexpected response')
+        this.notify('error', 'Unexpected response')
+        callback({ success: false, error: 'Unexpected response from car' })
+      }
+    }
+  }
+
+  // Establish session with Tesla (ECDH handshake)
+  establishSession(callback) {
+    this.debug('Establishing session...')
+
+    if (!this.isConnected()) {
+      this.debug('Not connected!')
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    // Load keypair from session key pool if available
+    if (this.sessionKeyPool.length > 0) {
+      const keypair = this.sessionKeyPool.shift()
+      this.saveSessionKeys() // Save updated pool
+      teslaSession.setPregenKeypair(keypair.privateKeyHex, keypair.publicKeyHex)
+      this.debug(`Using pooled key (${this.sessionKeyPool.length} left)`)
+    }
+
+    // Set the enrolled key for pairing operations
+    if (TESLA_PRIVATE_KEY && TESLA_PUBLIC_KEY) {
+      teslaSession.setPrivateKey(TESLA_PRIVATE_KEY, TESLA_PUBLIC_KEY)
+    }
+
+    this.notify('busy', 'Session...')
+
+    teslaSession.requestSessionInfo((result) => {
+      this.debug(`Session: ${result.success ? 'OK' : result.error}`)
+
+      if (result.success) {
+        this.notify('connected', 'Session OK')
+        callback({ success: true, counter: result.counter })
+      } else {
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+      }
+    })
+  }
+
+  // Check if session is established
+  isSessionEstablished() {
+    return teslaSession.isEstablished()
+  }
+
+  // Lock vehicle
   lock(callback) {
-    callback({ success: false, error: 'Not implemented yet' })
+    this.debug('Lock...')
+
+    if (!this.isConnected()) {
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    this.notify('busy', 'Locking...')
+
+    teslaSession.lock((result) => {
+      this.debug(`Lock: ${result.success ? 'OK' : result.error}`)
+
+      if (result.success) {
+        this.notify('connected', 'Locked')
+        callback({ success: true })
+      } else {
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+      }
+    })
   }
 
+  // Unlock vehicle
   unlock(callback) {
-    callback({ success: false, error: 'Not implemented yet' })
+    this.debug('Unlock...')
+
+    if (!this.isConnected()) {
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    this.notify('busy', 'Unlocking...')
+
+    teslaSession.unlock((result) => {
+      this.debug(`Unlock: ${result.success ? 'OK' : result.error}`)
+
+      if (result.success) {
+        this.notify('connected', 'Unlocked')
+        callback({ success: true })
+      } else {
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+      }
+    })
   }
 
+  // Open trunk
   openTrunk(callback) {
-    callback({ success: false, error: 'Not implemented yet' })
+    this.debug('Trunk...')
+
+    if (!this.isConnected()) {
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    this.notify('busy', 'Opening trunk...')
+
+    teslaSession.openTrunk((result) => {
+      this.debug(`Trunk: ${result.success ? 'OK' : result.error}`)
+
+      if (result.success) {
+        this.notify('connected', 'Trunk opened')
+        callback({ success: true })
+      } else {
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+      }
+    })
   }
 
+  // Open frunk
   openFrunk(callback) {
-    callback({ success: false, error: 'Not implemented yet' })
+    this.debug('Frunk...')
+
+    if (!this.isConnected()) {
+      callback({ success: false, error: 'Not connected' })
+      return
+    }
+
+    this.notify('busy', 'Opening frunk...')
+
+    teslaSession.openFrunk((result) => {
+      this.debug(`Frunk: ${result.success ? 'OK' : result.error}`)
+
+      if (result.success) {
+        this.notify('connected', 'Frunk opened')
+        callback({ success: true })
+      } else {
+        this.notify('error', result.error)
+        callback({ success: false, error: result.error })
+      }
+    })
   }
 
   getStatus() {
