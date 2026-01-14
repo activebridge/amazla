@@ -1,0 +1,5 @@
+AppSideService({
+  onInit() {},
+  onRun() {},
+  onDestroy() {}
+})

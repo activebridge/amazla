@@ -1,0 +1,48 @@
+{
+  "configVersion": "v3",
+  "app": {
+    "appId": 1039931,
+    "appName": "🔐 Authenticator",
+    "appType": "app",
+    "version": {
+      "code": 300,
+      "name": "3.0.0"
+    },
+    "icon": "icon.png",
+    "vender": "activebridge",
+    "description": "TOTP Authenticator App"
+  },
+  "permissions": [],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "3.0.0",
+      "target": "3.0.0",
+      "minVersion": "3.0"
+    }
+  },
+  "targets": {
+    "default": {
+      "module": {
+        "page": {
+          "pages": [
+            "page/index"
+          ]
+        },
+        "app-side": {
+          "path": "app-side/index"
+        },
+        "setting": {
+          "path": "setting/index"
+        }
+      },
+      "platforms": [{ "st": "r" }, { "st": "s" }, { "st": "b" }],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Authenticator"
+    }
+  },
+  "defaultLanguage": "en-US"
+}
