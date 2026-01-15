@@ -46,8 +46,43 @@ const setup = () => {
     doc.head.appendChild(style)
   }
 
+  let countEl = null
+  let totalCount = 0
+
+  const updateCounter = (matching, total) => {
+    if (!countEl) return
+    totalCount = total ?? totalCount
+    if (input?.value && matching !== totalCount) {
+      countEl.textContent = `${matching}/${totalCount}`
+    } else {
+      countEl.textContent = totalCount.toString()
+    }
+  }
+
   const createInput = () => {
     if (!textElement || input) return
+
+    // Find and keep reference to the count element (sibling of placeholder)
+    countEl = textElement.nextElementSibling
+    const { cards } = findCardsByHandle()
+    totalCount = cards.length
+
+    // Position counter absolutely (width: 0 to remove from flex flow)
+    if (countEl) {
+      countEl.style.cssText = `
+        position: absolute;
+        right: 36px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 12px;
+        color: #6e7377;
+        width: 0;
+        overflow: visible;
+        white-space: nowrap;
+        text-align: right;
+        direction: rtl;
+      `
+    }
 
     input = doc.createElement('input')
     input.type = 'search'
@@ -63,12 +98,12 @@ const setup = () => {
       background: transparent;
       color: #e8eaed;
       min-width: 0;
-      width: 100%;
     `
 
     injectStyles()
     input.addEventListener('input', onSearch)
     searchContainer.classList.add('search-container')
+    searchContainer.style.position = 'relative'
     textElement.parentElement.replaceChild(input, textElement)
     input.focus()
     onSearch()
@@ -153,6 +188,7 @@ const setup = () => {
 
     isFiltering = !!query
     showNoAccounts(visibleCount === 0)
+    updateCounter(visibleCount, cards.length)
   }
 
   const onClick = (e) => {
@@ -168,4 +204,44 @@ const setup = () => {
   }
 
   doc.body.addEventListener('click', onClick)
+
+  // Re-apply filter when React re-renders new cards or count changes
+  setInterval(() => {
+    if (!input) return
+
+    const { cards, handles } = findCardsByHandle()
+    const query = input?.value?.trim() || ''
+
+    // Check if count changed or any card is new
+    const hasNewCards = cards.some(card => !card.hasAttribute('data-filterable'))
+    const countChanged = cards.length !== totalCount
+
+    if (!hasNewCards && !countChanged) return
+
+    // Re-apply filter to all cards
+    let visibleCount = 0
+    cards.forEach(card => {
+      card.setAttribute('data-filterable', 'true')
+      const visible = !query || matchesQuery(card.textContent || '', query)
+      if (visible) {
+        card.style.transition = 'none'
+        card.style.maxHeight = '200px'
+        card.style.opacity = '1'
+        card.style.marginBottom = '12px'
+        card.dataset.hidden = 'false'
+        visibleCount++
+      } else {
+        card.style.transition = 'none'
+        card.style.maxHeight = '0px'
+        card.style.opacity = '0'
+        card.style.marginBottom = '0px'
+        card.dataset.hidden = 'true'
+      }
+    })
+
+    if (query) {
+      handles.forEach(h => { h.style.opacity = '0' })
+    }
+    updateCounter(visibleCount, cards.length)
+  }, 100)
 }

@@ -130,16 +130,6 @@ const handleImport = (e) => {
   }
 }
 
-const handleUrlInput = (url) => {
-  if (!url) return
-
-  if (url.startsWith('otpauth-migration://') || url.startsWith('otpauth://')) {
-    importFromUrl(url)
-  } else {
-    store.status = 'Invalid URL format'
-  }
-  setTimeout(() => store.clearUrlInput(), 10)
-}
 
 const BUTTON_STYLE = {
   padding: '8px',
@@ -195,17 +185,27 @@ const HINT_TEXT = {
   textAlign: 'center',
 }
 
-const URL_INPUT_STYLE = {
+const URL_INPUT_CONTAINER = {
   marginTop: '12px',
-  background: '#1D1E1F',
-  border: 'none',
-  borderRadius: '12px',
-  color: '#8ab4f8',
+  position: 'relative',
+  height: '40px',
+}
+
+const URL_ICON = {
+  position: 'absolute',
+  left: '14px',
+  top: '50%',
+  transform: 'translateY(-50%)',
   fontSize: '14px',
-  textAlign: 'center',
-  display: 'block',
-  padding: '14px 16px',
-  boxShadow: '3px 3px 6px #0d0d0d, -2px -2px 5px #272727',
+  zIndex: 1,
+  pointerEvents: 'none',
+}
+
+const URL_PLACEHOLDER = {
+  color: '#6e7377',
+  lineHeight: '40px',
+  fontSize: '14px',
+  paddingLeft: '36px',
 }
 
 const ADD_BUTTON_STYLE = {
@@ -262,16 +262,10 @@ export const AddButton = () => {
 
       Text({ paragraph: true, style: HINT_TEXT }, 'QR screenshot or JSON'),
 
-      TextInput({
-        label: 'Paste URL',
-        labelStyle: URL_INPUT_STYLE,
-        placeholder: 'otpauth://...',
-        settingsKey: 'url_input',
-        onChange: (url) => {
-          handleUrlInput(url)
-          store.showAddMenu = false
-        },
-      }),
+      View({ style: URL_INPUT_CONTAINER }, [
+        Text({ style: URL_ICON }, '🔗'),
+        Text({ style: URL_PLACEHOLDER }, 'Paste URL'),
+      ]),
     ]),
   ])
 }

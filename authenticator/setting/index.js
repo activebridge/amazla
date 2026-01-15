@@ -3,6 +3,7 @@ import { Body } from './components/body.js'
 import { initStore, store } from './store.js'
 import { initSortable } from './libs/sortable.js'
 import { initSearch } from './libs/search.js'
+import { initUrlInput } from './libs/urlInput.js'
 
 const ROOT = {
   background: '#1D1E1F',
@@ -17,6 +18,7 @@ const ROOT = {
 const initAll = (e, settingsStorage) => {
   initSortable(e, settingsStorage)
   initSearch(e)
+  initUrlInput(e)
 }
 
 AppSettingsPage({

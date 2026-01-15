@@ -152,6 +152,24 @@ export const HelpButton = () => {
           onClick: () => { store.showHelp = false },
         }),
         Title('🔐 Help'),
+        View({
+          style: {
+            marginTop: '10px',
+            padding: '8px 12px',
+            color: 'white',
+            fontSize: '14px',
+            cursor: 'pointer',
+            background: 'linear-gradient(145deg, #1c7efa, #1865c5)',
+            borderRadius: '10px',
+            textAlign: 'center',
+            boxShadow: '3px 3px 6px #0d0d0d, -2px -2px 5px #272727',
+          },
+        }, [
+          Auth({
+            label: '❓ Feedback or Suggestions 🗯️',
+            authorizeUrl: 'https://buymeacoffee.com/galulex',
+          }),
+        ]),
       ]),
 
       View({ style: POPUP_CONTENT }, [
