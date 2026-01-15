@@ -4,7 +4,7 @@ import * as hmUI from '@zos/ui'
 import UI, { height as h, text } from './../../../../pages/ui.js'
 import { keyListener } from './keys.js'
 import { response } from './response.js'
-import { keepScreenOn } from './screen.js'
+import { keepScreenOn } from './../../../../../zeppify/screen.js'
 import { Slide } from './slide.js'
 import { localStorage } from './utils.js'
 
@@ -124,6 +124,7 @@ Page(
     },
 
     onDestroy() {
+      const { config: { awake } = {} } = app.state.settings || {}
       if (awake) keepScreenOn(false)
     },
   }),

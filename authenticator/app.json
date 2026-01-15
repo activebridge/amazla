@@ -12,7 +12,10 @@
     "vender": "activebridge",
     "description": "TOTP Authenticator App"
   },
-  "permissions": [],
+  "permissions": [
+    "data:os.device.info",
+    "device:os.local_storage"
+  ],
   "runtime": {
     "apiVersion": {
       "compatible": "3.0.0",
@@ -25,7 +28,7 @@
       "module": {
         "page": {
           "pages": [
-            "page/index"
+            "page/index.page"
           ]
         },
         "app-side": {

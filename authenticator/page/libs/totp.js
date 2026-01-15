@@ -1,14 +1,28 @@
-// Base32 decoder
+// Optimized TOTP implementation for low-power devices
+
+// Pre-allocated buffers for SHA1
+const w = new Uint32Array(80)
+const msgBuffer = new Uint8Array(128)
+
+// Cache for decoded keys (secret -> Uint8Array)
+const keyCache = new Map()
+
+// Cache for TOTP codes (secret -> { code, period })
+const codeCache = new Map()
+
+// Base32 decoder with caching
 function base32Decode(str) {
+  if (keyCache.has(str)) return keyCache.get(str)
+
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
-  str = str.toUpperCase().replace(/=+$/, '')
+  const input = str.toUpperCase().replace(/=+$/, '')
 
   let bits = 0
   let value = 0
   const output = []
 
-  for (let i = 0; i < str.length; i++) {
-    const idx = alphabet.indexOf(str[i])
+  for (let i = 0; i < input.length; i++) {
+    const idx = alphabet.indexOf(input[i])
     if (idx === -1) continue
     value = (value << 5) | idx
     bits += 5
@@ -18,58 +32,39 @@ function base32Decode(str) {
     }
   }
 
-  return output
+  const result = new Uint8Array(output)
+  keyCache.set(str, result)
+  return result
 }
 
-// HMAC-SHA1 implementation
-function hmacSha1(key, message) {
-  const blockSize = 64
+// Optimized SHA1 with pre-allocated buffers
+function sha1(message, msgLen) {
+  const ml = msgLen * 8
 
-  // Pad or hash key
-  if (key.length > blockSize) {
-    key = sha1(key)
-  }
-  while (key.length < blockSize) {
-    key.push(0)
-  }
-
-  const oKeyPad = key.map(b => b ^ 0x5c)
-  const iKeyPad = key.map(b => b ^ 0x36)
-
-  const inner = sha1([...iKeyPad, ...message])
-  return sha1([...oKeyPad, ...inner])
-}
-
-// SHA1 implementation
-function sha1(message) {
-  const ml = message.length * 8
-
-  // Pre-processing
-  message = [...message, 0x80]
-  while ((message.length % 64) !== 56) {
-    message.push(0)
+  // Copy message to buffer and pad
+  let len = msgLen
+  msgBuffer[len++] = 0x80
+  while ((len % 64) !== 56) {
+    msgBuffer[len++] = 0
   }
 
-  // Append length
-  for (let i = 56; i >= 0; i -= 8) {
-    message.push((ml >>> i) & 0xff)
+  // Append length (big-endian 64-bit)
+  for (let i = 7; i >= 0; i--) {
+    msgBuffer[len++] = (i < 4) ? ((ml >>> (i * 8)) & 0xff) : 0
   }
 
-  // Initialize hash values
   let h0 = 0x67452301
   let h1 = 0xefcdab89
   let h2 = 0x98badcfe
   let h3 = 0x10325476
   let h4 = 0xc3d2e1f0
 
-  // Process chunks
-  for (let i = 0; i < message.length; i += 64) {
-    const w = []
+  for (let i = 0; i < len; i += 64) {
     for (let j = 0; j < 16; j++) {
-      w[j] = (message[i + j * 4] << 24) |
-             (message[i + j * 4 + 1] << 16) |
-             (message[i + j * 4 + 2] << 8) |
-             message[i + j * 4 + 3]
+      w[j] = (msgBuffer[i + j * 4] << 24) |
+             (msgBuffer[i + j * 4 + 1] << 16) |
+             (msgBuffer[i + j * 4 + 2] << 8) |
+             msgBuffer[i + j * 4 + 3]
     }
 
     for (let j = 16; j < 80; j++) {
@@ -110,29 +105,66 @@ function sha1(message) {
     h4 = (h4 + e) >>> 0
   }
 
-  return [
+  return new Uint8Array([
     (h0 >>> 24) & 0xff, (h0 >>> 16) & 0xff, (h0 >>> 8) & 0xff, h0 & 0xff,
     (h1 >>> 24) & 0xff, (h1 >>> 16) & 0xff, (h1 >>> 8) & 0xff, h1 & 0xff,
     (h2 >>> 24) & 0xff, (h2 >>> 16) & 0xff, (h2 >>> 8) & 0xff, h2 & 0xff,
     (h3 >>> 24) & 0xff, (h3 >>> 16) & 0xff, (h3 >>> 8) & 0xff, h3 & 0xff,
     (h4 >>> 24) & 0xff, (h4 >>> 16) & 0xff, (h4 >>> 8) & 0xff, h4 & 0xff,
-  ]
+  ])
+}
+
+// Optimized HMAC-SHA1
+function hmacSha1(key, message) {
+  const blockSize = 64
+  const keyLen = key.length
+
+  // Prepare key (pad to blockSize)
+  let k = key
+  if (keyLen > blockSize) {
+    for (let i = 0; i < keyLen; i++) msgBuffer[i] = key[i]
+    k = sha1(msgBuffer, keyLen)
+  }
+
+  // Inner hash: SHA1(iKeyPad || message)
+  let pos = 0
+  for (let i = 0; i < blockSize; i++) {
+    msgBuffer[pos++] = (i < k.length ? k[i] : 0) ^ 0x36
+  }
+  for (let i = 0; i < message.length; i++) {
+    msgBuffer[pos++] = message[i]
+  }
+  const inner = sha1(msgBuffer, pos)
+
+  // Outer hash: SHA1(oKeyPad || inner)
+  pos = 0
+  for (let i = 0; i < blockSize; i++) {
+    msgBuffer[pos++] = (i < k.length ? k[i] : 0) ^ 0x5c
+  }
+  for (let i = 0; i < 20; i++) {
+    msgBuffer[pos++] = inner[i]
+  }
+
+  return sha1(msgBuffer, pos)
 }
 
 /**
- * Generate TOTP code
- * @param {string} secret - Base32 encoded secret
- * @param {number} digits - Number of digits (default 6)
- * @param {number} period - Time period in seconds (default 30)
- * @returns {string} - TOTP code
+ * Generate TOTP code with caching
  */
 export function generateTOTP(secret, digits = 6, period = 30) {
+  const currentPeriod = Math.floor(Date.now() / 1000 / period)
+
+  // Check cache
+  const cached = codeCache.get(secret)
+  if (cached && cached.period === currentPeriod) {
+    return cached.code
+  }
+
   const key = base32Decode(secret)
-  const time = Math.floor(Date.now() / 1000 / period)
 
   // Convert time to 8-byte array (big-endian)
-  const timeBytes = []
-  let t = time
+  const timeBytes = new Uint8Array(8)
+  let t = currentPeriod
   for (let i = 7; i >= 0; i--) {
     timeBytes[i] = t & 0xff
     t = Math.floor(t / 256)
@@ -147,23 +179,23 @@ export function generateTOTP(secret, digits = 6, period = 30) {
                ((hash[offset + 2] & 0xff) << 8) |
                (hash[offset + 3] & 0xff)
 
-  const otp = code % Math.pow(10, digits)
-  return otp.toString().padStart(digits, '0')
+  const otp = (code % Math.pow(10, digits)).toString().padStart(digits, '0')
+
+  // Cache result
+  codeCache.set(secret, { code: otp, period: currentPeriod })
+
+  return otp
 }
 
 /**
  * Get remaining seconds in current period
- * @param {number} period - Time period in seconds (default 30)
- * @returns {number} - Seconds remaining
  */
 export function getTimeRemaining(period = 30) {
   return period - (Math.floor(Date.now() / 1000) % period)
 }
 
 /**
- * Format TOTP code with space in middle (e.g., "123 456")
- * @param {string} code - TOTP code
- * @returns {string} - Formatted code
+ * Format TOTP code with space in middle
  */
 export function formatCode(code) {
   const mid = Math.floor(code.length / 2)

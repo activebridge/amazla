@@ -125,6 +125,67 @@ export const animation = (props = {}, group = hmUI) => {
   return animation
 }
 
+export const arc = (props = {}, group = hmUI) => {
+  const arcWidget = group.createWidget(hmUI.widget.ARC, {
+    color: 0x1a73e8,
+    line_width: 8,
+    start_angle: -90,
+    end_angle: -90,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(arcWidget)
+  return arcWidget
+}
+
+export const scrollList = (props = {}, group = hmUI) => {
+  const {
+    x = 0,
+    y = 0,
+    w: listWidth = width,
+    h: listHeight = height,
+    itemHeight = 80,
+    itemSpace = 8,
+    itemBgColor = 0x1a1a1a,
+    itemRadius = 16,
+    data = [],
+    textViews = [],
+    imageViews = [],
+    onClick = () => {},
+    onFocusChange = null,
+    ...rest
+  } = props
+
+  const itemConfig = [{
+    type_id: 1,
+    item_height: itemHeight,
+    item_bg_color: itemBgColor,
+    item_bg_radius: itemRadius,
+    text_view: textViews,
+    text_view_count: textViews.length,
+    image_view: imageViews,
+    image_view_count: imageViews.length,
+  }]
+
+  const listWidget = group.createWidget(hmUI.widget.SCROLL_LIST, {
+    x,
+    y,
+    w: listWidth,
+    h: listHeight,
+    item_space: itemSpace,
+    item_config: itemConfig,
+    item_config_count: itemConfig.length,
+    data_array: data.map(item => ({ ...item, type: 1 })),
+    data_count: data.length,
+    item_click_func: (list, index, key) => onClick(index, data[index], key),
+    item_focus_change_func: onFocusChange,
+    ...rest,
+  })
+
+  widgets.push(listWidget)
+  return listWidget
+}
+
 export default {
   get widgets() { return widgets },
   reset: () => {

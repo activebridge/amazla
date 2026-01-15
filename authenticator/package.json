@@ -12,6 +12,7 @@
     "@zeppos/device-types": "^3.0.0"
   },
   "dependencies": {
+    "@zeppos/zml": "^0.0.9",
     "jsqr": "^1.4.0"
   }
 }
