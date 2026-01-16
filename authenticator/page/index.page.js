@@ -2,15 +2,16 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
 import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
 import { keepScreenOn } from './../../zeppify/screen.js'
-import { text, width, height } from './../../pages/ui.js'
+import UI, { text, width, height } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
 import { getTimeRemaining } from './libs/totp.js'
-import { createTimerArc, updateTimerArc, destroyTimerArc } from './components/arc.js'
-import { createAccountList, updateAccountCodes, destroyAccountList, generateCodesAsync, SNAP_HEIGHT } from './components/list.js'
-import { createFadeOverlay, destroyFadeOverlay } from './components/fade.js'
+import * as hmUI from '@zos/ui'
+import { Timer, stopSpinner } from './components/timer.js'
+import { List, updateCodes } from './components/list.js'
 
 let app = null
-let updateTimer = null
+let timerInterval = null
+let timerArc = null
 
 Page(
   BasePage({
@@ -40,33 +41,27 @@ Page(
           text_size: 18,
           color: 0x888888,
         })
-        createTimerArc()
+        // timerArc = Timer()
         return
       }
 
-      // Create scrollable account list first
-      createAccountList(accounts)
+      // Create scrollable account list
+      List(accounts)
 
-      // Enable swiper scrolling (uses crown/bezel - works with VIEW_CONTAINER)
+      // Enable swiper scrolling (page-based, 3 cards per page)
       setScrollMode({
         mode: SCROLL_MODE_SWIPER,
         options: {
-          height: SNAP_HEIGHT,
+          height: height / 3 | 0,
           count: accounts.length,
         },
       })
 
-      // Create timer arc
-      createTimerArc()
-
-      // Create fade overlay last for highest z-index
-      createFadeOverlay()
+      // Create timer arc and fade overlay
+      timerArc = Timer()
 
       // Initial timer update
       this.updateTimer()
-
-      // Generate TOTP codes async (UI shows placeholders first)
-      generateCodesAsync(accounts)
     },
 
     sync() {
@@ -88,36 +83,39 @@ Page(
     },
 
     startTimer() {
-      updateTimer = setInterval(() => {
+      timerInterval = setInterval(() => {
         this.updateTimer()
         this.checkCodeRefresh()
       }, 1000)
     },
 
     updateTimer() {
+      if (!timerArc) return
       const remaining = getTimeRemaining()
-      updateTimerArc(remaining)
+      timerArc.setProperty(hmUI.prop.MORE, {
+        start_angle: -90 + (remaining / 30) * 360,
+        end_angle: 270,
+      })
     },
 
     checkCodeRefresh() {
       const remaining = getTimeRemaining()
       if (remaining === 30) {
         // Codes just refreshed, update the list
-        updateAccountCodes(this.state.accounts)
+        updateCodes()
       }
     },
 
     cleanup() {
-      destroyFadeOverlay()
-      destroyTimerArc()
-      destroyAccountList()
+      stopSpinner()
+      UI.reset()
     },
 
     onDestroy() {
       keepScreenOn(false)
-      if (updateTimer) {
-        clearInterval(updateTimer)
-        updateTimer = null
+      if (timerInterval) {
+        clearInterval(timerInterval)
+        timerInterval = null
       }
       this.cleanup()
     },

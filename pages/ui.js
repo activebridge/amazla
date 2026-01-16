@@ -5,6 +5,7 @@ import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 // end v1 UI
 
 export const { width, height, screenShape } = getDeviceInfo()
+export const size = Math.min(width, height)
 // const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
 
 let widgets = []
@@ -20,7 +21,10 @@ export const page = (x = 0, y = 0) => {
   return page
 }
 
-const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0 }) => {
+const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0, centered = true }) => {
+  if (!centered) {
+    return { x, y, w, h, center_x: x + w / 2 | 0, center_y: y + h / 2 | 0 }
+  }
   return {
     x: Math.floor(((width - w) / 2) + x),
     y: Math.floor(((bar + height - h) / 2) + y),
@@ -136,6 +140,21 @@ export const arc = (props = {}, group = hmUI) => {
   })
   widgets.push(arcWidget)
   return arcWidget
+}
+
+export const viewContainer = (props = {}) => {
+  const { z_index = 0, scroll_enable = false, ...rest } = props
+  const container = hmUI.createWidget(hmUI.widget.VIEW_CONTAINER, {
+    x: 0,
+    y: 0,
+    w: width,
+    h: height,
+    z_index,
+    scroll_enable,
+    ...rest,
+  })
+  widgets.push(container)
+  return container
 }
 
 export const scrollList = (props = {}, group = hmUI) => {
