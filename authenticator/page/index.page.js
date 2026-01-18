@@ -1,6 +1,6 @@
 import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
-import { showToast, onGesture, offGesture, GESTURE_UP, GESTURE_DOWN } from '@zos/interaction'
+import { showToast } from '@zos/interaction'
 import { keepScreenOn } from './../../zeppify/screen.js'
 import UI, { text, width, height } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
@@ -49,18 +49,9 @@ Page(
       // Create scrollable account list
       List(accounts)
 
-      // Enable swiper scrolling (n + 4 pages: 2 top placeholders, n real, 2 bottom placeholders)
-      const n = accounts.length
-      this.accountCount = n
-      hmUI.setScrollView(true, height / 3 | 0, n + 4, true)
-
-      // Start at first real card (scroll target = 2)
-      hmUI.scrollToPage(2, false)
-
-      // Listen for swipe gestures to handle loop
-      onGesture({
-        callback: (g) => (this.checkScrollLoop(g), false),
-      })
+      // Enable swiper scrolling
+      hmUI.setScrollView(true, height / 3 | 0, accounts.length, true)
+      hmUI.scrollToPage(1, false)
 
       // Create timer arc
       timerArc = Timer()
@@ -96,23 +87,6 @@ Page(
       }, 1000)
     },
 
-    checkScrollLoop(g) {
-      const n = this.accountCount
-      if (n < 2) return
-
-      const p = hmUI.getScrollCurrentPage()
-      const t = g === GESTURE_UP && p >= n + 2 ? 1
-        : g === GESTURE_DOWN && p === 2 ? n + 1
-        : g === GESTURE_DOWN && p === 1 ? n
-        : null
-
-      if (t) {
-        hmUI.setScrollView(false)
-        hmUI.setScrollView(true, height / 3 | 0, n + 4, true)
-        setTimeout(() => hmUI.scrollToPage(t, false), 50)
-      }
-    },
-
     updateTimer() {
       if (!timerArc) return
       const remaining = getTimeRemaining()
@@ -137,7 +111,6 @@ Page(
 
     onDestroy() {
       keepScreenOn(false)
-      offGesture()
       if (timerInterval) {
         clearInterval(timerInterval)
         timerInterval = null

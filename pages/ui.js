@@ -142,6 +142,30 @@ export const arc = (props = {}, group = hmUI) => {
   return arcWidget
 }
 
+export const scrollBar = (props = {}, group = hmUI) => {
+  const { target, ...rest } = props
+  const scrollBarWidget = group.createWidget(hmUI.widget.PAGE_SCROLLBAR, {
+    ...(target && { target }),
+    ...rest,
+  })
+  widgets.push(scrollBarWidget)
+  return scrollBarWidget
+}
+
+export const pageIndicator = (props = {}, group = hmUI) => {
+  const pageIndicatorWidget = group.createWidget(hmUI.widget.PAGE_INDICATOR, {
+    x: 0,
+    y: height - 20,
+    w: width,
+    h: 20,
+    align_h: hmUI.align.CENTER_H,
+    h_space: 8,
+    ...props,
+  })
+  widgets.push(pageIndicatorWidget)
+  return pageIndicatorWidget
+}
+
 export const viewContainer = (props = {}) => {
   const { z_index = 0, scroll_enable = false, ...rest } = props
   const container = hmUI.createWidget(hmUI.widget.VIEW_CONTAINER, {

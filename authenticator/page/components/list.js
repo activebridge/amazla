@@ -1,4 +1,4 @@
-import { height, width, rect } from './../../../pages/ui.js'
+import { height, width, rect, scrollBar } from './../../../pages/ui.js'
 import { Card } from './card.js'
 import { generateTOTP, formatCode } from './../libs/totp.js'
 
@@ -17,7 +17,7 @@ const DIMS = {
   cardsPerPage: 3,
   card: {
     x: (width - CARD_W) / 2 | 0,
-    y: STEP * 2, // Start after 2 placeholder cards
+    y: GAP,
     w: CARD_W,
     h: CARD_H,
     radius: CARD_H * 0.2 | 0,
@@ -35,37 +35,43 @@ const DIMS = {
   },
 }
 
-// Export for scroll loop detection
-export const CARD_STEP = STEP
-
 export const List = (accounts = []) => {
   if (accounts.length === 0) return
 
   storedAccounts = accounts
   const { y, step } = DIMS.card
   const n = accounts.length
-  const visible = Math.min(3, n)
 
+  // if (n > 3) scrollBar()
+
+  // Top placeholder (invisible card)
+  rect({ x: 0, y: 0, w: 1, h: step, color: 0x000000, centered: false })
+
+  const visible = Math.min(3, n)
   const make = (i, yPos) => Card(accounts[i], null, yPos, i, DIMS)
   const code = (card, i) => card.update(getCode(accounts[i]))
 
-  // Batch 1: top placeholders + visible cards
-  const top = [make(n - 2, 0), make(n - 1, STEP)]
-  for (let i = 0; i < visible; i++) cardWidgets.push(make(i, y + i * step))
+  // Batch 1: first 3 visible cards
+  for (let i = 0; i < visible; i++) {
+    cardWidgets.push(make(i, y + (i + 1) * step))
+  }
 
   setTimeout(() => {
-    top.forEach((card, i) => code(card, n - 2 + i))
+    // Fill first 3 with codes
     for (let i = 0; i < visible; i++) code(cardWidgets[i], i)
 
-    // Batch 2: remaining cards + bottom placeholders
+    // Batch 2: remaining cards
     setTimeout(() => {
-      for (let i = visible; i < n; i++) cardWidgets.push(make(i, y + i * step))
-      const bottom = [make(0, y + n * step), make(Math.min(1, n - 1), y + (n + 1) * step)]
-      rect({ x: 0, y: y + (n + 2) * step, w: 1, h: 1, color: 0x000000, centered: false })
+      for (let i = visible; i < n; i++) {
+        cardWidgets.push(make(i, y + (i + 1) * step))
+      }
+
+      // Bottom placeholder (invisible card)
+      rect({ x: 0, y: y + (n + 1) * step, w: 1, h: step, color: 0x000000, centered: false })
 
       setTimeout(() => {
+        // Fill remaining with codes
         for (let i = visible; i < n; i++) code(cardWidgets[i], i)
-        bottom.forEach((card, i) => code(card, Math.min(i, n - 1)))
       }, 100)
     }, 100)
   }, 100)
