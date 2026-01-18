@@ -192,8 +192,8 @@ export const HelpButton = () => {
         P('• 📸 Screenshot any TOTP QR code'),
         P('• Tap the ➕ button'),
         P('• Tap "Import from File"'),
-        P('• 🖼️ Select the screenshot'),
-        P('• ✨ Account imported automatically'),
+        P('• 🖼️ Select one or multiple screenshots'),
+        P('• ✨ Accounts imported automatically'),
 
         Hr(),
 
@@ -221,7 +221,7 @@ export const HelpButton = () => {
         Section('📄 Supported Formats'),
         P('✅ Google Authenticator export'),
         P('✅ Standard otpauth:// URLs'),
-        P('✅ JSON exports from other apps'),
+        P('✅ Aegis, 2FAS, andOTP, Raivo JSON'),
       ]),
     ]),
   ])

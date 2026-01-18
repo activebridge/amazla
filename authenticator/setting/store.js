@@ -14,11 +14,11 @@ export const store = {
   },
 
   set status(value) {
-    storage.setItem('import_status', value)
     clearTimeout(statusTimeout)
+    storage.setItem('import_status', value)
     statusTimeout = setTimeout(() => {
       storage.removeItem('import_status')
-    }, 3000)
+    }, 4000)
   },
 
   get status() {

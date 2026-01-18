@@ -14,8 +14,6 @@ AppSideService(
     onInit() {},
 
     onRequest(req, res) {
-      console.log('AppSideService onRequest:', req.method)
-
       const methods = {
         SYNC_ACCOUNTS: () => {
           const accounts = getAccounts()
@@ -26,9 +24,7 @@ AppSideService(
       methods[req.method]?.()
     },
 
-    onSettingsChange({ key, newValue }) {
-      console.log('Settings changed:', key)
-    },
+    onSettingsChange() {},
 
     onRun() {},
     onDestroy() {},

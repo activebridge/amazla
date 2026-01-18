@@ -1,4 +1,5 @@
 import { formatCode } from '../../libs/totp'
+import { store } from '../../store.js'
 
 const CONTAINER = {
   flex: 1,
@@ -25,7 +26,7 @@ const codeStyle = (isLow) => ({
   cursor: 'pointer',
 })
 
-const copyCode = (e, code, account) => {
+const copyCode = (e, code) => {
   const win = e?.nativeEvent?.view?.window
   const doc = win?.document
   if (!doc) return
@@ -49,8 +50,8 @@ const copyCode = (e, code, account) => {
   }
 
   copy()
-    .then(() => account.showToast('Code copied'))
-    .catch(() => account.showToast('Failed to copy'))
+    .then(() => { store.status = 'Code copied' })
+    .catch(() => { store.status = 'Failed to copy' })
 }
 
 export const Body = (account, code, isLow) => {
@@ -58,7 +59,7 @@ export const Body = (account, code, isLow) => {
     Text({ paragraph: true, style: NAME }, account.displayName),
     View({
       style: { cursor: 'pointer' },
-      onClick: (e) => copyCode(e, code, account),
+      onClick: (e) => copyCode(e, code),
     }, [
       Text({ paragraph: true, style: codeStyle(isLow) }, formatCode(code)),
     ]),

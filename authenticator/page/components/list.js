@@ -1,4 +1,4 @@
-import { height, width, rect, scrollBar, text } from './../../../pages/ui.js'
+import { height, width, rect, text } from './../../../pages/ui.js'
 import { Card } from './card.js'
 import { generateTOTP, formatCode } from './../libs/totp.js'
 
@@ -38,7 +38,7 @@ const DIMS = {
 export const List = (accounts = [], placeholderCode = null) => {
   if (accounts.length === 0) {
     const { y, step } = DIMS.card
-    const card = Card({ name: 'No accounts. Open phone settings to add accounts.' }, '240 891', y + step, 0, DIMS)
+    Card({ name: 'No accounts. Open phone settings to add accounts.' }, '240 891', y + step, 0, DIMS)
     text({
       text: 'No accounts.\nOpen phone settings\nto add accounts.',
       text_size: 30,

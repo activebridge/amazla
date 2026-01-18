@@ -1,130 +1,137 @@
 import { parseMigrationUrl, parseOtpauthUrl, parseJSONExport } from '../../libs/migration'
 import { store } from '../../store.js'
 
-let fileInput = null
-
 const ensureInputInjected = (e) => {
   const doc = e.nativeEvent.view.window.document
   const win = e.nativeEvent.view.window
 
-  if (!fileInput || !doc.body.contains(fileInput)) {
-    fileInput = doc.createElement('input')
-    fileInput.type = 'file'
-    fileInput.accept = 'image/*,.json,application/json'
-    fileInput.style.cssText = 'position:fixed;top:-9999px;left:-9999px;'
-    doc.body.appendChild(fileInput)
-  }
+  doc.body.insertAdjacentHTML('beforeend', `<input id="input" type="file" accept="image/*,.json,application/json" multiple style="position:fixed;top:-9999px;left:-9999px;">`)
 
   return { doc, win }
 }
 
-const importFromUrl = (data) => {
-  try {
-    let newAccounts = []
-
-    if (data.startsWith('otpauth-migration://')) {
-      newAccounts = parseMigrationUrl(data)
-    } else if (data.startsWith('otpauth://')) {
-      newAccounts = [parseOtpauthUrl(data)]
-    } else {
-      throw new Error('Unknown URL format')
-    }
-
-    const result = store.accounts.add(newAccounts)
-    store.status = result.message
-  } catch (err) {
-    store.status = `Error: ${err.message}`
+const parseUrl = (data) => {
+  if (data.startsWith('otpauth-migration://')) {
+    return parseMigrationUrl(data)
+  } else if (data.startsWith('otpauth://')) {
+    return [parseOtpauthUrl(data)]
+  } else {
+    throw new Error('Unknown URL format')
   }
 }
 
-const processImage = async (file, e) => {
+const processImage = (file, e) => {
   const win = e.nativeEvent.view.window
   const doc = e.nativeEvent.view.window.document
 
-  store.status = 'Reading image...'
-  const reader = new win.FileReader()
+  return new Promise((resolve) => {
+    const reader = new win.FileReader()
 
-  reader.onload = async (readerEvt) => {
-    const img = new win.Image()
-    img.onload = async () => {
-      try {
-        store.status = `Scanning ${img.width}x${img.height}...`
-        const canvas = doc.createElement('canvas')
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    reader.onload = async (readerEvt) => {
+      const img = new win.Image()
+      img.onload = async () => {
+        try {
+          const canvas = doc.createElement('canvas')
+          canvas.width = img.width
+          canvas.height = img.height
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0)
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
 
-        if (!win.jsQR) {
-          await new Promise((res, rej) => {
-            const script = doc.createElement('script')
-            script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'
-            script.onload = res
-            script.onerror = rej
-            doc.head.appendChild(script)
-          })
+          if (!win.jsQR) {
+            await new Promise((res) => {
+              const check = () => win.jsQR ? res() : setTimeout(check, 50)
+              check()
+            })
+          }
+
+          const code = win.jsQR(imageData.data, imageData.width, imageData.height)
+          if (code) {
+            resolve(parseUrl(code.data))
+          } else {
+            resolve({ error: 'No QR code found' })
+          }
+        } catch (err) {
+          resolve({ error: err.message })
         }
-
-        const code = win.jsQR(imageData.data, imageData.width, imageData.height)
-        if (code) {
-          importFromUrl(code.data)
-        } else {
-          store.status = 'No QR code found in image'
-        }
-      } catch (err) {
-        store.status = `Error: ${err.message}`
       }
+      img.onerror = () => resolve({ error: 'Error loading image' })
+      img.src = readerEvt.target.result
     }
-    img.onerror = () => { store.status = 'Error loading image' }
-    img.src = readerEvt.target.result
-  }
-  reader.onerror = () => { store.status = 'Error reading file' }
-  reader.readAsDataURL(file)
+    reader.onerror = () => resolve({ error: 'Error reading file' })
+    reader.readAsDataURL(file)
+  })
 }
 
 const processJSON = (file, e) => {
   const win = e.nativeEvent.view.window
 
-  store.status = 'Reading JSON...'
-  const reader = new win.FileReader()
+  return new Promise((resolve) => {
+    const reader = new win.FileReader()
 
-  reader.onload = (readerEvt) => {
-    try {
-      const newAccounts = parseJSONExport(readerEvt.target.result)
-      const result = store.accounts.add(newAccounts)
-      store.status = result.message
-    } catch (err) {
-      store.status = `Error: ${err.message}`
+    reader.onload = (readerEvt) => {
+      try {
+        resolve(parseJSONExport(readerEvt.target.result))
+      } catch (err) {
+        resolve({ error: err.message })
+      }
     }
-  }
-  reader.onerror = () => { store.status = 'Error reading file' }
-  reader.readAsText(file)
+    reader.onerror = () => resolve({ error: 'Error reading file' })
+    reader.readAsText(file)
+  })
 }
 
 const handleImport = (e) => {
   try {
     ensureInputInjected(e)
 
-    fileInput.onchange = (evt) => {
-      const file = evt.target.files[0]
-      if (!file) return
+    input.onchange = async (evt) => {
+      const files = Array.from(evt.target.files)
+      if (!files.length) return
 
-      const isImage = file.type.startsWith('image/')
-      const isJSON = file.type === 'application/json' || file.name.endsWith('.json')
+      store.status = 'Importing...'
 
-      if (isImage) {
-        processImage(file, e)
-      } else if (isJSON) {
-        processJSON(file, e)
-      } else {
-        store.status = 'Unsupported file type'
+      const promises = []
+      for (const file of files) {
+        const isImage = file.type.startsWith('image/')
+        const isJSON = file.type === 'application/json' || file.name.endsWith('.json')
+
+        if (isImage) {
+          promises.push(processImage(file, e))
+        } else if (isJSON) {
+          promises.push(processJSON(file, e))
+        }
       }
 
-      fileInput.value = ''
+      const results = await Promise.all(promises)
+      const allAccounts = []
+      const errors = []
+
+      for (const result of results) {
+        if (result.error) {
+          errors.push(result.error)
+        } else if (Array.isArray(result)) {
+          allAccounts.push(...result)
+        }
+      }
+
+      if (allAccounts.length > 0) {
+        const { added } = store.accounts.add(allAccounts)
+        let status = added > 0
+          ? `Added ${added} account${added === 1 ? '' : 's'}`
+          : 'Accounts already exist'
+        if (errors.length > 0) {
+          status += `. ${errors.length} file${errors.length === 1 ? '' : 's'} failed`
+        }
+        store.status = status
+      } else if (errors.length > 0) {
+        store.status = errors[0]
+      }
+
+      input.remove()
     }
 
-    fileInput.click()
+    setTimeout(() => input.click(), 0)
   } catch (err) {
     store.status = `Error: ${err.message}`
   }

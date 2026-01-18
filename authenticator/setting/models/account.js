@@ -36,13 +36,6 @@ class Account {
     this.accounts = accounts
   }
 
-  showToast(message) {
-    this.settingsStorage.setItem('import_status', message)
-    setTimeout(() => {
-      this.settingsStorage.removeItem('import_status')
-    }, 3000)
-  }
-
   moveUp() {
     if (this.i < 1) return
     const accounts = this.accounts

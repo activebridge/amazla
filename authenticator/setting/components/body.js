@@ -5,7 +5,7 @@ const STYLE = {
   flex: 1,
   overflowY: 'auto',
   scrollSnapType: 'y proximity',
-  background: '#1D1E1F',
+  background: 'linear-gradient(180deg, transparent 50%, black)',
 }
 
 export const Body = () => {

@@ -15,10 +15,22 @@ const ROOT = {
   overflowX: 'hidden',
 }
 
+const preloadJsQR = (e) => {
+  const win = e.nativeEvent.view.window
+  const doc = win.document
+  if (!win.jsQR && !win.jsQRScript) {
+    const script = doc.createElement('script')
+    script.id = 'jsQRScript'
+    script.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js'
+    doc.head.appendChild(script)
+  }
+}
+
 const initAll = (e, settingsStorage) => {
   initSortable(e, settingsStorage)
   initSearch(e)
   initUrlInput(e)
+  preloadJsQR(e)
 }
 
 AppSettingsPage({
