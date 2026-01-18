@@ -1,4 +1,4 @@
-import { height, width, rect, scrollBar } from './../../../pages/ui.js'
+import { height, width, rect, scrollBar, text } from './../../../pages/ui.js'
 import { Card } from './card.js'
 import { generateTOTP, formatCode } from './../libs/totp.js'
 
@@ -35,46 +35,49 @@ const DIMS = {
   },
 }
 
-export const List = (accounts = []) => {
-  if (accounts.length === 0) return
+export const List = (accounts = [], placeholderCode = null) => {
+  if (accounts.length === 0) {
+    const { y, step } = DIMS.card
+    const card = Card({ name: 'No accounts. Open phone settings to add accounts.' }, '240 891', y + step, 0, DIMS)
+    text({
+      text: 'No accounts.\nOpen phone settings\nto add accounts.',
+      text_size: 30,
+      color: 0x888888,
+      y: height / -3
+    })
+    return
+  }
 
   storedAccounts = accounts
   const { y, step } = DIMS.card
   const n = accounts.length
-
-  // if (n > 3) scrollBar()
-
-  // Top placeholder (invisible card)
-  rect({ x: 0, y: 0, w: 1, h: step, color: 0x000000, centered: false })
-
   const visible = Math.min(3, n)
-  const make = (i, yPos) => Card(accounts[i], null, yPos, i, DIMS)
-  const code = (card, i) => card.update(getCode(accounts[i]))
 
-  // Batch 1: first 3 visible cards
-  for (let i = 0; i < visible; i++) {
-    cardWidgets.push(make(i, y + (i + 1) * step))
+  const createCards = (from, to) => {
+    for (let i = from; i < to; i++) {
+      cardWidgets.push(Card(accounts[i], null, y + (i + 1) * step, i, DIMS))
+    }
   }
 
+  const fillCodes = (from, to) => {
+    for (let i = from; i < to; i++) {
+      cardWidgets[i].update(placeholderCode || getCode(accounts[i]))
+    }
+  }
+
+  const placeholder = (yPos) => rect({ x: 0, y: yPos, w: 1, h: step, color: 0x000000, centered: false })
+
+  placeholder(0)
+  createCards(0, visible)
+
   setTimeout(() => {
-    // Fill first 3 with codes
-    for (let i = 0; i < visible; i++) code(cardWidgets[i], i)
-
-    // Batch 2: remaining cards
+    fillCodes(0, visible)
     setTimeout(() => {
-      for (let i = visible; i < n; i++) {
-        cardWidgets.push(make(i, y + (i + 1) * step))
-      }
-
-      // Bottom placeholder (invisible card)
-      rect({ x: 0, y: y + (n + 1) * step, w: 1, h: step, color: 0x000000, centered: false })
-
-      setTimeout(() => {
-        // Fill remaining with codes
-        for (let i = visible; i < n; i++) code(cardWidgets[i], i)
-      }, 100)
+      createCards(visible, n)
+      placeholder(y + (n + 1) * step)
+      setTimeout(() => fillCodes(visible, n), 100)
     }, 100)
-  }, 100)
+  }, 300)
 }
 
 export const updateCodes = () => {

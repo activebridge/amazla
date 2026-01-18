@@ -2,11 +2,11 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
 import { showToast } from '@zos/interaction'
 import { keepScreenOn } from './../../zeppify/screen.js'
-import UI, { text, width, height } from './../../pages/ui.js'
+import UI, { height } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
 import { getTimeRemaining } from './libs/totp.js'
 import * as hmUI from '@zos/ui'
-import { Timer, stopSpinner } from './components/timer.js'
+import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
 import { List, updateCodes } from './components/list.js'
 
 
@@ -33,21 +33,10 @@ Page(
     render() {
       const { accounts } = this.state
 
-      if (accounts.length === 0) {
-        text({
-          y: 0,
-          w: width - 40,
-          h: height,
-          text: 'No accounts.\nOpen phone settings\nto add accounts.',
-          text_size: 18,
-          color: 0x888888,
-        })
-        // timerArc = Timer()
-        return
-      }
-
       // Create scrollable account list
       List(accounts)
+
+      if (accounts.length === 0) return
 
       // Enable swiper scrolling
       hmUI.setScrollView(true, height / 3 | 0, accounts.length, true)
@@ -90,10 +79,7 @@ Page(
     updateTimer() {
       if (!timerArc) return
       const remaining = getTimeRemaining()
-      timerArc.setProperty(hmUI.prop.MORE, {
-        start_angle: -90 + (remaining / 30) * 360,
-        end_angle: 270,
-      })
+      timerArc.update(remaining)
     },
 
     checkCodeRefresh() {
@@ -105,7 +91,6 @@ Page(
     },
 
     cleanup() {
-      stopSpinner()
       UI.reset()
     },
 
