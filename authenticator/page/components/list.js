@@ -1,69 +1,79 @@
-import { height, width } from './../../../pages/ui.js'
+import { height, width, rect } from './../../../pages/ui.js'
 import { Card } from './card.js'
+import { generateTOTP, formatCode } from './../libs/totp.js'
 
 let cardWidgets = []
+let storedAccounts = []
+
+const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))
 
 const GAP = 20
 const CARD_H = (height - GAP * 3) / 3 | 0
-const CARD_W = width - 100
-const CODE_FONT = CARD_H * 0.5 | 0
-const DIGIT_W = CODE_FONT * 0.7 | 0
-const SPACE_W = CODE_FONT * 0.1 | 0
-const DIGITS_START = -(6 * DIGIT_W + SPACE_W) / 2 | 0
+const CARD_W = width - 120
+const CODE_FONT = height * 0.14 | 0
+const STEP = CARD_H + GAP
 
 const DIMS = {
   cardsPerPage: 3,
-  digitsPerCard: 6,
   card: {
     x: (width - CARD_W) / 2 | 0,
-    y: GAP,
+    y: STEP * 2, // Start after 2 placeholder cards
     w: CARD_W,
     h: CARD_H,
     radius: CARD_H * 0.2 | 0,
-    step: CARD_H + GAP,
+    step: STEP,
   },
   name: {
-    y: CARD_H * 0.08 | 0,
-    h: CARD_H * 0.35 | 0,
+    y: (CARD_H * 0.08 | 0) - 5,
+    h: (CARD_H * 0.35 | 0) + 10,
     text_size: CARD_H * 0.28 | 0,
   },
   digit: {
-    y: (CARD_H * 0.45 | 0) - 20,
-    w: DIGIT_W,
+    y: (CARD_H * 0.45 | 0) - 5,
     h: CARD_H * 0.65 | 0,
     text_size: CODE_FONT,
-    offsets: [
-      DIGITS_START,
-      DIGITS_START + DIGIT_W,
-      DIGITS_START + DIGIT_W * 2,
-      DIGITS_START + DIGIT_W * 3 + SPACE_W,
-      DIGITS_START + DIGIT_W * 4 + SPACE_W,
-      DIGITS_START + DIGIT_W * 5 + SPACE_W,
-    ],
   },
 }
 
+// Export for scroll loop detection
+export const CARD_STEP = STEP
+
 export const List = (accounts = []) => {
+  if (accounts.length === 0) return
+
+  storedAccounts = accounts
   const { y, step } = DIMS.card
-  const { cardsPerPage, digitsPerCard } = DIMS
-  const visible = Math.min(cardsPerPage, accounts.length)
-  let i = 0
+  const n = accounts.length
+  const visible = Math.min(3, n)
 
-  const render = () => {
-    const end = i < visible ? visible : accounts.length
-    for (; i < end; i++) {
-      const card = Card(accounts[i], y + i * step, (i % cardsPerPage) * digitsPerCard, DIMS)
-      setTimeout(card.update, 200)
-      cardWidgets.push(card)
-    }
-  }
+  const make = (i, yPos) => Card(accounts[i], null, yPos, i, DIMS)
+  const code = (card, i) => card.update(getCode(accounts[i]))
 
-  render()
-  if (visible < accounts.length) setTimeout(render, 500)
+  // Batch 1: top placeholders + visible cards
+  const top = [make(n - 2, 0), make(n - 1, STEP)]
+  for (let i = 0; i < visible; i++) cardWidgets.push(make(i, y + i * step))
+
+  setTimeout(() => {
+    top.forEach((card, i) => code(card, n - 2 + i))
+    for (let i = 0; i < visible; i++) code(cardWidgets[i], i)
+
+    // Batch 2: remaining cards + bottom placeholders
+    setTimeout(() => {
+      for (let i = visible; i < n; i++) cardWidgets.push(make(i, y + i * step))
+      const bottom = [make(0, y + n * step), make(Math.min(1, n - 1), y + (n + 1) * step)]
+      rect({ x: 0, y: y + (n + 2) * step, w: 1, h: 1, color: 0x000000, centered: false })
+
+      setTimeout(() => {
+        for (let i = visible; i < n; i++) code(cardWidgets[i], i)
+        bottom.forEach((card, i) => code(card, Math.min(i, n - 1)))
+      }, 100)
+    }, 100)
+  }, 100)
 }
 
 export const updateCodes = () => {
+  const codes = storedAccounts.map(getCode)
   for (let i = 0; i < cardWidgets.length; i++) {
-    cardWidgets[i].update()
+    cardWidgets[i].update(codes[i])
   }
 }

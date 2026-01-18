@@ -20,12 +20,13 @@ export const Timer = () => {
   }, container)
   gradientArc.setEnable(false)
 
-  // Spinner animation
-  let angle = 0
+  // Spinner animation (1 second steps, full rotation in 30 seconds to match TOTP)
+  let angle = 270
+  gradientArc.setProperty(prop.MORE, { angle })
   spinInterval = setInterval(() => {
-    angle = (angle + 2) % 360
+    angle = (angle + 12) % 360
     gradientArc.setProperty(prop.MORE, { angle })
-  }, 50)
+  }, 1000)
 
   const w = size + 2, h = w, line_width = 20, color = 0x000000
   return arc({ w, h, line_width, color }, container)
