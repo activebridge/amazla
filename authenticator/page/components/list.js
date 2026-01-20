@@ -1,11 +1,9 @@
 import { height, width, rect, text } from './../../../pages/ui.js'
 import { Card } from './card.js'
-import { generateTOTP, formatCode } from './../libs/totp.js'
+import { getCode } from './../libs/totp.js'
 
 let cardWidgets = []
 let storedAccounts = []
-
-const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))
 
 const GAP = 20
 const CARD_H = (height - GAP * 3) / 3 | 0

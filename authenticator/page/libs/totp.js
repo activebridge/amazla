@@ -201,3 +201,8 @@ export function formatCode(code) {
   const mid = Math.floor(code.length / 2)
   return code.slice(0, mid) + ' ' + code.slice(mid)
 }
+
+/**
+ * Get formatted TOTP code for account
+ */
+export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))

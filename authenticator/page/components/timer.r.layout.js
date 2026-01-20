@@ -26,16 +26,15 @@ export const Timer = () => {
     end_angle: 360,
   }, container)
 
-  let angle = 270
-
   return {
     update: (remaining) => {
+      // Rotate while growing (full circle in 30 steps, starts at top)
+      const rotation = -90 + (30 - remaining) * 12  // Start at top (-90°), 12° per second
+      const coverage = (1 - remaining / 30) * 360  // Grows as time decreases
       bgArc.setProperty(prop.MORE, {
-        start_angle: -90 + (remaining / 30) * 360,
-        end_angle: 270,
+        start_angle: rotation,
+        end_angle: rotation + coverage,
       })
-      angle = (angle + 12) % 360
-      gradientArc.setProperty(prop.MORE, { angle })
     }
   }
 }

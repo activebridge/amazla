@@ -86,7 +86,7 @@ const setup = () => {
       border-radius: 12px;
       padding: 10px 14px 10px 36px;
       margin: 0;
-      font-size: 14px;
+      font-size: 16px;
       line-height: 20px;
       outline: none;
       background: #1D1E1F;

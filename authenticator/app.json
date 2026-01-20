@@ -27,8 +27,27 @@
     "default": {
       "module": {
         "page": {
-          "pages": [
-            "page/index.page"
+          "pages": ["page/index.page"]
+        },
+        "secondary-widget": {
+          "widgets": [
+            {
+              "path": "secondary-widget/index",
+              "icon": "icon.png",
+              "name": "Authenticator",
+              "preview": "preview.png",
+              "runtime": { "type": "js" }
+            }
+          ]
+        },
+        "app-widget": {
+          "widgets": [
+            {
+              "path": "app-widget/index",
+              "icon": "icon.png",
+              "name": "Auth Codes",
+              "runtime": { "type": "js" }
+            }
           ]
         },
         "app-side": {
