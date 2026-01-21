@@ -1,6 +1,7 @@
+import { prop } from '@zos/ui'
 import { rect, text } from './../../../../pages/ui.js'
 
-export const Title = (name, { x, y, w, h, text_size }) => {
+export const Title = (title, { x, y, w, h, text_size }) => {
   const c = { centered: false }
   const margin = 10
   const titleX = x + margin
@@ -12,5 +13,11 @@ export const Title = (name, { x, y, w, h, text_size }) => {
   // Main background
   rect({ x: titleX, y: y + 2, w: titleW, h: h - 4, radius: radius - 2, color: 0x000000, ...c })
   // Name text
-  text({ x: titleX, y, w: titleW, h, text: name, text_size, char_space: 3, ...c })
+  const name = text({ x: titleX, y, w: titleW, h, text: title, text_size, char_space: 3, ...c })
+
+  const update = (newName) => {
+    name.setProperty(prop.TEXT, newName)
+  }
+
+  return { update }
 }

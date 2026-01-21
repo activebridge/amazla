@@ -5,6 +5,7 @@ import { keepScreenOn } from './../../zeppify/screen.js'
 import { localStorage } from './../page/utils.js'
 import { getTimeRemaining } from './../page/libs/totp.js'
 import { Layout, refreshCodes } from 'zosLoader:./index.[pf].layout.js'
+import vibrate from './../../pages/vibrate.js'
 
 let timerInterval = null
 
@@ -38,7 +39,10 @@ SecondaryWidget({
         this.layout.updateTimer(remaining)
       }
 
-      if (remaining === 30) refreshCodes()
+      if (remaining === 30) {
+        refreshCodes()
+        vibrate()
+      }
     }, 1000)
   },
 

@@ -43,7 +43,7 @@ export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size
   const first = createHalf(centerX - halfW - gap, true, COLORS[(colorIndex * 2) % 34], p1)
   const second = createHalf(centerX + gap, false, COLORS[(colorIndex * 2 + 1) % 34], p2)
 
-  const update = (code) => {
+  const update = (code, newColorIndex) => {
     const [p1, p2] = parse(code)
     first.lightShadow.setProperty(prop.TEXT, p1)
     first.darkShadow.setProperty(prop.TEXT, p1)
@@ -51,6 +51,10 @@ export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size
     second.lightShadow.setProperty(prop.TEXT, p2)
     second.darkShadow.setProperty(prop.TEXT, p2)
     second.main.setProperty(prop.TEXT, p2)
+    if (newColorIndex !== undefined) {
+      first.main.setProperty(prop.COLOR, COLORS[(newColorIndex * 2) % 34])
+      second.main.setProperty(prop.COLOR, COLORS[(newColorIndex * 2 + 1) % 34])
+    }
   }
 
   return { update }

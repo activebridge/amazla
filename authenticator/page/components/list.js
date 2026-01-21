@@ -49,7 +49,7 @@ export const List = (accounts = [], placeholderCode = null) => {
   storedAccounts = accounts
   const { y, step } = DIMS.card
   const n = accounts.length
-  const visible = Math.min(3, n)
+  const visible = Math.min(4, n)
 
   const createCards = (from, to) => {
     for (let i = from; i < to; i++) {
@@ -59,7 +59,7 @@ export const List = (accounts = [], placeholderCode = null) => {
 
   const fillCodes = (from, to) => {
     for (let i = from; i < to; i++) {
-      cardWidgets[i].update(placeholderCode || getCode(accounts[i]))
+      cardWidgets[i].update({ code: placeholderCode || getCode(accounts[i]) })
     }
   }
 
@@ -81,6 +81,6 @@ export const List = (accounts = [], placeholderCode = null) => {
 export const updateCodes = () => {
   const codes = storedAccounts.map(getCode)
   for (let i = 0; i < cardWidgets.length; i++) {
-    cardWidgets[i].update(codes[i])
+    cardWidgets[i].update({ code: codes[i] })
   }
 }

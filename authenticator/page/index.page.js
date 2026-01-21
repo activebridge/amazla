@@ -8,6 +8,7 @@ import { getTimeRemaining } from './libs/totp.js'
 import * as hmUI from '@zos/ui'
 import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
 import { List, updateCodes } from './components/list.js'
+import vibrate from './../../pages/vibrate.js'
 
 
 let app = null
@@ -87,6 +88,7 @@ Page(
       if (remaining === 30) {
         // Codes just refreshed, update the list
         updateCodes()
+        vibrate()
       }
     },
 

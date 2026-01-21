@@ -12,7 +12,7 @@ export const Card = (acc, code = null, y, colorIndex, { card, name, digit }) => 
   rect({ x, y, w, h, radius, color: 0x3a3a3a, ...c })
 
   // Title
-  Title(acc.issuer || acc.name, {
+  const title = Title(acc.issuer || acc.name, {
     x,
     y: y + name.y,
     w,
@@ -29,5 +29,10 @@ export const Card = (acc, code = null, y, colorIndex, { card, name, digit }) => 
     text_size: digit.text_size,
   })
 
-  return { update: codeWidget.update }
+  const update = ({ title: t, code: c, colorIndex: ci }) => {
+    if (t) title.update(t)
+    if (c) codeWidget.update(c, ci)
+  }
+
+  return { update }
 }
