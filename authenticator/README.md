@@ -11,6 +11,15 @@ TOTP Authenticator app for Zepp OS smartwatches. Generate two-factor authenticat
 - Works offline (no phone connection needed)
 - Support for round and square screens
 
+### Widgets
+- **App Widget** - Quick access from home screen
+  - Swipe left/right to cycle through accounts
+  - Tap center to open full app
+  - Progress bar shows time until refresh
+- **Secondary Widget** - Compact view for lock screen
+  - Shows up to 6 accounts at once
+  - Tap to page through more accounts
+
 ### Phone Settings
 - Import from QR code screenshots (single or multiple)
 - Import from Google Authenticator export
@@ -88,15 +97,25 @@ authenticator/
 ├── app.js              # App entry point
 ├── app.json            # App configuration
 ├── app-side/           # Phone-side app logic
+├── app-widget/         # Home screen widget
+│   └── index.js        # App widget logic
+├── secondary-widget/   # Lock screen widget
+│   ├── index.js        # Secondary widget logic
+│   ├── index.r.layout.js  # Round screen layout
+│   └── index.s.layout.js  # Square screen layout
 ├── page/               # Watch pages
 │   ├── index.page.js   # Main page
 │   ├── components/     # Watch UI components
 │   │   ├── list.js     # Account list
 │   │   ├── card.js     # Account card
+│   │   ├── heart.js    # Easter egg heart
 │   │   ├── timer.r.layout.js  # Round screen timer
 │   │   └── timer.s.layout.js  # Square screen timer
 │   └── libs/           # Watch utilities
 │       └── totp.js     # TOTP generation
+├── shared/             # Shared utilities
+│   ├── colors.js       # Gradient colors
+│   └── timer.js        # Timer management
 ├── setting/            # Phone settings page
 │   ├── index.js        # Settings entry
 │   ├── components/     # Settings UI components
@@ -112,6 +131,11 @@ authenticator/
 ```
 
 ## Version History
+
+### 3.1.0
+- App Widget for quick home screen access
+- Secondary Widget for lock screen (up to 6 accounts)
+- Code refactoring and shared utilities
 
 ### 3.0.0
 - Complete redesign

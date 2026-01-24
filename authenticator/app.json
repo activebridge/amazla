@@ -5,8 +5,8 @@
     "appName": "🔐 Authenticator",
     "appType": "app",
     "version": {
-      "code": 300,
-      "name": "3.0.0"
+      "code": 301,
+      "name": "3.0.1"
     },
     "icon": "icon.png",
     "vender": "activebridge",

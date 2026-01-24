@@ -20,7 +20,7 @@ export const Timer = () => {
   const bgArc = arc({
     w: size + 2,
     h: size + 2,
-    line_width: 20,
+    line_width: 16,
     color: 0x000000,
     start_angle: 0,
     end_angle: 360,

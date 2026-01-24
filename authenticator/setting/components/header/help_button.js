@@ -218,6 +218,15 @@ export const HelpButton = () => {
 
         Hr(),
 
+        Section('🔲 Widgets'),
+        P('📌 App Widget - quick access from home screen'),
+        P('◀️ ▶️ Swipe to cycle through accounts'),
+        P('👆 Tap center to open full app'),
+        P('📌 Secondary Widget - shows up to 6 accounts'),
+        P('👆 Tap to page through more accounts'),
+
+        Hr(),
+
         Section('📄 Supported Formats'),
         P('✅ Google Authenticator export'),
         P('✅ Standard otpauth:// URLs'),
