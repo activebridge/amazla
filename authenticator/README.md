@@ -132,7 +132,7 @@ authenticator/
 
 ## Version History
 
-### 3.1.0
+### 3.0.1
 - App Widget for quick home screen access
 - Secondary Widget for lock screen (up to 6 accounts)
 - Code refactoring and shared utilities

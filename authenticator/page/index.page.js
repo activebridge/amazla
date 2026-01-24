@@ -1,10 +1,11 @@
 import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
+import * as hmUI from '@zos/ui'
 import { showToast } from '@zos/interaction'
 import { keepScreenOn } from './../../zeppify/screen.js'
-import UI, { screenShape } from './../../pages/ui.js'
+import UI, { screenShape, height } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
-import { setScrollMode, scrollTo, SCROLL_MODE_FREE, SCROLL_MODE_SWIPER } from '@zos/page'
+import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
 import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
 import { List, updateCodes, STEP } from './components/list.js'
 import { createTimer } from './../shared/timer.js'
@@ -37,13 +38,14 @@ Page(
 
       if (accounts.length === 0) return
 
-      // Enable scrolling: swiper for round, free for square
+      // Enable scrolling: old API for round (crown works), new API for square
       if (screenShape === 0) {
-        setScrollMode({ mode: SCROLL_MODE_FREE })
+        hmUI.setScrollView(true, height / 3 | 0, accounts.length, true)
+        hmUI.scrollToPage(1, false)
       } else {
         setScrollMode({ mode: SCROLL_MODE_SWIPER, options: { height: STEP, count: accounts.length + 1 } })
+        hmUI.scrollToPage(1, false)
       }
-      scrollTo({ y: -STEP })
 
       // Create timer arc
       timerArc = Timer()
