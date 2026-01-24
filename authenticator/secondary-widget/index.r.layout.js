@@ -1,20 +1,11 @@
 import { prop } from '@zos/ui'
 import { text, arc, img, size } from './../../pages/ui.js'
 import { getCode } from './../page/libs/totp.js'
+import { GRADIENT_COLORS } from './../shared/colors.js'
 
 // Arc background colors - grey gradient
 const ARC_BG_COLORS = [0x2a2a2a, 0x333333, 0x3c3c3c, 0x454545, 0x3c3c3c, 0x333333]
 const ARC_BG_COLOR = 0x3a3a3a
-
-// 34 gradient colors for smooth loop (pink → green → pink)
-const COLORS = [
-  0xf4468f, 0xfd4a85, 0xff507a, 0xff566f, 0xff5e63, 0xff6658,
-  0xff704e, 0xff7a45, 0xff843d, 0xf99533, 0xf3a130, 0xeaad2f,
-  0xe6b32e, 0xdcbe30, 0xd2c934, 0xc8d43a, 0xbfde43, 0xaff05b,
-  0xbfde43, 0xc8d43a, 0xd2c934, 0xdcbe30, 0xe6b32e, 0xeaad2f,
-  0xf3a130, 0xf99533, 0xff843d, 0xff7a45, 0xff704e, 0xff6658,
-  0xff5e63, 0xff566f, 0xff507a, 0xfd4a85,
-]
 
 const GAP_ANGLE = 3
 const SEGMENT_ANGLE = (360 - GAP_ANGLE * 6) / 6
@@ -24,8 +15,6 @@ const ARC_SIZE = size
 const ARC_LINE_WIDTH = 55
 const CODE_RADIUS = size / 2
 const NAME_RADIUS = size / 2 - 60
-
-const reverse = (str) => str.split('').reverse().join('')
 
 let codeWidgets = []
 
@@ -85,8 +74,8 @@ export const Layout = (accounts) => {
     // Code split into two halves with different colors (like cards)
     const fullCode = getCode(acc)
     const midAngle = startAngle + SEGMENT_ANGLE / 2
-    const color1 = COLORS[(i * 2) % 34]
-    const color2 = COLORS[(i * 2 + 1) % 34]
+    const color1 = GRADIENT_COLORS[(i * 2) % 34]
+    const color2 = GRADIENT_COLORS[(i * 2 + 1) % 34]
 
     // For bottom, swap halves (no reverse needed, mode:1 handles orientation)
     const half1 = isBottom ? fullCode.slice(3) : fullCode.slice(0, 3)

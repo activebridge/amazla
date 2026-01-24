@@ -1,17 +1,8 @@
 import { prop } from '@zos/ui'
 import { text } from './../../../../pages/ui.js'
+import { GRADIENT_COLORS } from './../../../shared/colors.js'
 
 const font = 'fonts/Jua.ttf'
-
-// 34 gradient colors for smooth loop (pink → green → pink)
-const COLORS = [
-  0xf4468f, 0xfd4a85, 0xff507a, 0xff566f, 0xff5e63, 0xff6658,
-  0xff704e, 0xff7a45, 0xff843d, 0xf99533, 0xf3a130, 0xeaad2f,
-  0xe6b32e, 0xdcbe30, 0xd2c934, 0xc8d43a, 0xbfde43, 0xaff05b,
-  0xbfde43, 0xc8d43a, 0xd2c934, 0xdcbe30, 0xe6b32e, 0xeaad2f,
-  0xf3a130, 0xf99533, 0xff843d, 0xff7a45, 0xff704e, 0xff6658,
-  0xff5e63, 0xff566f, 0xff507a, 0xfd4a85,
-]
 
 const parse = (code) => {
   const parts = code.split(' ')
@@ -39,8 +30,8 @@ export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size
     return { lightShadow, darkShadow, main }
   }
 
-  const first = createHalf(centerX - halfW - gap, true, COLORS[(colorIndex * 2) % 34], p1)
-  const second = createHalf(centerX + gap, false, COLORS[(colorIndex * 2 + 1) % 34], p2)
+  const first = createHalf(centerX - halfW - gap, true, GRADIENT_COLORS[(colorIndex * 2) % 34], p1)
+  const second = createHalf(centerX + gap, false, GRADIENT_COLORS[(colorIndex * 2 + 1) % 34], p2)
 
   const update = (code, newColorIndex) => {
     const [p1, p2] = parse(code)
@@ -51,8 +42,8 @@ export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size
     second.darkShadow.setProperty(prop.TEXT, p2)
     second.main.setProperty(prop.TEXT, p2)
     if (newColorIndex !== undefined) {
-      first.main.setProperty(prop.COLOR, COLORS[(newColorIndex * 2) % 34])
-      second.main.setProperty(prop.COLOR, COLORS[(newColorIndex * 2 + 1) % 34])
+      first.main.setProperty(prop.COLOR, GRADIENT_COLORS[(newColorIndex * 2) % 34])
+      second.main.setProperty(prop.COLOR, GRADIENT_COLORS[(newColorIndex * 2 + 1) % 34])
     }
   }
 

@@ -1,6 +1,7 @@
-import { height, width, rect, text } from './../../../pages/ui.js'
+import { height, width, text } from './../../../pages/ui.js'
 import { Card } from './card.js'
 import { getCode } from './../libs/totp.js'
+import { Heart } from './heart.js'
 
 let cardWidgets = []
 let storedAccounts = []
@@ -65,16 +66,14 @@ export const List = (accounts = [], placeholderCode = null) => {
     }
   }
 
-  const placeholder = (yPos) => rect({ x: 0, y: yPos, w: 1, h: step, color: 0x000000, centered: false })
-
-  placeholder(0)
+  Heart(20)
   createCards(0, visible)
 
   setTimeout(() => {
     fillCodes(0, visible)
     setTimeout(() => {
       createCards(visible, n)
-      placeholder(y + (n + 1) * step)
+      Heart(y + n * step + step | 0)
       setTimeout(() => fillCodes(visible, n), 100)
     }, 100)
   }, 300)

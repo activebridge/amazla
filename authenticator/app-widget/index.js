@@ -4,7 +4,7 @@ import { text, button, img, rect } from './../../pages/ui.js'
 import { localStorage } from './../page/utils.js'
 import { getCode, getTimeRemaining } from './../page/libs/totp.js'
 import { Card } from './../page/components/card.js'
-import vibrate from './../../pages/vibrate.js'
+import { createTimer } from './../shared/timer.js'
 
 const { w, margin = 0 } = getAppWidgetSize()
 const CARD_H = 140
@@ -20,7 +20,7 @@ const DIMS = {
 let card = null
 let accounts = []
 let index = 0
-let timerInterval = null
+let timer = null
 let cover = null
 
 const getAccount = () => accounts[index]
@@ -101,10 +101,7 @@ AppWidget({
   },
 
   onPause() {
-    if (timerInterval) {
-      clearInterval(timerInterval)
-      timerInterval = null
-    }
+    if (timer) timer.stop()
   },
 
   cycleAccount(dir) {
@@ -124,19 +121,14 @@ AppWidget({
   },
 
   startTimer() {
-    timerInterval = setInterval(() => {
-      this.updateProgress()
-      if (getTimeRemaining() === 30 && card) {
-        card.update({ code: getCode(getAccount()) })
-        vibrate()
-      }
-    }, 1000)
+    timer = createTimer(
+      () => this.updateProgress(),
+      () => { if (card) card.update({ code: getCode(getAccount()) }) }
+    )
+    timer.start()
   },
 
   onDestroy() {
-    if (timerInterval) {
-      clearInterval(timerInterval)
-      timerInterval = null
-    }
+    if (timer) timer.stop()
   },
 })

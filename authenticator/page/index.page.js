@@ -4,15 +4,13 @@ import { showToast } from '@zos/interaction'
 import { keepScreenOn } from './../../zeppify/screen.js'
 import UI, { screenShape } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
-import { getTimeRemaining } from './libs/totp.js'
 import { setScrollMode, scrollTo, SCROLL_MODE_FREE, SCROLL_MODE_SWIPER } from '@zos/page'
 import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
 import { List, updateCodes, STEP } from './components/list.js'
-import vibrate from './../../pages/vibrate.js'
-
+import { createTimer } from './../shared/timer.js'
 
 let app = null
-let timerInterval = null
+let timer = null
 let timerArc = null
 
 Page(
@@ -43,15 +41,12 @@ Page(
       if (screenShape === 0) {
         setScrollMode({ mode: SCROLL_MODE_FREE })
       } else {
-        setScrollMode({ mode: SCROLL_MODE_SWIPER, options: { height: STEP, count: accounts.length + 2 } })
+        setScrollMode({ mode: SCROLL_MODE_SWIPER, options: { height: STEP, count: accounts.length + 1 } })
       }
       scrollTo({ y: -STEP })
 
       // Create timer arc
       timerArc = Timer()
-
-      // Initial timer update
-      this.updateTimer()
     },
 
     sync() {
@@ -75,25 +70,11 @@ Page(
     },
 
     startTimer() {
-      timerInterval = setInterval(() => {
-        this.updateTimer()
-        this.checkCodeRefresh()
-      }, 1000)
-    },
-
-    updateTimer() {
-      if (!timerArc) return
-      const remaining = getTimeRemaining()
-      timerArc.update(remaining)
-    },
-
-    checkCodeRefresh() {
-      const remaining = getTimeRemaining()
-      if (remaining === 30) {
-        // Codes just refreshed, update the list
-        updateCodes()
-        vibrate()
-      }
+      timer = createTimer(
+        (remaining) => { if (timerArc) timerArc.update(remaining) },
+        () => updateCodes()
+      )
+      timer.start()
     },
 
     cleanup() {
@@ -102,10 +83,7 @@ Page(
 
     onDestroy() {
       keepScreenOn(false)
-      if (timerInterval) {
-        clearInterval(timerInterval)
-        timerInterval = null
-      }
+      if (timer) timer.stop()
       this.cleanup()
     },
   })

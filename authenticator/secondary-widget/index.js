@@ -2,11 +2,10 @@ import { push } from '@zos/router'
 import { height, width, button } from './../../pages/ui.js'
 import { keepScreenOn } from './../../zeppify/screen.js'
 import { localStorage } from './../page/utils.js'
-import { getTimeRemaining } from './../page/libs/totp.js'
 import { Layout, refreshCodes, updateAccounts } from 'zosLoader:./index.[pf].layout.js'
-import vibrate from './../../pages/vibrate.js'
+import { createTimer } from './../shared/timer.js'
 
-let timerInterval = null
+let timer = null
 let page = 0
 
 SecondaryWidget({
@@ -47,18 +46,11 @@ SecondaryWidget({
   },
 
   startTimer() {
-    timerInterval = setInterval(() => {
-      const remaining = getTimeRemaining()
-
-      if (this.layout?.updateTimer) {
-        this.layout.updateTimer(remaining)
-      }
-
-      if (remaining === 30) {
-        refreshCodes()
-        vibrate()
-      }
-    }, 1000)
+    timer = createTimer(
+      (remaining) => { if (this.layout && this.layout.updateTimer) this.layout.updateTimer(remaining) },
+      () => refreshCodes()
+    )
+    timer.start()
   },
 
   onResume() {
@@ -67,9 +59,6 @@ SecondaryWidget({
 
   onDestroy() {
     keepScreenOn(false)
-    if (timerInterval) {
-      clearInterval(timerInterval)
-      timerInterval = null
-    }
+    if (timer) timer.stop()
   },
 })

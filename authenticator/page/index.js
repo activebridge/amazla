@@ -1,7 +1,7 @@
 import { createWidget, widget, prop, align, text_style } from '@zos/ui'
 import { localStorage } from '@zos/storage'
 import { getDeviceInfo } from '@zos/device'
-import { generateTOTP, getTimeRemaining, formatCode } from './libs/totp'
+import { getCode, getTimeRemaining } from './libs/totp'
 
 const { width: DEVICE_WIDTH } = getDeviceInfo()
 
@@ -106,7 +106,6 @@ Page({
 
     this.state.accounts.forEach((acc, i) => {
       const y = startY + i * itemHeight
-      const code = generateTOTP(acc.secret, acc.digits || 6)
 
       // Account name
       const nameWidget = createWidget(widget.TEXT, {
@@ -126,7 +125,7 @@ Page({
         y: y + 24,
         w: DEVICE_WIDTH - 40,
         h: 40,
-        text: formatCode(code),
+        text: getCode(acc),
         text_size: 32,
         color: 0x1a73e8,
         align_h: align.CENTER_H

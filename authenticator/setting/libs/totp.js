@@ -169,3 +169,10 @@ export function formatCode(code) {
   const mid = Math.floor(code.length / 2)
   return code.slice(0, mid) + ' ' + code.slice(mid)
 }
+
+/**
+ * Get formatted TOTP code for an account
+ * @param {object} acc - Account object with secret and optional digits
+ * @returns {string} - Formatted TOTP code
+ */
+export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))
