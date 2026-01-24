@@ -5,9 +5,13 @@ const ensureInputInjected = (e) => {
   const doc = e.nativeEvent.view.window.document
   const win = e.nativeEvent.view.window
 
-  doc.body.insertAdjacentHTML('beforeend', `<input id="input" type="file" accept="image/*,.json,application/json" multiple style="position:fixed;top:-9999px;left:-9999px;">`)
+  // Remove existing input if any
+  const existing = doc.getElementById('import-input')
+  if (existing) existing.remove()
 
-  return { doc, win }
+  doc.body.insertAdjacentHTML('beforeend', `<input id="import-input" type="file" accept="image/*,.json,application/json" multiple style="position:fixed;top:-9999px;left:-9999px;">`)
+
+  return { doc, win, input: doc.getElementById('import-input') }
 }
 
 const parseUrl = (data) => {
@@ -83,7 +87,7 @@ const processJSON = (file, e) => {
 
 const handleImport = (e) => {
   try {
-    ensureInputInjected(e)
+    const { input } = ensureInputInjected(e)
 
     input.onchange = async (evt) => {
       const files = Array.from(evt.target.files)

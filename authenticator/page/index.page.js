@@ -2,12 +2,12 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
 import { showToast } from '@zos/interaction'
 import { keepScreenOn } from './../../zeppify/screen.js'
-import UI, { height } from './../../pages/ui.js'
+import UI, { screenShape } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
 import { getTimeRemaining } from './libs/totp.js'
-import * as hmUI from '@zos/ui'
+import { setScrollMode, scrollTo, SCROLL_MODE_FREE, SCROLL_MODE_SWIPER } from '@zos/page'
 import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
-import { List, updateCodes } from './components/list.js'
+import { List, updateCodes, STEP } from './components/list.js'
 import vibrate from './../../pages/vibrate.js'
 
 
@@ -39,9 +39,13 @@ Page(
 
       if (accounts.length === 0) return
 
-      // Enable swiper scrolling
-      hmUI.setScrollView(true, height / 3 | 0, accounts.length, true)
-      hmUI.scrollToPage(1, false)
+      // Enable scrolling: swiper for round, free for square
+      if (screenShape === 0) {
+        setScrollMode({ mode: SCROLL_MODE_FREE })
+      } else {
+        setScrollMode({ mode: SCROLL_MODE_SWIPER, options: { height: STEP, count: accounts.length + 2 } })
+      }
+      scrollTo({ y: -STEP })
 
       // Create timer arc
       timerArc = Timer()

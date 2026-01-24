@@ -9,7 +9,7 @@ const GAP = 20
 const CARD_H = (height - GAP * 3) / 3 | 0
 const CARD_W = width - 120
 const CODE_FONT = height * 0.14 | 0
-const STEP = CARD_H + GAP
+export const STEP = CARD_H + GAP
 
 const DIMS = {
   cardsPerPage: 3,
@@ -34,6 +34,8 @@ const DIMS = {
 }
 
 export const List = (accounts = [], placeholderCode = null) => {
+  cardWidgets = []
+
   if (accounts.length === 0) {
     const { y, step } = DIMS.card
     Card({ name: 'No accounts. Open phone settings to add accounts.' }, '240 891', y + step, 0, DIMS)

@@ -50,9 +50,9 @@ AppWidget({
     const rightBtnX = margin + CARD_W - textSize + 10
 
     // Left chevron with shadows
-    text({ x: leftBtnX - 5, y: btnY + 8, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0xcecece, centered: false })
-    text({ x: leftBtnX - 5, y: btnY + 12, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0x000000, centered: false })
-    text({ x: leftBtnX - 5, y: btnY + 10, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0x888888, centered: false })
+    text({ x: leftBtnX - 15, y: btnY + 8, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0xcecece, centered: false })
+    text({ x: leftBtnX - 15, y: btnY + 12, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0x000000, centered: false })
+    text({ x: leftBtnX - 15, y: btnY + 10, w: textSize, h: textSize, text: '‹', text_size: textSize, color: 0x888888, centered: false })
 
     button({
       x: leftBtnX, y: btnY, w: textSize, h: textSize, radius: 0,
@@ -62,9 +62,9 @@ AppWidget({
     })
 
     // Right chevron with shadows
-    text({ x: rightBtnX + 5, y: btnY + 8, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0xcecece, centered: false })
-    text({ x: rightBtnX + 5, y: btnY + 12, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0x000000, centered: false })
-    text({ x: rightBtnX + 5, y: btnY + 10, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0x888888, centered: false })
+    text({ x: rightBtnX + 15, y: btnY + 8, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0xcecece, centered: false })
+    text({ x: rightBtnX + 15, y: btnY + 12, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0x000000, centered: false })
+    text({ x: rightBtnX + 15, y: btnY + 10, w: textSize, h: textSize, text: '›', text_size: textSize, color: 0x888888, centered: false })
 
     button({
       x: rightBtnX, y: btnY, w: textSize, h: textSize, radius: 0,

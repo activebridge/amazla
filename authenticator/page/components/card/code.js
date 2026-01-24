@@ -18,10 +18,9 @@ const parse = (code) => {
   return [parts[0] || '---', parts[1] || '---']
 }
 
-export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size }) => {
+export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size, gap = 10 }) => {
   const c = { centered: false }
   const halfW = w / 2 | 0
-  const gap = 10
   const [p1, p2] = parse(code)
 
   const createHalf = (x, alignRight, color, txt) => {

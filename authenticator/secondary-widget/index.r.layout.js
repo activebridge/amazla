@@ -41,6 +41,17 @@ export const refreshCodes = () => {
   })
 }
 
+export const updateAccounts = (newAccounts) => {
+  codeWidgets.forEach((widget, i) => {
+    if (newAccounts[i]) {
+      widget.acc = newAccounts[i]
+      const name = (newAccounts[i].issuer || newAccounts[i].name || 'Account').slice(0, 10)
+      widget.nameText.setProperty(prop.TEXT, name)
+    }
+  })
+  refreshCodes()
+}
+
 export const Layout = (accounts) => {
   codeWidgets = []
 
@@ -128,9 +139,8 @@ export const Layout = (accounts) => {
     })
 
     // Name - truncate to fit within segment
-    const name = (acc.issuer || acc.name || 'Account').slice(0, 10)
-    text({
-      text: name,
+    const nameText = text({
+      text: (acc.issuer || acc.name || 'Account').slice(0, 10),
       text_size: NAME_SIZE,
       color: 0xFFFFFF,
       start_angle: startAngle + angleOffset,
@@ -139,7 +149,7 @@ export const Layout = (accounts) => {
       mode: isBottom ? 1 : 0,
     })
 
-    codeWidgets.push({ dark1, main1, dark2, main2, acc, isBottom })
+    codeWidgets.push({ dark1, main1, dark2, main2, nameText, acc, isBottom })
   })
 
   // Center timer (gradient arc + black arc on top)

@@ -6,12 +6,14 @@ export const Timer = () => {
   container.setEnable(false)
 
   const fade = img({ src: 'fade_mask.png' }, container)
+  fade.setEnable(false)
   // Gradient bar
   const bg = img({ src: 'gradient_bar.png', x: 0, y: 0, w, h: 5, centered: false }, container)
   bg.setEnable(false)
 
   // Black cover bar (covers from right side)
-  const cover = rect({ x: w, w: 0, h: 20, color: 0x000000, radius: 10, centered: false }, container)
+  const cover = rect({ x: w, w: 0, h: 5, color: 0x000000, radius: 10, centered: false }, container)
+  cover.setEnable(false)
 
   // Page scroll indicator
   scrollBar()
