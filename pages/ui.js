@@ -21,6 +21,18 @@ export const page = (x = 0, y = 0) => {
   return page
 }
 
+export const group = (props = {}, group = hmUI) => {
+  console.log(JSON.stringify(center(props)))
+  const stack = hmUI.createWidget(hmUI.widget.GROUP, {
+    w: width,
+    h: height,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(stack)
+  return stack
+}
+
 const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0, centered = true }) => {
   if (!centered) {
     return { x, y, w, h, center_x: x + w / 2 | 0, center_y: y + h / 2 | 0 }
@@ -133,8 +145,8 @@ export const arc = (props = {}, group = hmUI) => {
   const arcWidget = group.createWidget(hmUI.widget.ARC, {
     color: 0x1a73e8,
     line_width: 8,
-    start_angle: -90,
-    end_angle: -90,
+    start_angle: 0,
+    end_angle: 360,
     ...props,
     ...center(props),
   })
@@ -179,6 +191,211 @@ export const viewContainer = (props = {}) => {
   })
   widgets.push(container)
   return container
+}
+
+export const editable = (props = {}) => {
+  var types = props.optional_types || []
+  var pos = center(props)
+  var w = hmUI.createWidget(hmUI.widget.WATCHFACE_EDIT_GROUP, {
+    edit_id: props.edit_id,
+    x: pos.x,
+    y: pos.y,
+    w: pos.w,
+    h: pos.h,
+    select_image: props.select_image || 'edit/select.png',
+    un_select_image: props.un_select_image || 'edit/unselect.png',
+    default_type: types.length > 0 ? types[0].type : 0,
+    optional_types: types,
+    count: types.length,
+    tips_BG: props.tips_BG || 'edit/unselect.png',
+    tips_x: props.tips_x || 0,
+    tips_y: props.tips_y || 0,
+    tips_width: props.tips_width,
+    tips_margin: props.tips_margin,
+  })
+  widgets.push(w)
+  return w
+}
+
+export const weather = (props = {}, group = hmUI) => {
+  const { folder = 'weather', ...rest } = props
+  const weatherWidget = group.createWidget(hmUI.widget.IMG_LEVEL, {
+    image_array: Array.from({ length: 29 }, (_, i) => `${folder}/${i}.png`),
+    image_length: 29,
+    type: hmUI.data_type.WEATHER,
+    ...rest,
+    ...center(rest),
+  })
+  widgets.push(weatherWidget)
+  return weatherWidget
+}
+
+export const time = (props = {}, group = hmUI) => {
+  const { folder = 'time', ...rest } = props
+  const pos = center(props)
+  const timeWidget = group.createWidget(hmUI.widget.IMG_TIME, {
+    hour_zero: 1,
+    hour_startX: pos.x,
+    hour_startY: pos.y,
+    hour_array: Array.from({ length: 10 }, (_, i) => `${folder}/${i}.png`),
+    hour_space: 2,
+    hour_align: hmUI.align.CENTER_H,
+    hour_unit_en: `${folder}/colon.png`,
+    hour_unit_sc: `${folder}/colon.png`,
+    minute_follow: 1,
+    minute_zero: 1,
+    minute_array: Array.from({ length: 10 }, (_, i) => `${folder}/${i}.png`),
+    minute_space: 2,
+    ...rest,
+  })
+  widgets.push(timeWidget)
+  return timeWidget
+}
+
+export const status = (props = {}, group = hmUI) => {
+  const statusWidget = group.createWidget(hmUI.widget.IMG_STATUS, {
+    ...props,
+    ...center(props),
+  })
+  widgets.push(statusWidget)
+  return statusWidget
+}
+
+export const alarm = (props = {}, group = hmUI) => {
+  return status({ type: hmUI.system_status.CLOCK, src: 'status/alarm.png', ...props }, group)
+}
+
+export const disconnect = (props = {}, group = hmUI) => {
+  return status({ type: hmUI.system_status.DISCONNECT, src: 'status/disconnect.png', ...props }, group)
+}
+
+export const dnd = (props = {}, group = hmUI) => {
+  return status({ type: hmUI.system_status.DISTURB, src: 'status/dnd.png', ...props }, group)
+}
+
+export const lock = (props = {}, group = hmUI) => {
+  return status({ type: hmUI.system_status.LOCK, src: 'status/lock.png', ...props }, group)
+}
+
+export const textImg = (props = {}, group = hmUI) => {
+  const textImgWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
+    font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+    align_h: hmUI.align.CENTER_H,
+    h_space: 1,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(textImgWidget)
+  return textImgWidget
+}
+
+export const temperature = (props = {}, group = hmUI) => {
+  const tempWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
+    type: hmUI.data_type.WEATHER_CURRENT,
+    font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+    negative_image: 'fonts/minus.png',
+    unit_sc: 'fonts/degree.png',
+    unit_en: 'fonts/degree.png',
+    align_h: hmUI.align.CENTER_H,
+    h_space: 1,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(tempWidget)
+  return tempWidget
+}
+
+export const battery = (props = {}, group = hmUI) => {
+  const outline = group.createWidget(hmUI.widget.IMG, {
+    src: 'battery/icon.png',
+    ...props,
+    ...center(props),
+  })
+  const fill = group.createWidget(hmUI.widget.IMG_LEVEL, {
+    image_array: Array.from({ length: 7 }, (_, i) => `battery/${i}.png`),
+    image_length: 7,
+    type: hmUI.data_type.BATTERY,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(outline, fill)
+  return fill
+}
+
+export const charge = (props = {}, group = hmUI) => {
+  const chargeWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
+    type: hmUI.data_type.BATTERY,
+    font_array: Array.from({ length: 10 }, (_, i) => `battery/font/${i}.png`),
+    align_h: hmUI.align.CENTER_H,
+    h_space: 1,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(chargeWidget)
+  return chargeWidget
+}
+
+export const click = (props = {}, group = hmUI) => {
+  const clickWidget = group.createWidget(hmUI.widget.IMG_CLICK, {
+    ...props,
+    ...center(props),
+  })
+  widgets.push(clickWidget)
+  return clickWidget
+}
+
+export const date = (props = {}, group = hmUI) => {
+  const { x, y, ...rest } = props
+  const pos = center({ ...props })
+  const dateWidget = group.createWidget(hmUI.widget.IMG_DATE, {
+    month_startX: pos.x,
+    month_startY: pos.y,
+    month_zero: 1,
+    month_space: 2,
+    month_en_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+    month_unit_en: 'fonts/separator.png',
+    day_follow: 1,
+    day_zero: 1,
+    day_space: 2,
+    align_h: hmUI.align.CENTER_H,
+    day_en_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+    ...rest,
+  })
+  widgets.push(dateWidget)
+  return dateWidget
+}
+
+export const weekday = (props = {}, group = hmUI) => {
+  const { w, h, x, y, ...rest } = props
+  const pos = center({ h: 40, ...props })
+  const weekWidget = group.createWidget(hmUI.widget.IMG_WEEK, {
+    x: pos.x,
+    y: pos.y,
+    week_en: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
+    week_sc: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
+    week_tc: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
+    ...rest,
+  })
+  widgets.push(weekWidget)
+  return weekWidget
+}
+
+export const polyline = (props = {}, group = hmUI) => {
+  const { data = [], centered = true, ...rest } = props
+  const pos = center({ centered, ...rest })
+  const polylineWidget = group.createWidget(hmUI.widget.GRADKIENT_POLYLINE, {
+    x: pos.x,
+    y: pos.y,
+    w: pos.w,
+    h: pos.h,
+  })
+  if (data.length) {
+    polylineWidget.clear()
+    polylineWidget.addLine({ data, count: data.length })
+    polylineWidget.addPoint({ data, count: data.length })
+  }
+  widgets.push(polylineWidget)
+  return polylineWidget
 }
 
 export const scrollList = (props = {}, group = hmUI) => {

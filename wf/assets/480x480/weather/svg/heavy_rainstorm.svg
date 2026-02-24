@@ -1,0 +1,22 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#263238"/>
+  <g transform="translate(240,150)">
+    <g fill="#455A64">
+      <ellipse cx="-65" cy="20" rx="65" ry="55"/>
+      <ellipse cx="10" cy="0" rx="80" ry="65"/>
+      <ellipse cx="85" cy="25" rx="60" ry="50"/>
+      <ellipse cx="10" cy="60" rx="120" ry="50"/>
+    </g>
+    <g fill="#1976D2">
+      <ellipse cx="-65" cy="145" rx="7" ry="25"/>
+      <ellipse cx="-25" cy="175" rx="7" ry="25"/>
+      <ellipse cx="15" cy="150" rx="7" ry="25"/>
+      <ellipse cx="55" cy="180" rx="7" ry="25"/>
+      <ellipse cx="95" cy="155" rx="7" ry="25"/>
+      <ellipse cx="-45" cy="230" rx="7" ry="25"/>
+      <ellipse cx="-5" cy="255" rx="7" ry="25"/>
+      <ellipse cx="35" cy="235" rx="7" ry="25"/>
+      <ellipse cx="75" cy="260" rx="7" ry="25"/>
+    </g>
+  </g>
+</svg>

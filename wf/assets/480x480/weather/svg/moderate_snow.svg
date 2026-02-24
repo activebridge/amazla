@@ -1,0 +1,19 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#81D4FA"/>
+  <g transform="translate(240,170)">
+    <g fill="#ECEFF1">
+      <ellipse cx="-55" cy="20" rx="55" ry="45"/>
+      <ellipse cx="10" cy="0" rx="70" ry="55"/>
+      <ellipse cx="75" cy="25" rx="50" ry="40"/>
+      <ellipse cx="10" cy="50" rx="100" ry="40"/>
+    </g>
+    <g fill="#FFFFFF">
+      <circle cx="-50" cy="120" r="8"/>
+      <circle cx="-10" cy="145" r="9"/>
+      <circle cx="30" cy="125" r="7"/>
+      <circle cx="70" cy="150" r="8"/>
+      <circle cx="-30" cy="180" r="9"/>
+      <circle cx="50" cy="190" r="8"/>
+    </g>
+  </g>
+</svg>

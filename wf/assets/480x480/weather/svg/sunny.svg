@@ -1,0 +1,18 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#4FC3F7"/>
+  <g transform="translate(240,220)">
+    <!-- Sun rays -->
+    <g stroke="#FDD835" stroke-width="8" stroke-linecap="round">
+      <line x1="0" y1="-120" x2="0" y2="-150"/>
+      <line x1="0" y1="120" x2="0" y2="150"/>
+      <line x1="-120" y1="0" x2="-150" y2="0"/>
+      <line x1="120" y1="0" x2="150" y2="0"/>
+      <line x1="-85" y1="-85" x2="-106" y2="-106"/>
+      <line x1="85" y1="-85" x2="106" y2="-106"/>
+      <line x1="-85" y1="85" x2="-106" y2="106"/>
+      <line x1="85" y1="85" x2="106" y2="106"/>
+    </g>
+    <!-- Sun circle -->
+    <circle cx="0" cy="0" r="80" fill="#FDD835"/>
+  </g>
+</svg>

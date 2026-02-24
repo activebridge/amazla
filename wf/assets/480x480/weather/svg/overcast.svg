@@ -1,0 +1,11 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#78909C"/>
+  <g transform="translate(240,200)">
+    <g fill="#ECEFF1">
+      <ellipse cx="-70" cy="20" rx="60" ry="50"/>
+      <ellipse cx="0" cy="0" rx="80" ry="60"/>
+      <ellipse cx="80" cy="25" rx="55" ry="45"/>
+      <ellipse cx="0" cy="50" rx="110" ry="45"/>
+    </g>
+  </g>
+</svg>

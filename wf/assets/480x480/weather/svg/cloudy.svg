@@ -1,0 +1,14 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#5C9CE5"/>
+  <g transform="translate(240,200)">
+    <!-- Sun peeking -->
+    <circle cx="50" cy="-30" r="60" fill="#FDD835"/>
+    <!-- Cloud -->
+    <g fill="#FFFFFF">
+      <ellipse cx="-60" cy="30" rx="55" ry="45"/>
+      <ellipse cx="0" cy="10" rx="70" ry="55"/>
+      <ellipse cx="70" cy="30" rx="50" ry="40"/>
+      <ellipse cx="0" cy="50" rx="100" ry="40"/>
+    </g>
+  </g>
+</svg>

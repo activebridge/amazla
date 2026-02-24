@@ -1,0 +1,198 @@
+{
+  "configVersion": "v2",
+  "app": {
+    "appId": 23876,
+    "appName": "Empty",
+    "appType": "watchface",
+    "version": {
+      "code": 1,
+      "name": "1.0.0"
+    },
+    "icon": "icon.png",
+    "vender": "zepp",
+    "description": "empty watchface"
+  },
+  "permissions": ["data:os.device.info"],
+  "runtime": {
+    "apiVersion": {
+      "compatible": "2.0.0",
+      "target": "2.0.0",
+      "minVersion": "2.0.0"
+    }
+  },
+  "targets": {
+    "320x380": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "Altai", "deviceSource": 8454400 },
+        { "name": "AltaiW", "deviceSource": 8454401 },
+        { "name": "KunlunW", "deviceSource": 8782081 },
+        { "name": "KunlunWA", "deviceSource": 8782088 },
+        { "name": "KunlunWAWalmart", "deviceSource": 8782089 }
+      ],
+      "designWidth": 320
+    },
+    "360x360": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "Etna（国内版）", "deviceSource": 8388864 },
+        { "name": "Etna（海外版）", "deviceSource": 8388865 }
+      ],
+      "designWidth": 360
+    },
+    "390x450": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "Zurich", "deviceSource": 224 },
+        { "name": "ZurichW", "deviceSource": 225 },
+        { "name": "Lille", "deviceSource": 7995648 },
+        { "name": "Lillew", "deviceSource": 7995649 },
+        { "name": "SwordfishW", "deviceSource": 8257793 },
+        { "name": "Hannover（国内）", "deviceSource": 8323328 },
+        { "name": "Hannover（海外版）", "deviceSource": 8323329 },
+        { "name": "Pamir", "deviceSource": 9765120 },
+        { "name": "PamirW", "deviceSource": 9765121 },
+        { "name": "PamirW64", "deviceSource": 10158337 },
+        { "name": "Rome64", "deviceSource": 10223872 },
+        { "name": "RomeWNFC64", "deviceSource": 10223873 },
+        { "name": "RomeW64", "deviceSource": 10223875 }
+      ],
+      "designWidth": 390
+    },
+    "416x416": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "LeidenW", "deviceSource": 251 },
+        { "name": "Vienna", "deviceSource": 414 },
+        { "name": "ViennaW", "deviceSource": 415 }
+      ],
+      "designWidth": 416
+    },
+    "454x454": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "Verona", "deviceSource": 226 },
+        { "name": "VeronaW", "deviceSource": 227 },
+        { "name": "Teide", "deviceSource": 418 },
+        { "name": "Teidew", "deviceSource": 419 },
+        { "name": "Andes", "deviceSource": 6553856 },
+        { "name": "AndesW", "deviceSource": 6553857 },
+        { "name": "Swift", "deviceSource": 8192256 },
+        { "name": "SwiftW", "deviceSource": 8192257 }
+      ],
+      "designWidth": 454
+    },
+    "466x466": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "FlorenceW", "deviceSource": 7864577 },
+        { "name": "Berlin", "deviceSource": 7930112 },
+        { "name": "BerlinW", "deviceSource": 7930113 },
+        { "name": "Milan", "deviceSource": 8913152 },
+        { "name": "MilanWNFC", "deviceSource": 8913153 },
+        { "name": "Milan64", "deviceSource": 10092800 },
+        { "name": "MilanWNFC64", "deviceSource": 10092801 },
+        { "name": "MilanW", "deviceSource": 8913155 },
+        { "name": "MilanWNA", "deviceSource": 8913159 },
+        { "name": "MilanW64", "deviceSource": 10092803 },
+        { "name": "MilanWNA64", "deviceSource": 10092807 },
+        { "name": "MilanWGolf", "deviceSource": 10617091 },
+        { "name": "Rimo", "deviceSource": 10682624 },
+        { "name": "RimoWN", "deviceSource": 10682625 },
+        { "name": "RimoW", "deviceSource": 10682627 }
+      ],
+      "designWidth": 466
+    },
+    "480x480": {
+      "module": {
+        "watchface": {
+          "path": "watchface/index",
+          "main": 1,
+          "editable": 1,
+          "lockscreen": 0,
+          "hightCost": 0
+        }
+      },
+      "platforms": [
+        { "name": "Madrid", "deviceSource": 229 },
+        { "name": "MadridW", "deviceSource": 230 },
+        { "name": "Madrid2", "deviceSource": 6095106 },
+        { "name": "Cheetah", "deviceSource": 8126720 },
+        { "name": "CheetahW", "deviceSource": 8126721 },
+        { "name": "KentahW", "deviceSource": 8126727 },
+        { "name": "Monaco", "deviceSource": 8519936 },
+        { "name": "MonacoWN", "deviceSource": 8519937 },
+        { "name": "MonacoW", "deviceSource": 8519939 },
+        { "name": "Matterhorn", "deviceSource": 8716544 },
+        { "name": "MatterhornWN", "deviceSource": 8716545 },
+        { "name": "MatterhornW", "deviceSource": 8716547 },
+        { "name": "Lyon", "deviceSource": 9568512 },
+        { "name": "LyonWN", "deviceSource": 9568513 },
+        { "name": "LyonW", "deviceSource": 9568515 },
+        { "name": "Warsaw", "deviceSource": 10486016 },
+        { "name": "WarsawWN", "deviceSource": 10486017 },
+        { "name": "WarsawW", "deviceSource": 10486019 },
+        { "name": "Rocky", "deviceSource": 10551552 },
+        { "name": "RockyWN", "deviceSource": 10551553 },
+        { "name": "RockyW", "deviceSource": 10551555 },
+        { "name": "GenevaWN", "deviceSource": 10813697 },
+        { "name": "GenevaW", "deviceSource": 10813699 }
+      ],
+      "designWidth": 480
+    }
+  },
+  "i18n": {
+    "en-US": {
+      "appName": "Empty"
+    }
+  },
+  "defaultLanguage": "en-US"
+}

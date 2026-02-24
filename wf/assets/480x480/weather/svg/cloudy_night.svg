@@ -1,0 +1,15 @@
+<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
+  <rect width="480" height="480" fill="#1A237E"/>
+  <g transform="translate(240,200)">
+    <!-- Moon -->
+    <circle cx="60" cy="-40" r="50" fill="#FFF9C4"/>
+    <circle cx="80" cy="-50" r="45" fill="#1A237E"/>
+    <!-- Cloud -->
+    <g fill="#455A64">
+      <ellipse cx="-60" cy="30" rx="55" ry="45"/>
+      <ellipse cx="0" cy="10" rx="70" ry="55"/>
+      <ellipse cx="70" cy="30" rx="50" ry="40"/>
+      <ellipse cx="0" cy="50" rx="100" ry="40"/>
+    </g>
+  </g>
+</svg>
