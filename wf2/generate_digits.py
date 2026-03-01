@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Generate digit PNGs using Moirai One with black outline."""
+
+from PIL import Image, ImageDraw, ImageFont
+import os
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FONT_PATH = "/tmp/TitanOne-Regular.ttf"
+
+# Target digit height in pixels for 480x480 screen
+REF_SIZE = 480
+REF_DIGIT_H = 56
+
+OUTLINE_W = 2  # black outline width in pixels (at 480 reference)
+
+RESOLUTIONS = {
+    "480x480": 480,
+    "466x466": 466,
+    "454x454": 454,
+    "416x416": 416,
+    "390x450": 390,
+    "360x360": 360,
+    "320x380": 320,
+}
+
+
+def generate_digit(char, font_size, outline):
+    """Generate a single digit PNG with black outline on transparent bg."""
+    font = ImageFont.truetype(FONT_PATH, font_size)
+    bbox = font.getbbox(char)
+    pad = outline + 1
+    w = bbox[2] - bbox[0] + pad * 2
+    h = bbox[3] - bbox[1] + pad * 2
+
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    ox = -bbox[0] + pad
+    oy = -bbox[1] + pad
+
+    # Black outline: draw text offset in all directions
+    for dx in range(-outline, outline + 1):
+        for dy in range(-outline, outline + 1):
+            if dx == 0 and dy == 0:
+                continue
+            draw.text((ox + dx, oy + dy), char, font=font, fill=(0, 0, 0, 255))
+
+    # White fill on top
+    draw.text((ox, oy), char, font=font, fill=(255, 255, 255, 255))
+    return img
+
+
+for res_name, res_width in RESOLUTIONS.items():
+    scale = res_width / REF_SIZE
+    digit_h = int(round(REF_DIGIT_H * scale))
+    outline = max(1, int(round(OUTLINE_W * scale)))
+
+    # Binary search for font size matching target height
+    lo, hi = 10, 300
+    while lo < hi:
+        mid = (lo + hi) // 2
+        font = ImageFont.truetype(FONT_PATH, mid)
+        bbox = font.getbbox("0")
+        h = bbox[3] - bbox[1]
+        if h < digit_h:
+            lo = mid + 1
+        else:
+            hi = mid
+    font_size = lo
+
+    out_dir = os.path.join(BASE_DIR, "assets", res_name, "time")
+    os.makedirs(out_dir, exist_ok=True)
+
+    for d in range(10):
+        img = generate_digit(str(d), font_size, outline)
+        img.save(os.path.join(out_dir, str(d) + ".png"))
+
+    sample = generate_digit("0", font_size, outline)
+    print(res_name + ": font_size=" + str(font_size) +
+          ", outline=" + str(outline) +
+          ", sample_0=" + str(sample.size))
+
+print("Done!")
