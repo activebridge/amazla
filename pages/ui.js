@@ -366,14 +366,14 @@ export const date = (props = {}, group = hmUI) => {
 }
 
 export const weekday = (props = {}, group = hmUI) => {
-  const { w, h, x, y, ...rest } = props
+  const { w, h, x, y, folder = 'weekdays', ...rest } = props
   const pos = center({ h: 40, ...props })
   const weekWidget = group.createWidget(hmUI.widget.IMG_WEEK, {
     x: pos.x,
     y: pos.y,
-    week_en: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
-    week_sc: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
-    week_tc: Array.from({ length: 7 }, (_, i) => `weekdays/${i}.png`),
+    week_en: Array.from({ length: 7 }, (_, i) => `${folder}/${i}.png`),
+    week_sc: Array.from({ length: 7 }, (_, i) => `${folder}/${i}.png`),
+    week_tc: Array.from({ length: 7 }, (_, i) => `${folder}/${i}.png`),
     ...rest,
   })
   widgets.push(weekWidget)
@@ -444,6 +444,13 @@ export const scrollList = (props = {}, group = hmUI) => {
 
   widgets.push(listWidget)
   return listWidget
+}
+
+export const delegate = (onResume, onPause) => {
+  return hmUI.createWidget(hmUI.widget.WIDGET_DELEGATE, {
+    resume_call: onResume,
+    pause_call: onPause,
+  })
 }
 
 export default {

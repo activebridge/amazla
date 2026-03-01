@@ -1,4 +1,5 @@
 import { ADD_BTN, SORT_BTN, DELETE_BTN, MAIN, CARD } from "./styles"
+import { getBarcodeLabel, getBarcodePlaceholder, getBarcodeTypeName, detectBarcodeType } from "./../utils/barcode"
 
 const e = [
   "linear-gradient(120deg, #4facfe 0%, #00f2fe 100%)",
@@ -15,13 +16,21 @@ const e = [
 
 AppSettingsPage({
   build({settingsStorage: t}) {
-    const cards = JSON.parse(t.getItem("cards") || '[{"title": "Example", "code": "0123456789123"}]')
+    const cards = JSON.parse(t.getItem("cards") || '[{"title": "Example", "code": "0123456789123", "type": "ean13"}]')
     const save = (index, key, value) => {
       cards[index][key] = value
       t.setItem("cards", JSON.stringify(cards))
     }
     const list = View({}, cards.map(((a,n)=>{
-      const r = a.qr ? a.code : a.code && String(a.code).padStart(13, "0");
+      // Migrate old qr boolean to type
+      if (a.qr === true && !a.type) {
+        a.type = 'qr'
+        delete a.qr
+        t.setItem("cards", JSON.stringify(cards))
+      }
+      if (!a.type) a.type = 'ean13'
+
+      const r = a.type === 'ean13' ? (a.code && String(a.code).padStart(13, "0")) : a.code;
       const background = e[Math.floor(n % 10)]
       return Section({ style: { ...CARD, background } }, [
         Section({ style: { minHeight: "50px" } }, [
@@ -35,21 +44,29 @@ AppSettingsPage({
 
         Section({ style: { minHeight: "50px" } }, [
           TextInput({
-            label: a.qr ? "Content (any string)" : "Code: 13 digits (EAN-13)",
-            placeholder: a.qr ? "https://buymeacoffee.com/galulex" : "123456789012",
+            label: getBarcodeLabel(a.type),
+            placeholder: getBarcodePlaceholder(a.type),
             value: r,
             onChange: e=>{
               save(n, "code", e)
+              // Auto-detect and suggest barcode type
+              const suggestedType = detectBarcodeType(e)
+              if (suggestedType !== a.type) {
+                save(n, "type", suggestedType)
+              }
             }
           })
         ]),
 
-        Section({ style: { width: "130px" } }, [
-          Toggle({
-            label: "QR Code",
-            value: a.qr,
-            onChange: e=>{
-              save(n, "qr", e)
+        Section({ style: { width: "220px" } }, [
+          Button({
+            label: "Type: " + getBarcodeTypeName(a.type) + " (auto)",
+            style: { margin: "10px 0", padding: "10px", fontSize: "13px" },
+            onClick: () => {
+              const types = ['ean13', 'code39', 'code128', 'qr']
+              const currentIndex = types.indexOf(a.type || 'ean13')
+              const nextType = types[(currentIndex + 1) % types.length]
+              save(n, "type", nextType)
             }
           })
         ]),
