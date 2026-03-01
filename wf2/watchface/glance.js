@@ -36,7 +36,7 @@ export function placeGlance() {
     y: 20,
     w: Math.round(refW_Week * s),
     h: Math.round(36 * s),
-    week_en: Array.from({ length: 7 }, (_, i) => `glance-week/${i}.png`),
+    folder: 'glance-week',
     align_h: hmUI.align.LEFT,
     show_level: hmUI.show_level.ONLY_NORMAL
   })

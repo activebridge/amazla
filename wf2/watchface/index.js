@@ -20,7 +20,7 @@ WatchFace({
   onInit() {},
   build() {
     placeMarkers()
-    placeGlance()
+    // placeGlance()
     placeStatusIcons()
     placeHeartIcon()
     placeWeatherIcon()
@@ -35,15 +35,18 @@ WatchFace({
     // Create and update digits last so they are on top
     placeDigits()
     placeTime()
-    updateGlance()
+    // updateGlance()
 
     delegate(function () {
       placeTime()
-      updateGlance()
+      // updateGlance()
       updateHeart()
 
       if (timerId) timer.stopTimer(timerId)
-      timerId = timer.createTimer(1000, 1000, function () { placeTime(); updateGlance() }, {})
+      timerId = timer.createTimer(1000, 1000, function () { 
+        placeTime() 
+        // updateGlance() 
+      }, {})
     }, function () {
       if (timerId) { timer.stopTimer(timerId); timerId = null }
     })

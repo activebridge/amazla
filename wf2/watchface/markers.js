@@ -1,18 +1,10 @@
-import * as hmUI from '@zos/ui'
-import { s, pos } from './utils.js'
+import { circle, size } from '../../pages/ui.js'
 
 export function placeMarkers() {
-  var size = 10
-  for (var i = 0; i < 12; i++) {
-    var angle = (i * 30 - 90) * Math.PI / 180
-    var r = 240 * s - 4 - size / 2
-    var p = pos(Math.round(r * Math.cos(angle)), Math.round(r * Math.sin(angle)), size, size)
-    hmUI.createWidget(hmUI.widget.IMG, {
-      x: p.x,
-      y: p.y,
-      w: size,
-      h: size,
-      src: 'dot.png',
-    })
-  }
+  var o = size / 2 - 10
+  var p = { radius: 5, color: 0xffffff, alpha: 255 }
+  circle({ ...p, y: -o })
+  circle({ ...p, x:  o })
+  circle({ ...p, y:  o })
+  circle({ ...p, x: -o })
 }
