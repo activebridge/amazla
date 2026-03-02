@@ -89,6 +89,10 @@ for res_name, res_width in RESOLUTIONS.items():
         icon = gen_hex(sz, outline, color)
         icon.save(os.path.join(out_dir, f"{name}.png"))
 
+    # Transparent placeholder (for level overlay when PAI >= 100)
+    transparent = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+    transparent.save(os.path.join(out_dir, "transparent.png"))
+
     print(f"{res_name}: 4 unique colors generated")
 
 print("Done!")
