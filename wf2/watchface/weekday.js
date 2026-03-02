@@ -1,16 +1,17 @@
-import * as hmUI from '@zos/ui'
 import { weekday } from '../../pages/ui.js'
-import { s, dotPos } from './utils.js'
+import { px } from '@zos/utils'
+import { size } from '../../pages/ui.js'
 
 export function placeWeekdayIcon() {
-  var iconSize = Math.round(36 * s)
-  var dp = dotPos(10)
+  const sz = px(36)
+  const angle = (10 * 30 - 90) * Math.PI / 180
+  const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
 
   weekday({
-    x: dp.x,
-    y: dp.y,
-    w: iconSize,
-    h: iconSize,
+    x: Math.round(r * Math.cos(angle)),
+    y: Math.round(r * Math.sin(angle)),
+    w: sz,
+    h: sz,
     folder: 'weekday'
   })
 }

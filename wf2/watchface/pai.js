@@ -1,10 +1,11 @@
 import * as hmUI from '@zos/ui'
-import { weather } from '../../pages/ui.js'
-import { s, dotPos } from './utils.js'
+import { level, size } from '../../pages/ui.js'
 
-export function placePaiIcon() {
-  var iconSize = Math.round(36 * s)
-  var dp = dotPos(5)
+export const placePaiIcon = () => {
+  const o = size / 2 - 20
+  const x = Math.round(o * 0.5)     // cos(60) for 5 o'clock
+  const y = Math.round(o * 0.866)   // sin(60) for 5 o'clock
+  const sz = 36
 
   // Map 40 buckets to our 4 unique colored files
   var images = []
@@ -13,12 +14,12 @@ export function placePaiIcon() {
   for (var i = 0; i < 5; i++) images.push('pai/blue.png')   // 50-100 PAI
   for (var i = 0; i < 30; i++) images.push('pai/green.png') // 100-400 PAI
 
-  // Using 'weather' helper from ui.js as it provides IMG_LEVEL widget
-  weather({
-    x: dp.x,
-    y: dp.y,
-    w: iconSize,
-    h: iconSize,
+  // Using 'level' helper from ui.js as it provides IMG_LEVEL widget
+  level({
+    x: x,
+    y: y,
+    w: sz,
+    h: sz,
     image_array: images,
     image_length: 40,
     type: hmUI.data_type.PAI_WEEKLY,

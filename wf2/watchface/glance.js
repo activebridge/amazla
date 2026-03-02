@@ -1,6 +1,6 @@
 import * as hmUI from '@zos/ui'
-import { date, weekday, temperature, weather, img } from '../../pages/ui.js'
-import { s } from './utils.js'
+import { date, weekday, temperature, weather } from '../../pages/ui.js'
+import { px } from '@zos/utils'
 
 // Y offsets from center (reference 480px)
 var Y1 = 50
@@ -19,7 +19,7 @@ export function placeGlance() {
     x: 0,
     y: 60,
     w: 100,
-    h: Math.round(36 * s),
+    h: px(36),
     align_h: hmUI.align.RIGHT,
     month_is_character: true,
     month_en_array: Array.from({ length: 12 }, (_, i) => `glance-month/${i}.png`),
@@ -27,15 +27,15 @@ export function placeGlance() {
     day_follow: 1,
     day_en_array: Array.from({ length: 10 }, (_, i) => `glance/${i}.png`),
     day_zero: 0,
-    day_space: Math.round(4 * s),
+    day_space: px(4),
     show_level: hmUI.show_level.ONLY_NORMAL
   })
 
   weekday({
     x: 0,
     y: 20,
-    w: Math.round(refW_Week * s),
-    h: Math.round(36 * s),
+    w: px(refW_Week),
+    h: px(36),
     folder: 'glance-week',
     align_h: hmUI.align.LEFT,
     show_level: hmUI.show_level.ONLY_NORMAL
@@ -45,8 +45,8 @@ export function placeGlance() {
   temperature({
     x: 0,
     y: -50,
-    w: Math.round(refW_Temp * s),
-    h: Math.round(36 * s),
+    w: px(refW_Temp),
+    h: px(36),
     align_h: hmUI.align.RIGHT,
     font_array: Array.from({ length: 10 }, (_, i) => `glance/${i}.png`),
     unit_en: 'glance/degree.png',
@@ -58,8 +58,8 @@ export function placeGlance() {
   weather({
     x: 0,
     y: -20,
-    w: Math.round(refW_Weather * s),
-    h: Math.round(36 * s),
+    w: px(refW_Weather),
+    h: px(36),
     folder: 'weather',
     align_h: hmUI.align.LEFT,
     show_level: hmUI.show_level.ONLY_NORMAL

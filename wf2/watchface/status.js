@@ -1,20 +1,25 @@
 import * as hmUI from '@zos/ui'
-import { alarm, disconnect, dnd, lock, img } from '../../pages/ui.js'
-import { s, dotPos } from './utils.js'
+import { alarm, dnd, lock, disconnect, img, width, height, size } from '../../pages/ui.js'
 
-export function placeStatusIcons() {
-  var iconSize = Math.round(36 * s)
-  var statuses = [
-    { fn: alarm, hour: 9, gray: 'status/alarm_gray.png' },
-    { fn: dnd, hour: 12 },
-    { fn: function(p) { img({ x: p.x, y: p.y, w: p.w, h: p.h, src: 'status/disconnect.png' }) }, hour: 3 }, // TODO: revert to disconnect
-    { fn: lock, hour: 6 },
-  ]
-  for (var j = 0; j < statuses.length; j++) {
-    var dp = dotPos(statuses[j].hour)
-    if (statuses[j].gray) {
-      img({ x: dp.x, y: dp.y, w: iconSize, h: iconSize, src: statuses[j].gray })
-    }
-    statuses[j].fn({ x: dp.x, y: dp.y, w: iconSize, h: iconSize })
-  }
+export const placeStatusIcons = () => {
+  const o = size / 2 - 20
+
+  // 9 o'clock: Alarm
+  img({ x: -o, y: 0, w: 36, h: 36, src: 'status/alarm_gray.png' })
+  alarm({ x: -o, y: 0, w: 36, h: 36 })
+
+  // Large Curved Top-Side Disconnect Bar
+  disconnect({
+    x: 0,
+    y: -25,
+    w: width,
+    h: Math.floor(height / 4),
+    src: 'status/disconnect_large.png',
+    centered: false,
+    show_level: hmUI.show_level.ONLY_NORMAL
+  })
+
+  // 12 o'clock: DND and Lock
+  dnd({ x: 0, y: -o, w: 36, h: 36 })
+  lock({ x: 0, y: -o, w: 36, h: 36 })
 }

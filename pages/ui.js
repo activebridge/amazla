@@ -217,17 +217,23 @@ export const editable = (props = {}) => {
   return w
 }
 
+export const level = (props = {}, group = hmUI) => {
+  const levelWidget = group.createWidget(hmUI.widget.IMG_LEVEL, {
+    ...props,
+    ...center(props),
+  })
+  widgets.push(levelWidget)
+  return levelWidget
+}
+
 export const weather = (props = {}, group = hmUI) => {
-  const { folder = 'weather', ...rest } = props
-  const weatherWidget = group.createWidget(hmUI.widget.IMG_LEVEL, {
+  const { folder = "weather", ...rest } = props
+  return level({
     image_array: Array.from({ length: 29 }, (_, i) => `${folder}/${i}.png`),
     image_length: 29,
     type: hmUI.data_type.WEATHER,
     ...rest,
-    ...center(rest),
-  })
-  widgets.push(weatherWidget)
-  return weatherWidget
+  }, group)
 }
 
 export const time = (props = {}, group = hmUI) => {

@@ -1,6 +1,7 @@
 import * as hmUI from '@zos/ui'
 import { HeartRate } from '@zos/sensor'
-import { s, pos, dotPos } from './utils.js'
+import { px } from '@zos/utils'
+import { width, height, size } from '../../pages/ui.js'
 
 var heartIcon
 var hrSensor = new HeartRate()
@@ -12,15 +13,18 @@ export function updateHeart() {
 }
 
 export function placeHeartIcon() {
-  var iconSize = Math.round(36 * s)
-  var dp = dotPos(1)
-  var hp = pos(dp.x, dp.y, iconSize, iconSize)
+  const sz = px(36)
+  const angle = (1 * 30 - 90) * Math.PI / 180
+  const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
+  const x = Math.floor((width - sz) / 2 + Math.round(r * Math.cos(angle)))
+  const y = Math.floor((height - sz) / 2 + Math.round(r * Math.sin(angle)))
+
   heartIcon = hmUI.createWidget(hmUI.widget.IMG, {
-    x: hp.x, y: hp.y, w: iconSize, h: iconSize,
+    x, y, w: sz, h: sz,
     src: 'status/heart/0.png',
     angle: 30,
-    center_x: Math.floor(iconSize / 2),
-    center_y: Math.floor(iconSize / 2),
+    center_x: Math.floor(sz / 2),
+    center_y: Math.floor(sz / 2),
   })
   hrSensor.onCurrentChange(updateHeart)
 }

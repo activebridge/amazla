@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Generate neomorphic seconds pointer PNG for all resolutions."""
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 import math
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 REF_SIZE = 480
-SECOND_W, SECOND_H = 17, 242
+SECOND_W, SECOND_H = 16, 260
 
 RESOLUTIONS = {
     "480x480": 480,
@@ -22,103 +22,51 @@ RESOLUTIONS = {
 
 
 def make_second_pointer(w, h):
-    """Neomorphic pill on black bg: light shadow top-left, dark body."""
-    pad = 6
-    iw, ih = w + pad * 2, h + pad * 2
-    img = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
+    """Small pill tip with gradient and 2px black outline on all edges, transparent below."""
+    pad = 2
+    iw = w + pad * 2
+    img = Image.new("RGBA", (iw, h), (0, 0, 0, 0))
 
-    pill_h = int(round(45 * h / SECOND_H))
-    pill_w = w
-    radius = pill_w // 2
-    ox = pad
+    tip_h = int(round(45 * h / SECOND_H))
+    radius = w // 2
 
-    # Light shadow (top-left) - neomorphic highlight
-    light = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(light)
-    ld.rounded_rectangle(
-        [ox - 2, pad - 2, ox + pill_w - 1 - 2, pad + pill_h - 1 - 2],
-        radius=radius, fill=(255, 255, 255, 40)
-    )
-    light = light.filter(ImageFilter.GaussianBlur(3))
-    img = Image.alpha_composite(img, light)
-
-    # Dark shadow (bottom-right)
-    dark = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
-    dd = ImageDraw.Draw(dark)
-    dd.rounded_rectangle(
-        [ox + 2, pad + 2, ox + pill_w - 1 + 2, pad + pill_h - 1 + 2],
-        radius=radius, fill=(0, 0, 0, 80)
-    )
-    dark = dark.filter(ImageFilter.GaussianBlur(3))
-    img = Image.alpha_composite(img, dark)
-
-    # Black outline
-    outline = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
+    # Black outline (2px on all sides)
+    outline = Image.new("RGBA", (iw, h), (0, 0, 0, 0))
     od = ImageDraw.Draw(outline)
-    od.rounded_rectangle(
-        [ox - 2, pad - 2, ox + pill_w + 1, pad + pill_h + 1],
-        radius=radius + 2, fill=(0, 0, 0, 255)
-    )
+    od.rounded_rectangle([0, 0, iw - 1, tip_h + pad], radius=radius + pad, fill=(0, 0, 0, 255))
     img = Image.alpha_composite(img, outline)
 
-    # Main pill body
-    body = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
-    for y in range(pill_h):
-        t = y / max(pill_h - 1, 1)
-        # Modern teal/cyan gradient
-        r = int(0 + t * (0 - 0))
-        g = int(200 + t * (140 - 200))
-        b = int(220 + t * (180 - 220))
-
-        for x in range(pill_w):
+    # Gradient fill clipped to pill shape (offset by pad)
+    for y in range(tip_h):
+        t = y / max(tip_h - 1, 1)
+        g = int(220 - t * 80)
+        b = int(255 - t * 75)
+        color = (0, g, b, 255)
+        for x in range(w):
             inside = False
-            if radius <= y <= pill_h - radius - 1:
+            if radius <= y <= tip_h - radius - 1:
                 inside = True
             elif y < radius:
-                dist = math.sqrt((x - radius) ** 2 + (y - radius) ** 2)
-                inside = dist <= radius
+                inside = math.sqrt((x - radius) ** 2 + (y - radius) ** 2) <= radius
             else:
-                cy_c = pill_h - radius - 1
-                dist = math.sqrt((x - radius) ** 2 + (y - cy_c) ** 2)
-                inside = dist <= radius
-
+                inside = math.sqrt((x - radius) ** 2 + (y - (tip_h - radius - 1)) ** 2) <= radius
             if inside:
-                alpha = 255
-                if y < radius:
-                    dist = math.sqrt((x - radius) ** 2 + (y - radius) ** 2)
-                    if dist > radius - 1:
-                        alpha = max(0, int(255 * (radius - dist)))
-                elif y > pill_h - radius - 1:
-                    cy_c = pill_h - radius - 1
-                    dist = math.sqrt((x - radius) ** 2 + (y - cy_c) ** 2)
-                    if dist > radius - 1:
-                        alpha = max(0, int(255 * (radius - dist)))
-                body.putpixel((ox + x, pad + y), (r, g, b, alpha))
-
-    img = Image.alpha_composite(img, body)
-
-    # Inner highlight at top edge
-    hl = Image.new("RGBA", (iw, ih), (0, 0, 0, 0))
-    hld = ImageDraw.Draw(hl)
-    hld.rounded_rectangle(
-        [ox + 2, pad + 1, ox + pill_w - 3, pad + pill_h // 4],
-        radius=max(1, radius - 2), fill=(255, 255, 255, 20)
-    )
-    img = Image.alpha_composite(img, hl)
+                img.putpixel((x + pad, y + pad), color)
 
     return img
 
 
 for res_name, res_width in RESOLUTIONS.items():
     scale = res_width / REF_SIZE
-    sw = max(9, int(round(SECOND_W * scale)) | 1)
-    sh = max(50, int(round(SECOND_H * scale)))
+    sw = max(4, int(round(SECOND_W * scale)) | 1)
+    sh = max(20, int(round(SECOND_H * scale)))
 
     second_img = make_second_pointer(sw, sh)
 
     out_dir = os.path.join(BASE_DIR, "assets", res_name, "pointer")
     os.makedirs(out_dir, exist_ok=True)
     second_img.save(os.path.join(out_dir, "hour.png"))
+    second_img.save(os.path.join(out_dir, "seconds.png"))
 
     print(res_name + ": " + str(second_img.size))
 

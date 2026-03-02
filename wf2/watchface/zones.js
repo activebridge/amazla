@@ -1,27 +1,27 @@
 import * as hmUI from '@zos/ui'
-import { click, width, height } from '../../pages/ui.js'
-import { s, dotPos } from './utils.js'
+import { px } from '@zos/utils'
+import { click, size } from '../../pages/ui.js'
 
 export function placeZones() {
-  var iconSize = Math.round(36 * s)
-  var zoneSize = iconSize * 2
+  const sz = px(36)
+  const zoneSize = sz * 2
+  const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
 
-  // Center zone - Weather
   click({
     x: 0,
-    y: Math.round(70 * s),
-    w: Math.round(300 * s),
-    h: Math.round(150 * s),
+    y: px(70),
+    w: px(300),
+    h: px(150),
     src: '',
     type: hmUI.data_type.WEATHER_CURRENT
   })
 
-  // Outer icons
   var zones = [
     { hour: 1, type: hmUI.data_type.HEART },
     { hour: 2, type: hmUI.data_type.STEP },
     { hour: 4, type: hmUI.data_type.CAL },
     { hour: 5, type: hmUI.data_type.PAI_WEEKLY },
+    { hour: 6, type: hmUI.data_type.STAND },
     { hour: 7, type: hmUI.data_type.BATTERY },
     { hour: 8, type: hmUI.data_type.DAY },
     { hour: 9, type: hmUI.data_type.ALARM_CLOCK },
@@ -29,10 +29,10 @@ export function placeZones() {
   ]
 
   for (var i = 0; i < zones.length; i++) {
-    var dp = dotPos(zones[i].hour)
+    var angle = (zones[i].hour * 30 - 90) * Math.PI / 180
     click({
-      x: dp.x,
-      y: dp.y,
+      x: Math.round(r * Math.cos(angle)),
+      y: Math.round(r * Math.sin(angle)),
       w: zoneSize,
       h: zoneSize,
       src: '',

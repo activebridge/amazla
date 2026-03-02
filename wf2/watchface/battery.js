@@ -1,13 +1,16 @@
 import * as hmUI from '@zos/ui'
-import { s, pos, dotPos } from './utils.js'
+import { px } from '@zos/utils'
+import { width, height, size } from '../../pages/ui.js'
 
 export function placeBatteryIcon() {
-  var iconSize = Math.round(36 * s)
-  var dp = dotPos(7)
-  var p = pos(dp.x, dp.y, iconSize, iconSize)
+  const sz = px(36)
+  const angle = (7 * 30 - 90) * Math.PI / 180
+  const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
+  const x = Math.floor((width - sz) / 2 + Math.round(r * Math.cos(angle)))
+  const y = Math.floor((height - sz) / 2 + Math.round(r * Math.sin(angle)))
 
   hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-    x: p.x, y: p.y, w: iconSize, h: iconSize,
+    x, y, w: sz, h: sz,
     image_array: Array.from({ length: 5 }, function(_, i) { return 'battery/' + i + '.png' }),
     image_length: 5,
     type: hmUI.data_type.BATTERY,

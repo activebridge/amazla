@@ -1,15 +1,22 @@
 import * as hmUI from '@zos/ui'
-import { s, pos, dotPos } from './utils.js'
+import { level, size } from '../../pages/ui.js'
 
 export function placeDateIcon() {
-  var iconSize = Math.round(36 * s)
-  var dp = dotPos(8)
-  var p = pos(dp.x, dp.y, iconSize, iconSize)
+  const sz = 36
+  const o = size / 2 - 20
+  const x = Math.round(o)  // cos(0°) for 3 o'clock
+  const y = 0              // sin(0°) for 3 o'clock
 
-  hmUI.createWidget(hmUI.widget.IMG_LEVEL, {
-    x: p.x, y: p.y, w: iconSize, h: iconSize,
-    image_array: Array.from({ length: 30 }, function(_, i) { return 'date/moon_' + i + '.png' }),
-    image_length: 30,
-    type: hmUI.data_type.MOON,
+  var bgImages = []
+  for (var i = 0; i < 7; i++)  bgImages.push('date/blue.png')    // days 1–7
+  for (var i = 0; i < 7; i++)  bgImages.push('date/green.png')   // days 8–14
+  for (var i = 0; i < 7; i++)  bgImages.push('date/yellow.png')  // days 15–21
+  for (var i = 0; i < 10; i++) bgImages.push('date/red.png')     // days 22–31
+
+  level({
+    x, y, w: sz, h: sz,
+    image_array: bgImages,
+    image_length: 31,
+    type: hmUI.data_type.DATE_DAY,
   })
 }
