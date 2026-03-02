@@ -1,6 +1,7 @@
 import * as hmUI from '@zos/ui'
 import { px } from '@zos/utils'
 import { click, size } from '../../pages/ui.js'
+import { launchApp, SYSTEM_APP_CALENDAR } from '@zos/router'
 
 export function placeZones() {
   const sz = px(36)
@@ -40,4 +41,18 @@ export function placeZones() {
       type: zones[i].type
     })
   }
+
+  // Date icon at 6 o'clock → open calendar
+  var dateSz = px(40)
+  var dateR = Math.floor(size / 2) - 4 - Math.floor(dateSz / 2)
+  click({
+    x: 0,
+    y: dateR,
+    w: dateSz,
+    h: dateSz,
+    src: '',
+    click_func: function() {
+      try { launchApp({ appId: SYSTEM_APP_CALENDAR, native: true }) } catch(e) {}
+    }
+  })
 }

@@ -64,8 +64,12 @@ def gen_calendar(sz, radius, outline, color):
 
     # Two black dots at top center
     ring_y = pad + ring_r - 5 * up  # dots near top edge
-    for rx in [big // 2 - ring_r - ring_gap // 2 + 2 * up, big // 2 + ring_r + ring_gap // 2 - 2 * up]:
-        draw.ellipse([rx - ring_r, ring_y - ring_r, rx + ring_r, ring_y + ring_r],
+    dots = [
+        (big // 2 - ring_r - ring_gap // 2 + 2 * up, ring_y - up),
+        (big // 2 + ring_r + ring_gap // 2 - 4 * up, ring_y - up),
+    ]
+    for rx, ry in dots:
+        draw.ellipse([rx - ring_r, ry - ring_r, rx + ring_r, ry + ring_r],
                      fill=(0, 0, 0, 255))
 
     return img.resize((sz, sz), Image.LANCZOS)

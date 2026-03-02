@@ -41,7 +41,7 @@ WEATHER_COLORS = {
     "rain":    (60, 130, 220),   # blue
     "snow":    (180, 220, 255),  # light blue
     "fog":     (140, 140, 140),  # dark gray
-    "night":   (80, 80, 160),    # dark blue
+    "night":   (240, 230, 140),  # pale yellow (moonlight)
     "wind":    (100, 200, 180),  # teal
 }
 
