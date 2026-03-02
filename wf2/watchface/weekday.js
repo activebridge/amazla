@@ -1,17 +1,9 @@
-import { weekday } from '../../pages/ui.js'
-import { px } from '@zos/utils'
-import { size } from '../../pages/ui.js'
+import { weekday, size } from '../../pages/ui.js'
 
-export function placeWeekdayIcon() {
-  const sz = px(36)
-  const angle = (10 * 30 - 90) * Math.PI / 180
-  const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
+export const Weekday = () => {
+  const o = size / 2 - 20
+  const x = Math.round(o * -0.866)  // cos(210°) for hour 10
+  const y = Math.round(o * -0.5)    // sin(210°) for hour 10
 
-  weekday({
-    x: Math.round(r * Math.cos(angle)),
-    y: Math.round(r * Math.sin(angle)),
-    w: sz,
-    h: sz,
-    folder: 'weekday'
-  })
+  weekday({ x, y, w: 36, h: 36, folder: 'weekday' })
 }

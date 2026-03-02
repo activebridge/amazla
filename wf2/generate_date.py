@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Generate date background assets: colored rounded-rect squares per week."""
+"""Generate date background assets: calendar icon with header bar + binding rings."""
 
 from PIL import Image, ImageDraw
 import os
+from gradient_utils import lighten, darken
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 REF_SIZE = 480
-REF_ICON = 36
-REF_RADIUS = 6
+REF_ICON = 40
+REF_RADIUS = 8
+OUTLINE = 2
 
 RESOLUTIONS = {
     "480x480": 480,
@@ -28,25 +30,60 @@ COLORS = {
 }
 
 
-def gen_rect(sz, radius, color):
-    img = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
+def gen_calendar(sz, radius, outline, color):
+    up = 4
+    big = sz * up
+    r = radius * up
+    pad = outline * up
+    ring_r = big // 10 + up   # binding dot radius (+1px)
+    ring_gap = 15 * up        # 15px gap between dots
+
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle([0, 0, sz - 1, sz - 1], radius=radius, fill=color + (255,))
-    return img
+
+    # Black outline (full rounded rect)
+    draw.rounded_rectangle([0, 0, big - 1, big - 1], radius=r, fill=(0, 0, 0, 255))
+
+    # Body: gradient fill
+    color_top = lighten(color, 0.3)
+    color_bot = darken(color, 0.2)
+    body_mask = Image.new("L", (big, big), 0)
+    bm_draw = ImageDraw.Draw(body_mask)
+    bm_draw.rounded_rectangle([pad, pad, big - 1 - pad, big - 1 - pad], radius=max(1, r - pad), fill=255)
+
+    grad = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    grad_draw = ImageDraw.Draw(grad)
+    for y in range(big):
+        t = y / max(1, big - 1)
+        rv = int(color_top[0] + (color_bot[0] - color_top[0]) * t)
+        gv = int(color_top[1] + (color_bot[1] - color_top[1]) * t)
+        bv = int(color_top[2] + (color_bot[2] - color_top[2]) * t)
+        grad_draw.line([(0, y), (big - 1, y)], fill=(rv, gv, bv, 255))
+    grad.putalpha(body_mask)
+    img.paste(grad, mask=grad)
+
+    # Two black dots at top center
+    ring_y = pad + ring_r - 5 * up  # dots near top edge
+    for rx in [big // 2 - ring_r - ring_gap // 2 + 2 * up, big // 2 + ring_r + ring_gap // 2 - 2 * up]:
+        draw.ellipse([rx - ring_r, ring_y - ring_r, rx + ring_r, ring_y + ring_r],
+                     fill=(0, 0, 0, 255))
+
+    return img.resize((sz, sz), Image.LANCZOS)
 
 
 for res_name, res_width in RESOLUTIONS.items():
     scale = res_width / REF_SIZE
-    sz = max(6, int(round(REF_ICON * scale)))
+    sz = max(8, int(round(REF_ICON * scale)))
     radius = max(2, int(round(REF_RADIUS * scale)))
+    outline = max(1, int(round(OUTLINE * scale)))
 
     out_dir = os.path.join(BASE_DIR, "assets", res_name, "date")
     os.makedirs(out_dir, exist_ok=True)
 
     for name, color in COLORS.items():
-        img = gen_rect(sz, radius, color)
+        img = gen_calendar(sz, radius, outline, color)
         img.save(os.path.join(out_dir, name + ".png"))
 
-    print(res_name + ": 4 date backgrounds, " + str(sz) + "x" + str(sz) + " radius=" + str(radius))
+    print(res_name + ": 4 calendar icons, " + str(sz) + "x" + str(sz))
 
 print("Done!")
