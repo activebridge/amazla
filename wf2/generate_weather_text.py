@@ -7,7 +7,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,

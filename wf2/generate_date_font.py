@@ -12,7 +12,7 @@ REF_DIGIT_H = 24
 OUTLINE_W = 1
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,

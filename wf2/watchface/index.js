@@ -1,4 +1,3 @@
-import timer from '@zos/timer'
 import { delegate } from '../../pages/ui.js'
 import { placeDigits, placeTime } from './digits.js'
 import { placeSecondsPointer } from './seconds.js'
@@ -44,10 +43,10 @@ WatchFace({
       heartWidget.update()
       // updateGlance()
 
-      if (timerId) timer.stopTimer(timerId)
-      timerId = timer.createTimer(1000, 1000, function () { placeTime(); /* updateGlance() */ }, {})
+      if (timerId) clearInterval(timerId)
+      timerId = setInterval(function () { placeTime(); /* updateGlance() */ }, 1000)
     }, function () {
-      if (timerId) { timer.stopTimer(timerId); timerId = null }
+      if (timerId) { clearInterval(timerId); timerId = null }
     })
 
     placeZones()

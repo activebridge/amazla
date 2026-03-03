@@ -11,7 +11,7 @@ REF_SIZE = 480
 SECOND_W, SECOND_H = 16, 260
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,

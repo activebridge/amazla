@@ -7,14 +7,14 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = "/tmp/TitanOne-Regular.ttf"
 
-# Target digit height in pixels for 480x480 screen
+# Target digit height in pixels for round screen
 REF_SIZE = 480
 REF_DIGIT_H = 56
 
 OUTLINE_W = 2  # black outline width in pixels (at 480 reference)
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,

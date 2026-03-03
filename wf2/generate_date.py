@@ -13,7 +13,7 @@ REF_RADIUS = 8
 OUTLINE = 2
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,

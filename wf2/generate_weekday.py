@@ -12,7 +12,7 @@ REF_ICON = 36
 REF_OUTLINE = 3
 
 RESOLUTIONS = {
-    "480x480": 480,
+    "round": 480,
     "466x466": 466,
     "454x454": 454,
     "416x416": 416,
