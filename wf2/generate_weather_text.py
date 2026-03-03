@@ -8,12 +8,6 @@ FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 
 RESOLUTIONS = {
     "round": 480,
-    "466x466": 466,
-    "454x454": 454,
-    "416x416": 416,
-    "390x450": 390,
-    "360x360": 360,
-    "320x380": 320,
 }
 
 WEATHER = [

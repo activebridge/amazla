@@ -1,7 +1,7 @@
 import * as hmUI from '@zos/ui'
 import { px } from '@zos/utils'
-import { click, size } from '../../pages/ui.js'
-import { launchApp, SYSTEM_APP_CALENDAR } from '@zos/router'
+import { click, button, size } from '../../pages/ui.js'
+import { launchApp, SYSTEM_APP_CALENDAR, SYSTEM_APP_WORLD_CLOCK, SYSTEM_APP_SETTING } from '@zos/router'
 
 export function placeZones() {
   const sz = px(36)
@@ -33,17 +33,42 @@ export function placeZones() {
     })
   }
 
-  // Date icon at 6 o'clock → open calendar
-  var dateSz = px(40)
-  var dateR = Math.floor(size / 2) - 4 - Math.floor(dateSz / 2)
-  click({
+  // 12 o'clock → open settings
+  button({
+    x: 0,
+    y: -r,
+    w: zoneSize,
+    h: zoneSize,
+    src: '_',
+    click_func: function() {
+      launchApp({ appId: SYSTEM_APP_SETTING, native: true })
+    }
+  })
+
+  // Weekday at 10 o'clock → open world clock
+  var wdO = Math.floor(size / 2) - 20
+  button({
+    x: Math.round(wdO * -0.866),
+    y: Math.round(wdO * -0.5),
+    w: zoneSize,
+    h: zoneSize,
+    src: '_',
+    click_func: function() {
+      launchApp({ appId: SYSTEM_APP_WORLD_CLOCK, native: true })
+    }
+  })
+
+  // Date at 6 o'clock → open calendar
+  var dateR = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
+  button({
     x: 0,
     y: dateR,
-    w: dateSz,
-    h: dateSz,
-    src: '',
+    w: zoneSize,
+    h: zoneSize,
+    src: '_',
     click_func: function() {
-      try { launchApp({ appId: SYSTEM_APP_CALENDAR, native: true }) } catch(e) {}
+      console.log('calendar tap')
+      launchApp({ appId: SYSTEM_APP_CALENDAR, native: true })
     }
   })
 }

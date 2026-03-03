@@ -12,12 +12,6 @@ REF_ICON = 36
 
 RESOLUTIONS = {
     "round": 480,
-    "466x466": 466,
-    "454x454": 454,
-    "416x416": 416,
-    "390x450": 390,
-    "360x360": 360,
-    "320x380": 320,
 }
 
 # Unique colors
@@ -36,7 +30,7 @@ def gen_hex(sz, outline, color):
 
     cx, cy = inner_sz // 2, inner_sz // 2
     r = int(inner_sz * 0.48)
-    corner_r = max(2, int(inner_sz * 0.12))  # small rounded corner radius
+    corner_r = max(1, int(inner_sz * 0.05))  # small rounded corner radius
     r_inset = r - corner_r
 
     hex_img = Image.new("RGBA", (inner_sz, inner_sz), (0, 0, 0, 0))
@@ -44,8 +38,8 @@ def gen_hex(sz, outline, color):
     # Draw inset polygon + circles at each vertex (Minkowski sum = rounded corners)
     # Draw inset polygon + circles at vertices + thick edges (Minkowski sum = proper rounded corners)
     pts = []
-    for i in range(6):
-        angle = math.radians(60 * i)  # flat-top hexagon
+    for i in range(7):
+        angle = math.radians(360 / 7 * i + 90)  # flat-bottom heptagon
         pts.append((cx + r_inset * math.cos(angle), cy + r_inset * math.sin(angle)))
     hex_draw.polygon(pts, fill=(255, 255, 255, 255))
     for vx, vy in pts:
@@ -95,10 +89,6 @@ for res_name, res_width in RESOLUTIONS.items():
     for name, color in COLORS.items():
         icon = gen_hex(sz, outline, color)
         icon.save(os.path.join(out_dir, f"{name}.png"))
-
-    # Transparent placeholder (for level overlay when PAI >= 100)
-    transparent = Image.new("RGBA", (sz, sz), (0, 0, 0, 0))
-    transparent.save(os.path.join(out_dir, "transparent.png"))
 
     print(f"{res_name}: 4 unique colors generated")
 

@@ -14,6 +14,7 @@ import { Pai } from './pai.js'
 import { Standing } from './standing.js'
 import { placeZones } from './zones.js'
 var timerId
+var timeoutId
 
 WatchFace({
   onInit() {},
@@ -40,12 +41,19 @@ WatchFace({
     delegate(function () {
       placeTime()
       heartWidget.update()
-      // updateGlance()
 
-      if (timerId) clearInterval(timerId)
-      timerId = setInterval(function () { placeTime(); /* updateGlance() */ }, 1000)
+      if (timerId) { clearInterval(timerId); timerId = null }
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
+
+      // align to next minute boundary, then tick every 60s
+      var delay = (60 - new Date().getSeconds()) * 1000
+      timeoutId = setTimeout(function () {
+        placeTime()
+        timerId = setInterval(function () { placeTime() }, 60000)
+      }, delay)
     }, function () {
       if (timerId) { clearInterval(timerId); timerId = null }
+      if (timeoutId) { clearTimeout(timeoutId); timeoutId = null }
     })
 
     placeZones()
