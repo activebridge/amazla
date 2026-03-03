@@ -12,7 +12,6 @@ import { Steps } from './steps.js'
 import { Calories } from './calories.js'
 import { Pai } from './pai.js'
 import { Standing } from './standing.js'
-import { placeGlance, updateGlance } from './glance.js'
 import { placeZones } from './zones.js'
 var timerId
 

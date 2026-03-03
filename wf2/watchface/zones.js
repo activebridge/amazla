@@ -8,15 +8,6 @@ export function placeZones() {
   const zoneSize = sz * 2
   const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
 
-  click({
-    x: 0,
-    y: px(70),
-    w: px(300),
-    h: px(150),
-    src: '',
-    type: hmUI.data_type.WEATHER
-  })
-
   var zones = [
     { hour: 1,  type: hmUI.data_type.HEART },
     { hour: 2,  type: hmUI.data_type.STEP },

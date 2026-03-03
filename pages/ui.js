@@ -22,7 +22,6 @@ export const page = (x = 0, y = 0) => {
 }
 
 export const group = (props = {}, group = hmUI) => {
-  console.log(JSON.stringify(center(props)))
   const stack = hmUI.createWidget(hmUI.widget.GROUP, {
     w: width,
     h: height,

@@ -15,7 +15,7 @@ export function placeDateIcon() {
   // Background: gradient rounded square colored by week
   var day = new Time().getDate()
   var src = day <= 7 ? 'date/blue.png' : day <= 14 ? 'date/green.png' : day <= 21 ? 'date/yellow.png' : 'date/red.png'
-  hmUI.createWidget(hmUI.widget.IMG, { x, y, w: sz, h: sz, src })
+  hmUI.createWidget(hmUI.widget.IMG, { x, y, w: sz, h: sz, src, auto_scale: true })
 
   // Day number centered in square
   var digitW = px(23) * 2 - 5
