@@ -6,5 +6,5 @@ export const Weather = () => {
   const x = Math.round(o * -0.5)    // cos(240°) for hour 11
   const y = Math.round(o * -0.866)  // sin(240°) for hour 11
 
-  level({ x, y, w: 36, h: 36, image_array: Array.from({ length: 29 }, function(_, i) { return 'weather-icons/' + i + '.png' }), image_length: 29, type: hmUI.data_type.WEATHER })
+  level({ x, y, w: 36, h: 36, image_array: Array.from({ length: 29 }, function(_, i) { return 'weather/' + i + '.png' }), image_length: 29, type: hmUI.data_type.WEATHER })
 }

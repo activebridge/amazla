@@ -127,7 +127,7 @@ for res_name, res_width in RESOLUTIONS.items():
     sz = max(6, int(round(REF_ICON * scale)))
     outline = max(1, int(round(REF_OUTLINE * scale)))
 
-    out_dir = os.path.join(BASE_DIR, "assets", res_name, "weather-icons")
+    out_dir = os.path.join(BASE_DIR, "assets", res_name, "weather")
     os.makedirs(out_dir, exist_ok=True)
 
     for condition_id in range(29):

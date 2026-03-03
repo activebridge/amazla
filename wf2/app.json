@@ -10,7 +10,7 @@
     },
     "icon": "icon.png",
     "vender": "galulex",
-    "description": "Minimalist analog-digital watchface"
+    "description": "Minimal on steroids. A clean, distraction-free watchface that packs everything you need — time, heart rate, steps, calories, battery, PAI, standing, weather, moon phase, and more — all arranged around the dial like a precision instrument. Tap any indicator to dive deeper. Less clutter, more clarity."
   },
   "permissions": [
     "data:os.device.info",
