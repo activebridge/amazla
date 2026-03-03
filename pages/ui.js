@@ -341,9 +341,10 @@ export const charge = (props = {}, group = hmUI) => {
 }
 
 export const click = (props = {}, group = hmUI) => {
+  const { x, y, w, h } = center(props)
   const clickWidget = group.createWidget(hmUI.widget.IMG_CLICK, {
     ...props,
-    ...center(props),
+    x, y, w, h,
   })
   widgets.push(clickWidget)
   return clickWidget
