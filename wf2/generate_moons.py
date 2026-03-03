@@ -95,7 +95,7 @@ def gen_moon(sz, outline, phase_idx):
                 moon.putpixel((x, y), (gr, gr, gr, 255))
 
     img.paste(moon, (stroke, stroke), moon)
-    return img.resize((sz, sz), Image.LANCZOS)
+    return img.resize((sz, sz), Image.LANCZOS).rotate(30, resample=Image.BICUBIC, expand=False)
 
 
 for res_name, res_width in RESOLUTIONS.items():

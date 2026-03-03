@@ -114,7 +114,7 @@ def gen_weather(sz, outline, src_img, color):
     alpha = icon.split()[3]
     grad.putalpha(alpha)
     img.paste(grad, (stroke, stroke), grad)
-    return img.resize((sz, sz), Image.LANCZOS)
+    return img.resize((sz, sz), Image.LANCZOS).rotate(30, resample=Image.BICUBIC, expand=False)
 
 
 # Load source images once

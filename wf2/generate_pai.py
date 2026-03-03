@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate PAI icons: 4 unique rounded hexagons colored by progress."""
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 import os, math
 from gradient_utils import lighten, darken
 
@@ -36,16 +36,23 @@ def gen_hex(sz, outline, color):
 
     cx, cy = inner_sz // 2, inner_sz // 2
     r = int(inner_sz * 0.48)
+    corner_r = max(2, int(inner_sz * 0.12))  # small rounded corner radius
+    r_inset = r - corner_r
+
     hex_img = Image.new("RGBA", (inner_sz, inner_sz), (0, 0, 0, 0))
     hex_draw = ImageDraw.Draw(hex_img)
+    # Draw inset polygon + circles at each vertex (Minkowski sum = rounded corners)
+    # Draw inset polygon + circles at vertices + thick edges (Minkowski sum = proper rounded corners)
     pts = []
     for i in range(6):
-        angle = math.radians(60 * i - 90)
-        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
+        angle = math.radians(60 * i)  # flat-top hexagon
+        pts.append((cx + r_inset * math.cos(angle), cy + r_inset * math.sin(angle)))
     hex_draw.polygon(pts, fill=(255, 255, 255, 255))
-    alpha = hex_img.split()[3]
-    alpha = alpha.filter(ImageFilter.GaussianBlur(radius=up * 1.5))
-    hex_mask = alpha.point(lambda x: 255 if x > 80 else 0)
+    for vx, vy in pts:
+        hex_draw.ellipse([vx - corner_r, vy - corner_r, vx + corner_r, vy + corner_r], fill=(255, 255, 255, 255))
+    for i in range(len(pts)):
+        hex_draw.line([pts[i], pts[(i + 1) % len(pts)]], fill=(255, 255, 255, 255), width=corner_r * 2)
+    hex_mask = hex_img.split()[3]
 
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     black_hex = Image.new("RGBA", (inner_sz, inner_sz), (0, 0, 0, 0))

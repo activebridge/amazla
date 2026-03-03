@@ -1,5 +1,5 @@
 import * as hmUI from '@zos/ui'
-import { alarm, dnd, lock, disconnect, img, width, height, size } from '../../pages/ui.js'
+import { alarm, dnd, lock, disconnect, img, width, height, size, circle } from '../../pages/ui.js'
 
 export const placeStatusIcons = () => {
   const o = size / 2 - 20
@@ -19,6 +19,7 @@ export const placeStatusIcons = () => {
     show_level: hmUI.show_level.ONLY_NORMAL
   })
 
+  circle({ y: -o + 5, radius: 5, color: 0xFFFFFF })
   // 12 o'clock: DND and Lock
   dnd({ x: 0, y: -o, w: 36, h: 36 })
   lock({ x: 0, y: -o, w: 36, h: 36 })
