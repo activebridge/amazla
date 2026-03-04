@@ -6,6 +6,6 @@ export const Battery = () => {
   const x = Math.round(o * -0.5)
   const y = Math.round(o * 0.866)
 
+  label({ x: x + 40, y: y - 4, w: 70, h: 36, type: hmUI.data_type.BATTERY, align_h: hmUI.align.LEFT, h_space: -4 })
   level({ x, y, w: 36, h: 36, image_array: Array.from({ length: 5 }, function(_, i) { return 'battery/' + i + '.png' }), image_length: 5, type: hmUI.data_type.BATTERY })
-  label({ x: x + 30, y: y - 4, w: 70, h: 24, type: hmUI.data_type.BATTERY, align: hmUI.align.LEFT })
 }

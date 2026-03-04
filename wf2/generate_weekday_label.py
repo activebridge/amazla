@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 
 RESOLUTIONS = {"round": 480}
-DAYS = ["onday", "uesday", "ednesday", "hursday", "riday", "aturday", "unday"]
+DAYS = ["ON", "UE", "ED", "HU", "RI", "AT", "UN"]
 FONT_PATH = "/System/Library/Fonts/SFNSRounded.ttf"
 FONT_SIZE = 30
 OUTLINE_W = 1

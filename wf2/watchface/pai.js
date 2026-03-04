@@ -14,6 +14,6 @@ export const Pai = () => {
   const x = Math.round(o * 1)      // cos(0°) for hour 3
   const y = 0                       // sin(0°) for hour 3
 
+  label({ x: x - 60, y: y + 4, w: 100, h: 36, type: hmUI.data_type.PAI_WEEKLY, align_h: hmUI.align.RIGHT, h_space: -4 })
   level({ x, y, w: 36, h: 36, image_array, image_length: 105, type: hmUI.data_type.PAI_WEEKLY })
-  label({ x: x - 30, y: y + 4, w: 70, h: 24, type: hmUI.data_type.PAI_WEEKLY, align: hmUI.align.RIGHT })
 }

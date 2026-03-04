@@ -4,10 +4,10 @@ import { alarm, dnd, lock, disconnect, img, label, width, height, size, circle }
 export const placeStatusIcons = () => {
   const o = size / 2 - 20
 
+  label({ x: 50 - o, y, w: 80, h: 24, type: hmUI.data_type.ALARM_CLOCK, align_h: hmUI.align.LEFT, h_space: -4 })
   // 9 o'clock: Alarm
   img({ x: -o, y: 0, w: 36, h: 36, src: 'status/alarm_gray.png' })
   alarm({ x: -o, y: 0, w: 36, h: 36 })
-  label({ x: 24 - o, y: 4, w: 80, h: 24, type: hmUI.data_type.ALARM_CLOCK })
 
   // Large Curved Top-Side Disconnect Bar
   disconnect({

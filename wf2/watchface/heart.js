@@ -17,8 +17,8 @@ export const Heart = () => {
   const x = Math.round(o * 0.5)    // cos(-60°) for hour 1
   const y = Math.round(o * -0.866) // sin(-60°) for hour 1
 
+  label({ x: x - 38, y: y - 4, w: 70, h: 36, type: hmUI.data_type.HEART, align_h: hmUI.align.RIGHT, h_space: -4 })
   widget = img({ x, y, w: 36, h: 36, src: 'heart/0.png' })
-  label({ x: x - 44, y, w: 70, h: 24, type: hmUI.data_type.HEART, align_h: hmUI.align.RIGHT })
   update()
   sensor.onCurrentChange(update)
 

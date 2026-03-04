@@ -7,7 +7,7 @@ import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = "/System/Library/Fonts/SFNSRounded.ttf"
 
-REF_HEIGHT = 20
+REF_HEIGHT = 30
 OUTLINE_W = 1
 
 def generate_char(char, font_size, outline):
@@ -50,5 +50,6 @@ for c in "abcdefghijklmnopqrstuvwxyz":
 generate_char(":", REF_HEIGHT, OUTLINE_W).save(os.path.join(out_dir, "colon.png"))
 generate_char(" ", REF_HEIGHT, OUTLINE_W).save(os.path.join(out_dir, "space.png"))
 generate_char("-", REF_HEIGHT, OUTLINE_W).save(os.path.join(out_dir, "minus.png"))
+generate_char("°", REF_HEIGHT, OUTLINE_W).save(os.path.join(out_dir, "degree.png"))
 
-print(f"Generated {10 + 26 + 3} label font chars in {out_dir}")
+print(f"Generated {10 + 26 + 4} label font chars in {out_dir}")
