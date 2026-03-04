@@ -12,12 +12,12 @@ export const update = () => {
   widget.setProperty(hmUI.prop.MORE, { src: 'heart/' + zone + '.png' })
 }
 
-export const Heart = () => {
+export const Heart = (labelsEnabled) => {
   const o = size / 2 - 20
   const x = Math.round(o * 0.5)    // cos(-60°) for hour 1
   const y = Math.round(o * -0.866) // sin(-60°) for hour 1
 
-  label({ x: x - 38, y: y - 4, w: 70, h: 36, type: hmUI.data_type.HEART, align_h: hmUI.align.RIGHT, h_space: -4 })
+  labelsEnabled && label({ x: x - 38, y: y - 10, w: 70, h: 36, type: hmUI.data_type.HEART, align_h: hmUI.align.RIGHT, h_space: -4 })
   widget = img({ x, y, w: 36, h: 36, src: 'heart/0.png' })
   update()
   sensor.onCurrentChange(update)

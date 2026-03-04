@@ -3,7 +3,7 @@ import * as hmUI from '@zos/ui'
 import { px } from '@zos/utils'
 import { width, height, size } from '../../pages/ui.js'
 
-export function placeDateIcon() {
+export function placeDateIcon(labelsEnabled) {
   // 6 o'clock position at ~27% of radius (~130px on 480px screen)
   const sz = px(40)
   const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
@@ -14,7 +14,7 @@ export function placeDateIcon() {
 
   // Month label above date square using IMG_DATE with character images (auto-updates)
   var monthImgs = Array.from({ length: 12 }, function(_, i) { return 'month-label/' + i + '.png' })
-  hmUI.createWidget(hmUI.widget.IMG_DATE, {
+  labelsEnabled && hmUI.createWidget(hmUI.widget.IMG_DATE, {
     month_startX: cx - 14,
     month_startY: y - 68,
     month_is_character: true,
