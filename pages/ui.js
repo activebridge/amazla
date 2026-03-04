@@ -340,6 +340,18 @@ export const charge = (props = {}, group = hmUI) => {
   return chargeWidget
 }
 
+export const label = (props = {}, group = hmUI) => {
+  const labelWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
+    font_array: Array.from({ length: 10 }, (_, i) => `label-font/${i}.png`),
+    align_h: hmUI.align.CENTER_H,
+    h_space: -4,
+    ...props,
+    ...center(props),
+  })
+  widgets.push(labelWidget)
+  return labelWidget
+}
+
 export const click = (props = {}, group = hmUI) => {
   const { x, y, w, h } = center(props)
   const clickWidget = group.createWidget(hmUI.widget.IMG_CLICK, {

@@ -7,4 +7,5 @@ export const Moon = () => {
   const y = Math.round(o * 0.5)     // sin(150°) for hour 8
 
   level({ x, y, w: 36, h: 36, image_array: Array.from({ length: 30 }, function(_, i) { return 'moon/' + i + '.png' }), image_length: 30, type: hmUI.data_type.MOON })
+  level({ x: x + 38, y: y - 4, w: 70, h: 24, image_array: Array.from({ length: 30 }, function(_, i) { return 'moon-label/' + i + '.png' }), image_length: 30, type: hmUI.data_type.MOON })
 }

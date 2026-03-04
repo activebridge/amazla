@@ -15,7 +15,6 @@ export function placeZones() {
     { hour: 4,  type: hmUI.data_type.CAL },
     { hour: 5,  type: hmUI.data_type.STAND },
     { hour: 7,  type: hmUI.data_type.BATTERY },
-    { hour: 7,  type: hmUI.data_type.BATTERY },
     { hour: 8,  type: hmUI.data_type.MOON },
     { hour: 9,  type: hmUI.data_type.ALARM_CLOCK },
     { hour: 11, type: hmUI.data_type.WEATHER },

@@ -1,5 +1,5 @@
 import * as hmUI from '@zos/ui'
-import { level, size } from '../../pages/ui.js'
+import { level, label, size } from '../../pages/ui.js'
 
 export const Weather = () => {
   const o = size / 2 - 20
@@ -7,4 +7,5 @@ export const Weather = () => {
   const y = Math.round(o * -0.866)  // sin(240°) for hour 11
 
   level({ x, y, w: 36, h: 36, image_array: Array.from({ length: 29 }, function(_, i) { return 'weather/' + i + '.png' }), image_length: 29, type: hmUI.data_type.WEATHER })
+  label({ x: x + 30, y, w: 70, h: 24, type: hmUI.data_type.WEATHER_CURRENT })
 }

@@ -1,5 +1,5 @@
 import * as hmUI from '@zos/ui'
-import { level, size } from '../../pages/ui.js'
+import { level, label, size } from '../../pages/ui.js'
 
 // image_length=105 maps PAI [0,525] as floor(pai/5):
 // red 0-5 (PAI 0-29), yellow 6-9 (30-49), blue 10-19 (50-99), green 20-104 (100+)
@@ -15,4 +15,5 @@ export const Pai = () => {
   const y = 0                       // sin(0°) for hour 3
 
   level({ x, y, w: 36, h: 36, image_array, image_length: 105, type: hmUI.data_type.PAI_WEEKLY })
+  label({ x: x - 30, y: y + 4, w: 70, h: 24, type: hmUI.data_type.PAI_WEEKLY, align: hmUI.align.RIGHT })
 }

@@ -1,7 +1,7 @@
 // This is ideal widget structure with the sensor. Do not change here anything
 import * as hmUI from '@zos/ui'
 import { HeartRate } from '@zos/sensor'
-import { img, size } from '../../pages/ui.js'
+import { img, label, size } from '../../pages/ui.js'
 
 let widget
 let sensor = new HeartRate()
@@ -18,6 +18,7 @@ export const Heart = () => {
   const y = Math.round(o * -0.866) // sin(-60°) for hour 1
 
   widget = img({ x, y, w: 36, h: 36, src: 'heart/0.png' })
+  label({ x: x - 44, y, w: 70, h: 24, type: hmUI.data_type.HEART, align_h: hmUI.align.RIGHT })
   update()
   sensor.onCurrentChange(update)
 
