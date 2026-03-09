@@ -4,7 +4,14 @@ import { alarm, dnd, lock, disconnect, img, label, width, height, size, circle }
 export const placeStatusIcons = (labelsEnabled) => {
   const o = size / 2 - 20
 
-  labelsEnabled && label({ x: 52 - o, y: 4, w: 80, h: 36, type: hmUI.data_type.ALARM_CLOCK, align_h: hmUI.align.LEFT, h_space: -4 })
+  labelsEnabled && label({
+    x: 72 - o, y: 4, w: 120, h: 36,
+    align_h: hmUI.align.LEFT,
+    type: hmUI.data_type.ALARM_CLOCK,
+    dot_image: 'label-font/colon.png',
+    invalid_image: 'label-font/minus.png',
+  })
+
   // 9 o'clock: Alarm
   img({ x: -o, y: 0, w: 36, h: 36, src: 'status/alarm_gray.png' })
   alarm({ x: -o, y: 0, w: 36, h: 36 })
@@ -12,11 +19,10 @@ export const placeStatusIcons = (labelsEnabled) => {
   // Large Curved Top-Side Disconnect Bar
   disconnect({
     x: 0,
-    y: -25,
+    y: -height / 2.35,
     w: width,
     h: Math.floor(height / 4),
     src: 'status/disconnect_large.png',
-    centered: false,
     show_level: hmUI.show_level.ONLY_NORMAL
   })
 

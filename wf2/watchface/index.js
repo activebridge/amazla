@@ -28,7 +28,7 @@ WatchFace({
       tips_BG: 'edit/tips-bg.png',
       tips_x: 0,
       tips_y: 0,
-      tips_width: 150,
+      tips_width: 0,
       optional_types: [
         { type: hmUI.edit_type.STEP,        preview: 'edit/labels-on.png' },
         { type: hmUI.edit_type.ALTIMETER,   preview: 'edit/labels-off.png' },
@@ -51,7 +51,7 @@ WatchFace({
       tips_BG: 'edit/tips-bg.png',
       tips_x: 0,
       tips_y: 0,
-      tips_width: 150,
+      tips_width: 0,
       optional_types: [
         { type: hmUI.edit_type.CAL,         preview: 'edit/time-dynamic.png' },
         { type: hmUI.edit_type.PAI_WEEKLY,  preview: 'edit/time-static.png' },
