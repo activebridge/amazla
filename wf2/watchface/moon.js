@@ -1,8 +1,6 @@
 import * as hmUI from '@zos/ui'
 import { level, label, size } from '../../pages/ui.js'
 
-var SUN_FONT = Array.from({ length: 10 }, function(_, i) { return 'sun-font/' + i + '.png' })
-
 export const Moon = (labelsEnabled) => {
   const o = size / 2 - 20
   const x = Math.round(o * -0.866)  // cos(150°) for hour 8
