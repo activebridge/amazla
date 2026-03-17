@@ -4,7 +4,7 @@ import { redraw, deleteWidget } from '@zos/ui'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 // end v1 UI
 
-export const { width, height, screenShape } = getDeviceInfo()
+export const { width, height, screenShape, deviceSource } = getDeviceInfo()
 export const size = Math.min(width, height)
 // const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
 
@@ -251,6 +251,8 @@ export const time = (props = {}, group = hmUI) => {
     minute_zero: 1,
     minute_array: Array.from({ length: 10 }, (_, i) => `${folder}/${i}.png`),
     minute_space: 2,
+    minute_startX: pos.x,
+    minute_startY: pos.y,
     ...rest,
   })
   widgets.push(timeWidget)

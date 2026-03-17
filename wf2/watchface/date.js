@@ -35,13 +35,13 @@ const MONTH_IMGS = [
 
 export function placeDateIcon(labelsEnabled) {
   // 6 o'clock position at ~27% of radius (~130px on 480px screen)
-  const sz = px(40)
+  const sz = 40
   const r = Math.floor(size / 2) - 4 - Math.floor(sz / 2)
 
   // Month label above date square using date() helper (auto-updates)
   labelsEnabled && date({
     x: 0,
-    y: px(height / 2 - 72),
+    y: height / 2 - 72,
     w: 29,
     h: 76,
     align_h: hmUI.align.BOTTOM,
@@ -68,11 +68,11 @@ export function placeDateIcon(labelsEnabled) {
 
 
   // Day number centered in square
-  var digitW = px(23) * 2 - 5
+  var digitW = 23 * 2 - 5
   var digitH = px(28)
   date({
     x: 0,
-    y: px(height / 2 - 33),
+    y: height / 2 - 33,
     w: 40,
     h: 0,
     month_en_array: [],

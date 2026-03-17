@@ -2,7 +2,7 @@ import { Time } from '@zos/sensor'
 import * as hmUI from '@zos/ui'
 import { px } from '@zos/utils'
 import { getTimeFormat, TIME_FORMAT_24 } from '@zos/settings'
-import { width, height, size } from '../../pages/ui.js'
+import { time, width, height, size } from '../../pages/ui.js'
 import { pos } from './utils.js'
 
 var lastH = -1, lastM = -1
@@ -14,30 +14,33 @@ export function resetTime() {
   lastM = -1
 }
 
-export function placeDigits(dynamicTime) {
-  isDynamic = dynamicTime !== false
-  hDig0 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
-  hDig1 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
-  mDig0 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time-min/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
-  mDig1 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time-min/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
-
-  // AOD
-  hmUI.createWidget(hmUI.widget.IMG_TIME, {
-    hour_zero: 0,
-    hour_startX: Math.floor(width / 2) - px(50),
-    hour_startY: Math.floor(height / 2) - px(35),
-    hour_array: Array.from({ length: 10 }, function(_, i) { return 'time/' + i + '.png' }),
-    hour_space: px(10) * -1,
-    hour_unit_en: '',
-    hour_unit_sc: '',
-    minute_follow: 0,
-    minute_zero: 1,
-    minute_startX: Math.floor(width / 2) - px(50),
-    minute_startY: Math.floor(height / 2) + px(4),
-    minute_array: Array.from({ length: 10 }, function(_, i) { return 'time-min/' + i + '.png' }),
-    minute_space: px(15) * -1,
-    show_level: hmUI.show_level.ONLY_AOD,
-  })
+export function placeDigits(timeMode) {
+  if (timeMode === 'off') return
+  isDynamic = timeMode !== 'static'
+  if (isDynamic) {
+    hDig0 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
+    hDig1 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
+    mDig0 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time-min/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
+    mDig1 = hmUI.createWidget(hmUI.widget.IMG, { src: 'time-min/0.png', show_level: hmUI.show_level.ONLY_NORMAL })
+  } else {
+    var mGap = px(15) * -1
+    var sharedTimeProps = {
+      x: 0,
+      y: 0,
+      w: 80,
+      h: 100,
+      minute_startX: width/2 - 40,
+      minute_startY: height/2,
+      hour_startY: width/2 - 50,
+      hour_zero: 1,
+      minute_follow: 0, minute_zero: 1,
+      minute_array: Array.from({ length: 10 }, function(_, i) { return 'time-min/' + i + '.png' }),
+      minute_space: mGap,
+      hour_space: -px(32),
+    }
+    time({ ...sharedTimeProps, show_level: hmUI.show_level.ONLY_NORMAL })
+  }
+  time({ ...sharedTimeProps, show_level: hmUI.show_level.ONLY_AOD })
 }
 
 export function placeTime() {
@@ -93,30 +96,5 @@ export function placeTime() {
     mDig0.setProperty(hmUI.prop.MORE, { x: mp0.x, y: mp0.y, src: 'time-min/' + Math.floor(m / 10) + '.png' })
     mDig1.setProperty(hmUI.prop.MORE, { x: mp1.x, y: mp1.y, src: 'time-min/' + (m % 10) + '.png' })
 
-  } else {
-    // Static: hours and minutes centered on screen
-    var cx = Math.floor(width / 2)
-    var cy = Math.floor(height / 2)
-    var hVOff = px(38)   // hours above center
-    var mVOff = px(10)   // minutes below center
-
-    if (hTens > 0) {
-      var sw0 = px(hW[hTens])
-      var sw1 = px(hW[hOnes])
-      var stotal = sw0 + gap + sw1
-      hDig0.setProperty(hmUI.prop.MORE, { x: cx - Math.floor(stotal / 2), y: cy - hVOff - hDigitH, src: 'time/' + hTens + '.png' })
-      hDig1.setProperty(hmUI.prop.MORE, { x: cx - Math.floor(stotal / 2) + sw0 + gap, y: cy - hVOff - hDigitH, src: 'time/' + hOnes + '.png' })
-    } else {
-      var sw = px(hW[hOnes])
-      hDig0.setProperty(hmUI.prop.MORE, { x: cx - Math.floor(sw / 2), y: cy - hVOff - hDigitH, src: 'time/' + hOnes + '.png' })
-      hDig1.setProperty(hmUI.prop.MORE, { x: -500, y: -500 })
-    }
-
-    var smDigitW = px(46)
-    var smDigitH = px(52)
-    var smGap = px(15) * -1
-    var smTotal = smDigitW * 2 + smGap
-    mDig0.setProperty(hmUI.prop.MORE, { x: cx - Math.floor(smTotal / 2), y: cy + mVOff, src: 'time-min/' + Math.floor(m / 10) + '.png' })
-    mDig1.setProperty(hmUI.prop.MORE, { x: cx - Math.floor(smTotal / 2) + smDigitW + smGap, y: cy + mVOff, src: 'time-min/' + (m % 10) + '.png' })
   }
 }
