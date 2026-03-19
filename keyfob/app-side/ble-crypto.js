@@ -363,12 +363,6 @@ const DOMAIN_VEHICLE_SECURITY = 2
 const SIGNATURE_TYPE_PRESENT_KEY = 2
 const SIGNATURE_TYPE_HMAC = 5
 
-// WhitelistKeyPermission_E values from vcsec.proto
-const WHITELISTKEYPERMISSION_LOCAL_DRIVE = 1
-const WHITELISTKEYPERMISSION_LOCAL_UNLOCK = 2
-const WHITELISTKEYPERMISSION_REMOTE_DRIVE = 3
-const WHITELISTKEYPERMISSION_REMOTE_UNLOCK = 4
-
 // RKE Actions from vcsec.proto RKEAction_E enum
 const RKE_ACTION_UNLOCK = 0
 const RKE_ACTION_LOCK = 1
@@ -657,21 +651,11 @@ class BLECryptoSession {
     // Build PublicKey message: { PublicKeyRaw (field 1) = bytes }
     const publicKeyMsg = buildPublicKey(publicKeyBytes)
 
-    // Build PermissionChange: { permission (field 1, repeated), key (field 2) }
-    // Field 1 is repeated — each permission is encoded separately with the same field number
-    const permissionChange = concat(
-      encodeEnum(1, WHITELISTKEYPERMISSION_LOCAL_DRIVE),
-      encodeEnum(1, WHITELISTKEYPERMISSION_LOCAL_UNLOCK),
-      encodeEnum(1, WHITELISTKEYPERMISSION_REMOTE_DRIVE),
-      encodeEnum(1, WHITELISTKEYPERMISSION_REMOTE_UNLOCK),
-      encodeBytes(2, publicKeyMsg)
-    )
-
-    // Build WhitelistOperation: { addKeyToWhitelistAndAddPermissions (field 1) = PermissionChange,
+    // Build WhitelistOperation: { addPublicKeyToWhitelist (field 1) = PublicKey,
     //                              metadataForKey (field 16) = KeyMetadata }
     const metadata = buildKeyMetadata(KEY_FORM_FACTOR_ANDROID_DEVICE)
     const whitelistOp = concat(
-      encodeBytes(1, permissionChange),
+      encodeBytes(1, publicKeyMsg),
       encodeBytes(16, metadata)
     )
 
