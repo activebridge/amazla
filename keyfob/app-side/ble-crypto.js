@@ -360,7 +360,14 @@ function ecdh(privateKeyBytes, publicKeyBytes) {
 // ============================================
 
 const DOMAIN_VEHICLE_SECURITY = 2
+const SIGNATURE_TYPE_PRESENT_KEY = 2
 const SIGNATURE_TYPE_HMAC = 5
+
+// WhitelistKeyPermission_E values from vcsec.proto
+const WHITELISTKEYPERMISSION_LOCAL_DRIVE = 1
+const WHITELISTKEYPERMISSION_LOCAL_UNLOCK = 2
+const WHITELISTKEYPERMISSION_REMOTE_DRIVE = 3
+const WHITELISTKEYPERMISSION_REMOTE_UNLOCK = 4
 
 // RKE Actions from vcsec.proto RKEAction_E enum
 const RKE_ACTION_UNLOCK = 0
@@ -647,25 +654,38 @@ class BLECryptoSession {
   buildPairMessage(publicKeyHex) {
     const publicKeyBytes = hexToBytes(publicKeyHex)
 
-    // Generate routing address for response routing
-    this.routingAddress = randomBytes(16)
-
     // Build PublicKey message: { PublicKeyRaw (field 1) = bytes }
-    const publicKey = buildPublicKey(publicKeyBytes)
+    const publicKeyMsg = buildPublicKey(publicKeyBytes)
 
-    // Build WhitelistOperation: { addPublicKeyToWhitelist (field 1) = PublicKey }
-    const whitelistOp = buildWhitelistOperation(publicKey)
+    // Build PermissionChange: { permission (field 1, repeated), key (field 2) }
+    // Field 1 is repeated — each permission is encoded separately with the same field number
+    const permissionChange = concat(
+      encodeEnum(1, WHITELISTKEYPERMISSION_LOCAL_DRIVE),
+      encodeEnum(1, WHITELISTKEYPERMISSION_LOCAL_UNLOCK),
+      encodeEnum(1, WHITELISTKEYPERMISSION_REMOTE_DRIVE),
+      encodeEnum(1, WHITELISTKEYPERMISSION_REMOTE_UNLOCK),
+      encodeBytes(2, publicKeyMsg)
+    )
 
-    // Build unsigned message with whitelist
-    const unsignedMessage = buildUnsignedMessageWithWhitelist(whitelistOp)
+    // Build WhitelistOperation: { addKeyToWhitelistAndAddPermissions (field 1) = PermissionChange,
+    //                              metadataForKey (field 16) = KeyMetadata }
+    const metadata = buildKeyMetadata(KEY_FORM_FACTOR_ANDROID_DEVICE)
+    const whitelistOp = concat(
+      encodeBytes(1, permissionChange),
+      encodeBytes(16, metadata)
+    )
 
-    // Build routable message (pairing doesn't need session/signing)
-    const message = buildRoutableMessage({
-      toDomain: DOMAIN_VEHICLE_SECURITY,
-      routingAddress: this.routingAddress,
+    // Build UnsignedMessage: { WhitelistOperation (field 16) = whitelistOp }
+    const unsignedMessage = encodeBytes(16, whitelistOp)
+
+    // Wrap in SignedMessage: { protobufMessageAsBytes (field 1), signatureType (field 2) = PRESENT_KEY }
+    const signedMsg = buildSignedMessage({
       payload: unsignedMessage,
-      uuid: randomBytes(16)
+      signatureType: SIGNATURE_TYPE_PRESENT_KEY
     })
+
+    // Wrap in ToVCSECMessage: { signedMessage (field 1) }
+    const message = buildToVCSECMessage(signedMsg)
 
     // Note: teslaBLE.send() adds the 2-byte length prefix
     return {

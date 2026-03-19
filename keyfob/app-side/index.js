@@ -9,13 +9,18 @@ const camalize =  str => {
 }
 
 const dispatch = async (method, response, params = {}) => {
-  const func = actions[method]
-  if (func) {
-    const result = await func(params)
-    response(null, result)
-  } else {
-    const { status } = await Api[camalize(method)]()
-    response(null, { vehicle: store.vehicle, error: status })
+  try {
+    const func = actions[method]
+    if (func) {
+      const result = await func(params)
+      response(null, result)
+    } else {
+      const { status } = await Api[camalize(method)]()
+      response(null, { vehicle: store.vehicle, error: status })
+    }
+  } catch (e) {
+    console.log('[dispatch error]', method, e && e.message)
+    response(null, { success: false, error: e && e.message || 'dispatch error' })
   }
 }
 

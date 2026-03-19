@@ -172,20 +172,20 @@ describe('BLECryptoSession', () => {
       const messageBytes = hexToBytes(result.messageHex)
 
       // Message should NOT have length prefix - that's added by teslaBLE.send()
-      // First byte should be a protobuf field key, not a length byte
-      // Field 6 (to_destination) with wire type 2 = (6 << 3) | 2 = 50 = 0x32
-      expect(messageBytes[0]).toBe(0x32)
+      // Message is ToVCSECMessage { signedMessage (field 1, wire type 2) }
+      // First byte = (1 << 3) | 2 = 0x0A
+      expect(messageBytes[0]).toBe(0x0A)
     })
 
-    test('sets routing address', () => {
+    test('uses SIGNATURE_TYPE_PRESENT_KEY (no routing address needed)', () => {
       const privateKey = generatePrivateKey()
       const publicKey = getPublicKey(privateKey)
       const publicKeyHex = bytesToHex(publicKey)
 
       bleCryptoSession.buildPairMessage(publicKeyHex)
 
-      expect(bleCryptoSession.routingAddress).toBeDefined()
-      expect(bleCryptoSession.routingAddress.length).toBe(16)
+      // Pairing uses ToVCSECMessage — no routing address is used
+      expect(bleCryptoSession.routingAddress).toBeNull()
     })
   })
 

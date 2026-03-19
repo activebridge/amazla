@@ -21,6 +21,9 @@ class TeslaBLE {
     this.responseCallback = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
+    this.charaNotificationHandler = null
+    this._lastResponseData = null  // dedup: ignore duplicate data within 200ms
+    this._lastResponseTime = 0
 
     // Tesla service profile for easy-ble
     // Write characteristic: no descriptor needed
@@ -39,6 +42,34 @@ class TeslaBLE {
       this.ble = new BLEMaster()
     }
     return this.ble
+  }
+
+  // Clean up BLE state without full disconnect (for failed connections)
+  _cleanup() {
+    if (this.ble) {
+      try {
+        if (this.writeCompleteHandler) {
+          this.ble.off?.charaWriteComplete?.(this.writeCompleteHandler)
+          this.writeCompleteHandler = null
+        }
+        if (this.charaValueHandler) {
+          this.ble.off?.charaValueArrived?.(this.charaValueHandler)
+          this.charaValueHandler = null
+        }
+        if (this.charaNotificationHandler) {
+          this.ble.off?.charaNotification?.(this.charaNotificationHandler)
+          this.charaNotificationHandler = null
+        }
+        this.ble.off?.deregisterAll?.()
+        this.ble.quit()
+      } catch (e) {
+        console.log('[BLE] Cleanup error (ignored):', e)
+      }
+      this.ble = null
+    }
+    this.profile = null
+    this.responseCallback = null
+    this.mac = null
   }
 
   // Scan for Tesla vehicles
@@ -118,6 +149,7 @@ class TeslaBLE {
       return
     }
     let callbackCalled = false
+    let setupStarted = false
 
     console.log('[BLE] Connecting to:', mac)
 
@@ -127,6 +159,7 @@ class TeslaBLE {
         callbackCalled = true
         this.connected = false
         console.log('[BLE] Connection timeout')
+        this._cleanup()
         callback({ success: false, error: 'Connection timeout' })
       }
     }, 30000)
@@ -136,47 +169,94 @@ class TeslaBLE {
       if (callbackCalled) return
 
       if (result.connected) {
+        // Guard against duplicate connected callbacks
+        if (setupStarted) {
+          console.log('[BLE] Ignoring duplicate connected callback')
+          return
+        }
+        setupStarted = true
+
         this.connected = true
         this.mac = mac
 
-        // Generate profile and start listener
-        console.log('[BLE] Generating profile...')
-        this.profile = this._ensureBLE().generateProfileObject(this.services)
-        console.log('[BLE] Starting listener...')
+        // Add delay for BLE stack to stabilize after connection
+        // Without this, generateProfileObject/startListener can fail with BX_CORE_FAIL
+        console.log('[BLE] Connected, waiting for BLE stack to stabilize...')
+        setTimeout(() => {
+          if (!this.connected) {
+            // Connection was lost during delay
+            if (!callbackCalled) {
+              callbackCalled = true
+              clearTimeout(timeout)
+              this._cleanup()
+              callback({ success: false, error: 'Connection lost during setup' })
+            }
+            return
+          }
 
-        this._ensureBLE().startListener(this.profile, (response) => {
+          // Generate profile and start listener
+          console.log('[BLE] Generating profile...')
+          this.profile = this._ensureBLE().generateProfileObject(this.services)
+          console.log('[BLE] Starting listener...')
+
+          this._ensureBLE().startListener(this.profile, (response) => {
           console.log('[BLE] Listener response:', JSON.stringify(response))
           if (callbackCalled) return
           clearTimeout(timeout)
           callbackCalled = true
 
           if (response.success) {
-            // Set up response handler - store reference to prevent memory leak
+            // Set up response handler for both NOTIFY and INDICATE
+            // Tesla uses INDICATE (CCCD=0x0002), data arrives via charaNotification
+            // Also listen on charaValueArrived as fallback
             this.charaValueHandler = (uuid, data, len) => {
-              console.log('[BLE] Data arrived:', uuid, len)
+              console.log('[BLE] charaValueArrived:', uuid, len)
               if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) {
                 this._handleResponse(data, len)
               }
             }
             this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
 
-            // Enable notifications on read characteristic
-            console.log('[BLE] Enabling notifications...')
-            this._ensureBLE().write.enableCharaNotifications(TESLA_READ_UUID, true)
+            this.charaNotificationHandler = (uuid, data, len) => {
+              console.log('[BLE] charaNotification:', uuid, len)
+              if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) {
+                this._handleResponse(data, len)
+              }
+            }
+            this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+
+            // Write CCCD with INDICATE value (0x0002, little-endian "0200")
+            // enableCharaNotifications writes "0100" (NOTIFY=0x0001) which Tesla ignores
+            console.log('[BLE] Enabling indications (CCCD=0x0002)...')
+            this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
 
             console.log('[BLE] Connected successfully')
             callback({ success: true, mac: mac })
           } else {
             this.connected = false
             console.log('[BLE] Listener failed:', response.message)
+            this._cleanup()
             callback({ success: false, error: response.message || 'Listener failed' })
           }
         })
+        }, 1500) // Delay for BLE stack stabilization (increased for Tesla)
       } else {
-        clearTimeout(timeout)
-        callbackCalled = true
+        // Mark as disconnected so the setTimeout check catches it
         this.connected = false
         console.log('[BLE] Connect failed:', result.status)
+
+        // If setup already started, let the setTimeout handle cleanup and callback
+        if (setupStarted) {
+          console.log('[BLE] Setup in progress, will be handled by stabilization check')
+          return
+        }
+
+        clearTimeout(timeout)
+        callbackCalled = true
+
+        // Clean up BLE instance to prevent stale state on retry
+        this._cleanup()
+
         callback({ success: false, error: result.status || 'Connection failed' })
       }
     })
@@ -200,6 +280,10 @@ class TeslaBLE {
       if (this.charaValueHandler) {
         this._ensureBLE().off.charaValueArrived(this.charaValueHandler)
         this.charaValueHandler = null
+      }
+      if (this.charaNotificationHandler) {
+        this._ensureBLE().off.charaNotification(this.charaNotificationHandler)
+        this.charaNotificationHandler = null
       }
       this._ensureBLE().off.deregisterAll()
       this._ensureBLE().quit()
@@ -341,11 +425,25 @@ class TeslaBLE {
 
     if (!this.responseCallback) return
 
-    // Parse length prefix
+    // Dedup: charaValueArrived and charaNotification can both fire for the same packet
+    const now = Date.now()
     const view = new Uint8Array(data)
+    const sig = view.length + '_' + (view[0] || 0) + '_' + (view[1] || 0)
+    if (sig === this._lastResponseData && (now - this._lastResponseTime) < 200) {
+      console.log('[BLE] Duplicate response ignored')
+      return
+    }
+    this._lastResponseData = sig
+    this._lastResponseTime = now
+
+    // Capture and clear BEFORE calling — allows callback to set a new responseCallback
+    // (e.g. _waitForPairingConfirmation sets one during the 'wait' response handler)
+    const cb = this.responseCallback
+    this.responseCallback = null
+
+    // Parse length prefix (view already created above for dedup)
     if (view.length < 2) {
-      this.responseCallback({ success: false, error: 'Response too short' })
-      this.responseCallback = null
+      cb({ success: false, error: 'Response too short' })
       return
     }
 
@@ -354,8 +452,7 @@ class TeslaBLE {
 
     console.log('[BLE] Got response payload:', messageLength, 'bytes')
 
-    this.responseCallback({ success: true, data: payload })
-    this.responseCallback = null
+    cb({ success: true, data: payload })
   }
 
   // Get connection status

@@ -363,30 +363,32 @@ describe('VCSEC Protocol', () => {
   })
 
   describe('parsePairingResponse', () => {
-    test('parses wait response', async () => {
-      const { concat, encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+    // Tesla responds with FromVCSECMessage directly — no RoutableMessage wrapper
 
-      // Build FromVCSECMessage { commandStatus (field 4) = CommandStatus { operationStatus = WAIT } }
+    test('parses wait response', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // FromVCSECMessage { commandStatus (field 4) = { operationStatus (field 1) = WAIT } }
       const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
       const fromVcsec = encodeBytes(4, commandStatus)
 
-      // Build RoutableMessage { payload (field 10) = FromVCSECMessage }
-      const routableMessage = encodeBytes(10, fromVcsec)
-
-      const parsed = parsePairingResponse(routableMessage)
+      const parsed = parsePairingResponse(fromVcsec)
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('wait')
       expect(parsed.message).toBe('Tap key card on car')
     })
 
-    test('parses ok response', async () => {
-      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+    test('parses ok response after keycard tap (field 3 = whitelistOperationStatus sub-message)', async () => {
+      const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
-      const commandStatus = encodeEnum(1, OPERATIONSTATUS_OK)
+      // Real Tesla response: commandStatus has field 3 (bytes) = whitelistOperationStatus
+      // operationStatus (field 1) is absent — OK=0 is protobuf default, not encoded
+      // Example: 22 0a 1a 08 12 06 0a 04 5f 0d 64 b3
+      const whitelistOpStatus = new Uint8Array([0x12, 0x02, 0x08, 0x00])
+      const commandStatus = encodeBytes(3, whitelistOpStatus) // field 3 = bytes sub-message
       const fromVcsec = encodeBytes(4, commandStatus)
-      const routableMessage = encodeBytes(10, fromVcsec)
 
-      const parsed = parsePairingResponse(routableMessage)
+      const parsed = parsePairingResponse(fromVcsec)
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('ok')
       expect(parsed.message).toBe('Key added successfully')
@@ -397,21 +399,19 @@ describe('VCSEC Protocol', () => {
 
       const commandStatus = concat(
         encodeEnum(1, OPERATIONSTATUS_ERROR),
-        encodeEnum(3, 10) // whitelistOperationFault
+        encodeEnum(3, 10) // whitelistOperationFault (varint, not bytes)
       )
       const fromVcsec = encodeBytes(4, commandStatus)
-      const routableMessage = encodeBytes(10, fromVcsec)
 
-      const parsed = parsePairingResponse(routableMessage)
+      const parsed = parsePairingResponse(fromVcsec)
       expect(parsed.success).toBe(false)
       expect(parsed.status).toBe('error')
     })
 
-    test('handles missing payload', () => {
-      const emptyMessage = new Uint8Array(0)
-      const parsed = parsePairingResponse(emptyMessage)
+    test('handles empty response', () => {
+      const parsed = parsePairingResponse(new Uint8Array(0))
       expect(parsed.success).toBe(false)
-      expect(parsed.error).toBe('No payload in response')
+      expect(parsed.error).toBe('No command status in response')
     })
   })
 })

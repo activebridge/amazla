@@ -354,32 +354,46 @@ function parseFromVCSECMessage(data) {
   return result
 }
 
-// Parse complete pairing response from RoutableMessage
-// Extracts the FromVCSECMessage from the payload
+// Parse pairing response — Tesla replies with FromVCSECMessage directly (not RoutableMessage)
+//
+// WAIT response bytes (after stripping 2-byte length prefix):
+//   22 02 08 01  →  field 4 (commandStatus) { field 1 (operationStatus) = 1 (WAIT) }
+//
+// OK response after keycard tap:
+//   22 0a 1a 08 ...  →  field 4 (commandStatus) { field 3 (whitelistOperationStatus) = <sub-msg> }
+//   operationStatus (field 1) is absent because OK=0 is the protobuf default and not encoded
+//
 function parsePairingResponse(data) {
   try {
-    const routable = parseRoutableMessage(data)
+    const fields = decodeMessage(data)
 
-    if (!routable.payload) {
-      return { success: false, error: 'No payload in response' }
+    // field 4 = commandStatus (bytes)
+    const commandStatusBytes = fields[4]
+    if (!commandStatusBytes) {
+      return { success: false, error: 'No command status in response' }
     }
 
-    const fromVcsec = parseFromVCSECMessage(routable.payload)
+    const csFields = decodeMessage(commandStatusBytes)
 
-    if (fromVcsec.type === 'commandStatus' && fromVcsec.commandStatus) {
-      const status = fromVcsec.commandStatus.operationStatus
+    // field 1 = operationStatus (varint) — present for WAIT and ERROR, absent for OK
+    const operationStatus = csFields[1] !== undefined ? csFields[1] : null
 
-      if (status === OPERATIONSTATUS_OK) {
-        return { success: true, status: 'ok', message: 'Key added successfully' }
-      } else if (status === OPERATIONSTATUS_WAIT) {
-        return { success: true, status: 'wait', message: 'Tap key card on car' }
-      } else if (status === OPERATIONSTATUS_ERROR) {
-        const fault = fromVcsec.commandStatus.whitelistOperationFault
-        return { success: false, status: 'error', error: `Whitelist error: ${fault}` }
-      }
+    // field 3 can be:
+    //   Uint8Array → whitelistOperationStatus sub-message (success after keycard tap)
+    //   number    → whitelistOperationFault code (error detail)
+    const field3 = csFields[3]
+    const hasWhitelistOpStatus = field3 instanceof Uint8Array
+
+    if (hasWhitelistOpStatus || operationStatus === OPERATIONSTATUS_OK) {
+      return { success: true, status: 'ok', message: 'Key added successfully' }
+    } else if (operationStatus === OPERATIONSTATUS_WAIT) {
+      return { success: true, status: 'wait', message: 'Tap key card on car' }
+    } else if (operationStatus === OPERATIONSTATUS_ERROR) {
+      const faultCode = typeof field3 === 'number' ? field3 : 0
+      return { success: false, status: 'error', error: 'Pairing error code: ' + faultCode }
     }
 
-    return { success: false, error: 'Unknown response format', rawFields: fromVcsec.rawFields }
+    return { success: false, error: 'Unknown response format', rawFields: fields }
   } catch (e) {
     return { success: false, error: e.message }
   }
