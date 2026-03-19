@@ -1,7 +1,6 @@
-import { Time } from '@zos/sensor'
-import * as hmUI from '@zos/ui'
+import { align, show_level } from '@zos/ui'
 import { px } from '@zos/utils'
-import { width, height, size, date } from '../../pages/ui.js'
+import { height, size, date } from '../../pages/ui.js'
 
 const BG_IMGS = [
   'date/blue.png',   // Jan
@@ -44,19 +43,19 @@ export function placeDateIcon(labelsEnabled) {
     y: height / 2 - 72,
     w: 29,
     h: 76,
-    align_h: hmUI.align.BOTTOM,
+    align_h: align.BOTTOM,
     month_is_character: true,
     day_en_array: [],
     month_en_array: MONTH_IMGS,
     month_sc_array: MONTH_IMGS,
     month_tc_array: MONTH_IMGS,
+    show_level: show_level.ONLY_NORMAL,
   })
 
   // Background: gradient rounded square colored by month using date() helper (auto-updates)
   date({
     x: 0,
     y: height / 2 - 22,
-    // monthCenterX: width - 40,
     w: sz,
     h: sz,
     month_is_character: true,
@@ -64,6 +63,7 @@ export function placeDateIcon(labelsEnabled) {
     month_en_array: BG_IMGS,
     month_sc_array: BG_IMGS,
     month_tc_array: BG_IMGS,
+    show_level: show_level.ONLY_NORMAL,
   })
 
 
@@ -79,6 +79,6 @@ export function placeDateIcon(labelsEnabled) {
     day_zero: 1,
     day_space: -8,
     day_en_array: Array.from({ length: 10 }, function(_, i) { return 'date-font/' + i + '.png' }),
+    show_level: show_level.ONLY_NORMAL,
   })
 }
-

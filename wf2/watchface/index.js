@@ -1,5 +1,5 @@
 import { delegate } from '../../pages/ui.js'
-import { createTimer } from '@zos/timer'
+import timerModule from '@zos/timer'
 import { getConfig } from './config.js'
 import { placeDigits, placeTime } from './digits.js'
 import { Pointers } from './pointers.js'
@@ -45,7 +45,8 @@ WatchFace({
     }, function () {})
 
     try {
-      createTimer(0, 1000, function () {
+      var _timer = typeof timer !== 'undefined' ? timer : timerModule
+      _timer.createTimer(1000, 1000, function () {
         if (timeMode !== 'off') placeTime()
         heartWidget.update()
       }, {})

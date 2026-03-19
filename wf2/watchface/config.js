@@ -1,5 +1,5 @@
 import { editable } from '../../pages/ui.js'
-import * as hmUI from '@zos/ui'
+import { edit_type, prop } from '@zos/ui'
 
 export function getConfig() {
   var labelToggle = editable({
@@ -12,16 +12,16 @@ export function getConfig() {
     tips_y: 0,
     tips_width: 0,
     optional_types: [
-      { type: hmUI.edit_type.STEP,        preview: 'edit/labels-on.png' },
-      { type: hmUI.edit_type.ALTIMETER,   preview: 'edit/labels-off.png' },
-      { type: hmUI.edit_type.HEART,       preview: 'edit/labels-on.png' },
-      { type: hmUI.edit_type.DISTANCE,    preview: 'edit/labels-off.png' },
+      { type: edit_type.STEP,        preview: 'edit/labels-on.png' },
+      { type: edit_type.ALTIMETER,   preview: 'edit/labels-off.png' },
+      { type: edit_type.HEART,       preview: 'edit/labels-on.png' },
+      { type: edit_type.DISTANCE,    preview: 'edit/labels-off.png' },
     ],
   })
-  var currentType = labelToggle.getProperty(hmUI.prop.CURRENT_TYPE)
+  var currentType = labelToggle.getProperty(prop.CURRENT_TYPE)
   var labelsEnabled = !currentType
-    || currentType === hmUI.edit_type.STEP
-    || currentType === hmUI.edit_type.HEART
+    || currentType === edit_type.STEP
+    || currentType === edit_type.HEART
 
   var timeToggle = editable({
     edit_id: 2,
@@ -33,15 +33,15 @@ export function getConfig() {
     tips_y: 0,
     tips_width: 0,
     optional_types: [
-      { type: hmUI.edit_type.CAL,        preview: 'edit/time-dynamic.png' },
-      { type: hmUI.edit_type.PAI_WEEKLY, preview: 'edit/time-static.png' },
-      { type: hmUI.edit_type.STRESS,     preview: 'edit/time-off.png' },
+      { type: edit_type.CAL,        preview: 'edit/time-dynamic.png' },
+      { type: edit_type.PAI_WEEKLY, preview: 'edit/time-static.png' },
+      { type: edit_type.STRESS,     preview: 'edit/time-off.png' },
     ],
   })
-  var timeType = timeToggle.getProperty(hmUI.prop.CURRENT_TYPE)
+  var timeType = timeToggle.getProperty(prop.CURRENT_TYPE)
   // Dynamic = CAL (default); Static = PAI_WEEKLY; Off = STRESS
-  var timeMode = timeType === hmUI.edit_type.PAI_WEEKLY ? 'static'
-               : timeType === hmUI.edit_type.STRESS     ? 'off'
+  var timeMode = timeType === edit_type.PAI_WEEKLY ? 'static'
+               : timeType === edit_type.STRESS     ? 'off'
                : 'dynamic'
 
   var pointersToggle = editable({
@@ -54,17 +54,17 @@ export function getConfig() {
     tips_y: 0,
     tips_width: 0,
     optional_types: [
-      { type: hmUI.edit_type.WEATHER,   preview: 'edit/pointers-all.png' },
-      { type: hmUI.edit_type.HUMIDITY,  preview: 'edit/pointers-hm.png' },
-      { type: hmUI.edit_type.SPO2,       preview: 'edit/pointers-seconds.png' },
-      { type: hmUI.edit_type.UVI,       preview: 'edit/pointers-off.png' },
+      { type: edit_type.WEATHER,   preview: 'edit/pointers-all.png' },
+      { type: edit_type.HUMIDITY,  preview: 'edit/pointers-hm.png' },
+      { type: edit_type.SPO2,       preview: 'edit/pointers-seconds.png' },
+      { type: edit_type.UVI,       preview: 'edit/pointers-off.png' },
     ],
   })
-  var pointersType = pointersToggle.getProperty(hmUI.prop.CURRENT_TYPE)
+  var pointersType = pointersToggle.getProperty(prop.CURRENT_TYPE)
   // All = WEATHER (default); Hour+Min = HUMIDITY; Seconds = WIND_SPEED; Off = UVI
-  var pointersMode = pointersType === hmUI.edit_type.HUMIDITY   ? 'hm'
-                   : pointersType === hmUI.edit_type.SPO2       ? 'seconds'
-                   : pointersType === hmUI.edit_type.UVI        ? 'off'
+  var pointersMode = pointersType === edit_type.HUMIDITY   ? 'hm'
+                   : pointersType === edit_type.SPO2       ? 'seconds'
+                   : pointersType === edit_type.UVI        ? 'off'
                    : 'all'
 
   return { labelsEnabled, timeMode, pointersMode }

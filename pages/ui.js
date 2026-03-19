@@ -5,8 +5,8 @@ import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 // end v1 UI
 
 export const { width, height, screenShape, deviceSource } = getDeviceInfo()
-export const size = Math.min(width, height)
 // const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
+export const size = Math.min(width, height)
 
 let widgets = []
 
@@ -33,17 +33,17 @@ export const group = (props = {}, group = hmUI) => {
 }
 
 const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0, centered = true }) => {
+  // TODO: deprecate bar param
   if (!centered) {
     return { x, y, w, h, center_x: x + w / 2 | 0, center_y: y + h / 2 | 0 }
   }
-  return {
-    x: Math.floor(((width - w) / 2) + x),
-    y: Math.floor(((bar + height - h) / 2) + y),
-    w,
-    h,
-    center_x: Math.floor((w / 2) + x),
-    center_y: Math.floor(((h + bar + 1) / 2) + y),
-  }
+
+  x = Math.floor(((width - w) / 2) + x)
+  y = Math.floor(((bar + height - h) / 2) + y)
+  const center_x = Math.floor((w / 2) + x)
+  const center_y = Math.floor(((h + bar + 1) / 2) + y)
+
+  return { x, y, w, h, center_x, center_y }
 }
 
 export const img = (props = {}, group = hmUI) => {
@@ -464,6 +464,25 @@ export const scrollList = (props = {}, group = hmUI) => {
 
   widgets.push(listWidget)
   return listWidget
+}
+
+export const timePointer = (props = {}) => {
+  const { center_x: cx, center_y: cy } = center(props)
+  const widget = hmUI.createWidget(hmUI.widget.TIME_POINTER, {
+    hour_centerX:   cx,
+    hour_centerY:   cy,
+    hour_path:      'pointer/hour.png',
+    minute_centerX: cx,
+    minute_centerY: cy,
+    minute_path:    'pointer/minute.png',
+    second_centerX: cx,
+    second_centerY: cy,
+    second_path:    'pointer/seconds.png',
+    show_level:     hmUI.show_level.ONLY_NORMAL,
+    ...props,
+  })
+  widgets.push(widget)
+  return widget
 }
 
 export const delegate = (onResume, onPause) => {

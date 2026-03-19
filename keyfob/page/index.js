@@ -5,10 +5,6 @@ import { onKey, KEY_SELECT, KEY_EVENT_CLICK } from '@zos/interaction'
 import { getSwiperIndex } from '@zos/page'
 import { BasePage } from '@zeppos/zml/base-page';
 import { writeFileSync, readFileSync } from '@zos/fs'
-import { push } from '@zos/router'
-import bleService from '../lib/ble-service.js'
-
-const getBleService = () => bleService
 
 const readFile = () => {
   const vehicle = readFileSync({ path: 'vehicle.txt', options: { encoding: 'utf8' } })
@@ -47,322 +43,6 @@ const { height } = getDeviceInfo()
 
 let isRunning = false
 let currentPage, actions = []
-let bleStatus = 'disconnected'
-let bleMessage = ''
-
-// Initialize BLE service
-const initBLE = () => {
-  try {
-    const result = getBleService().init()
-    console.log('BLE init:', JSON.stringify(result))
-
-    const keyCount = result.sessionKeyCount || 0
-    if (!result.hasKeys) {
-      bleStatus = 'no_keys'
-      bleMessage = 'No keys in secrets.js'
-    } else if (keyCount === 0) {
-      bleStatus = 'no_session_keys'
-      bleMessage = 'Sync keys with phone'
-    } else {
-      bleStatus = 'ready'
-      bleMessage = `Ready (${keyCount} keys)`
-    }
-
-    // Set the request function for app-side crypto calls
-    getBleService().setRequestFunc((req) => currentPage.request(req))
-
-    // Set up debug callback to show toasts
-    getBleService().setDebugCallback((msg) => {
-      hmUI.showToast({ text: msg })
-    })
-
-    // Set up status listener after init
-    getBleService().onStatusChange(({ status, message }) => {
-      bleStatus = status
-      bleMessage = message
-      renderBLEStatus()
-    })
-  } catch (e) {
-    console.log('BLE init error:', e)
-    bleStatus = 'error'
-    bleMessage = 'Init failed'
-  }
-}
-
-let bleStatusWidget = null
-
-const renderBLEStatus = () => {
-  if (bleStatusWidget) {
-    bleStatusWidget.setProperty(hmUI.prop.TEXT, bleMessage)
-    const color = bleStatus === 'connected' ? 0x00FF00 :
-                  bleStatus === 'error' ? 0xFF0000 :
-                  bleStatus === 'busy' ? 0xFFFF00 : 0x777777
-    bleStatusWidget.setProperty(hmUI.prop.COLOR, color)
-  }
-}
-
-// P-256 ECDH test - navigates to separate page to avoid memory issues
-const testCrypto = () => {
-  push({ url: 'page/crypto/index' })
-}
-
-// BLE Actions
-const bleScan = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Scanning…')
-
-  getBleService().scan((result) => {
-    if (result.type === 'device') {
-      hmUI.showToast({ text: `Found: ${result.device.name || result.device.mac}` })
-    }
-    if (result.type === 'complete') {
-      if (result.devices && result.devices.length > 0) {
-        const tesla = result.devices[0]
-        hmUI.updateStatusBarTitle('Connecting…')
-        hmUI.showToast({ text: `Connecting to ${tesla.name || tesla.mac}` })
-        getBleService().connectToMAC(tesla.mac, (res) => {
-          isRunning = false
-          if (res.success) {
-            hmUI.showToast({ text: 'Connected!' })
-            hmUI.updateStatusBarTitle('BLE Connected')
-            vibrate(24)
-          } else {
-            hmUI.showToast({ text: res.error || 'Connection failed' })
-            hmUI.updateStatusBarTitle('BLE Error')
-          }
-        })
-      } else {
-        isRunning = false
-        hmUI.showToast({ text: 'No Tesla found' })
-        hmUI.updateStatusBarTitle('No Tesla')
-      }
-    }
-  }, 15000)
-}
-
-const bleConnect = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Connecting…')
-
-  getBleService().connect((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Connected!' })
-      hmUI.updateStatusBarTitle('BLE Connected')
-      vibrate(24)
-    } else {
-      if (result.error && result.error.includes('No saved')) {
-        bleScan()
-      } else {
-        hmUI.showToast({ text: result.error || 'Connection failed' })
-        hmUI.updateStatusBarTitle('BLE Error')
-      }
-    }
-  })
-}
-
-const bleLock = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Locking…')
-
-  getBleService().lock((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Locked!' })
-      hmUI.updateStatusBarTitle('BLE Locked')
-      vibrate(24)
-    } else {
-      hmUI.showToast({ text: result.error })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-const bleUnlock = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Unlocking…')
-
-  getBleService().unlock((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Unlocked!' })
-      hmUI.updateStatusBarTitle('BLE Unlocked')
-      vibrate(24)
-    } else {
-      hmUI.showToast({ text: result.error })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-const bleTrunk = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Opening Trunk…')
-
-  getBleService().openTrunk((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Trunk opened!' })
-      hmUI.updateStatusBarTitle('BLE Trunk')
-      vibrate(24)
-    } else {
-      hmUI.showToast({ text: result.error })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-const bleFrunk = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Opening Frunk…')
-
-  getBleService().openFrunk((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Frunk opened!' })
-      hmUI.updateStatusBarTitle('BLE Frunk')
-      vibrate(24)
-    } else {
-      hmUI.showToast({ text: result.error })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-const blePair = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('BLE Pairing…')
-
-  getBleService().pair((result) => {
-    isRunning = false
-    if (result.success) {
-      hmUI.showToast({ text: 'Tap key card on car!' })
-      hmUI.updateStatusBarTitle('Tap card on car')
-      vibrate(24)
-    } else {
-      hmUI.showToast({ text: result.error })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-// Sync session keys from phone
-const bleSyncKeys = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('Syncing…')
-  console.log('[UI] Starting key sync...')
-
-  // Call directly without params (app-side has default count=5)
-  currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS' })
-    .then((result) => {
-      isRunning = false
-      console.log('[UI] Sync result:', JSON.stringify(result).slice(0, 100))
-      if (result.success && result.keys) {
-        // Store keys in service
-        result.keys.forEach(key => getBleService().sessionKeyPool.push(key))
-        getBleService().saveSessionKeys()
-        const count = getBleService().getSessionKeyCount()
-        hmUI.updateStatusBarTitle(`Ready (${count})`)
-        hmUI.showToast({ text: `${count} keys synced` })
-        if (bleStatusWidget) {
-          bleStatusWidget.setProperty(hmUI.prop.TEXT, `Ready (${count} keys)`)
-        }
-      } else {
-        hmUI.updateStatusBarTitle('Sync failed')
-        hmUI.showToast({ text: result.error || 'Sync failed' })
-      }
-    })
-    .catch((err) => {
-      isRunning = false
-      console.log('[UI] Sync error:', err)
-      hmUI.updateStatusBarTitle('Sync error')
-      hmUI.showToast({ text: err.message || 'Sync error' })
-    })
-}
-
-// Combined connect + pair flow
-const bleSetup = () => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
-  hmUI.updateStatusBarTitle('Connecting…')
-
-  const doPair = () => {
-    hmUI.updateStatusBarTitle('Pairing…')
-    getBleService().pair((result) => {
-      isRunning = false
-      if (result.success) {
-        hmUI.showToast({ text: 'Tap key card on car!' })
-        hmUI.updateStatusBarTitle('Tap card on car')
-        vibrate(24)
-      } else {
-        hmUI.showToast({ text: result.error })
-        hmUI.updateStatusBarTitle('BLE Error')
-      }
-    })
-  }
-
-  const connectAndPair = (mac) => {
-    getBleService().connectToMAC(mac, (res) => {
-      if (res.success) {
-        hmUI.showToast({ text: 'Connected!' })
-        doPair()
-      } else {
-        isRunning = false
-        hmUI.showToast({ text: res.error || 'Connection failed' })
-        hmUI.updateStatusBarTitle('BLE Error')
-      }
-    })
-  }
-
-  // Try saved MAC first, otherwise scan
-  getBleService().connect((result) => {
-    if (result.success) {
-      hmUI.showToast({ text: 'Connected!' })
-      doPair()
-    } else if (result.error && result.error.includes('No saved')) {
-      // No saved vehicle - scan for Tesla
-      hmUI.updateStatusBarTitle('Scanning…')
-      getBleService().scan((scanResult) => {
-        if (scanResult.type === 'device') {
-          hmUI.showToast({ text: `Found: ${scanResult.device.name || scanResult.device.mac}` })
-        }
-        if (scanResult.type === 'complete') {
-          if (scanResult.devices && scanResult.devices.length > 0) {
-            const tesla = scanResult.devices[0]
-            hmUI.showToast({ text: `Connecting to ${tesla.name || tesla.mac}` })
-            connectAndPair(tesla.mac)
-          } else {
-            isRunning = false
-            hmUI.showToast({ text: 'No Tesla found' })
-            hmUI.updateStatusBarTitle('No Tesla')
-          }
-        }
-      }, 15000)
-    } else {
-      isRunning = false
-      hmUI.showToast({ text: result.error || 'Connection failed' })
-      hmUI.updateStatusBarTitle('BLE Error')
-    }
-  })
-}
-
-const bleClear = () => {
-  getBleService().clear()
-  bleStatus = 'disconnected'
-  bleMessage = 'Cleared'
-  renderBLEStatus()
-  hmUI.showToast({ text: 'BLE data cleared' })
-  hmUI.updateStatusBarTitle('Cleared')
-  vibrate(24)
-}
 
 const fetch = (method, onSuccess, onError) => {
   currentPage.request({ method }).then(({ error, ...props }) => {
@@ -432,8 +112,7 @@ const render = (attrs) => {
   actions = [
     locked ? unlock : lock,
     isChargerOpen ? closeCharger : openCharger,
-    is_climate_on ? stopHVAC : startHVAC,
-    getBleService().isConnected() ? bleUnlock : bleConnect
+    is_climate_on ? stopHVAC : startHVAC
   ]
 
   UI.reset()
@@ -480,10 +159,10 @@ const render = (attrs) => {
   text({ ...ODOMETER, y: height / 2 - 80, text_size: 30, color: 0x777777, text: `${odometer}${unit}` }, slide2)
   text({ ...BATTERY_LEVEL, y: -height / 2 + 70, w: 140, align_h: hmUI.align.LEFT, color: chargeColor, text_size: 40, text: `${battery_level || '--'}%` }, slide2)
   text({ ...BATTERY_RANGE, y: -height / 2 + 70, w: 140, x: 60, align_h: hmUI.align.RIGHT, h: 50, color: chargeColor, text_size: 40, text: `${battery_range}${unit}` }, slide2)
-  rect({w: 40, h: 20, y: height/2, color: 0x000000 }, slide1)
+  rect({w: 40, h: 20, y: height/2 - 18, color: 0x000000 }, slide1)
 
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, level: battery_level, color: chargeColor }, slide2)
+  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
+  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, level: battery_level, color: chargeColor }, slide2)
 
   const limit = Math.floor(3.1 * soc_limit) + 41
 
@@ -493,7 +172,7 @@ const render = (attrs) => {
     end_angle: limit + 3,
     line_width: 12,
     x: 0,
-    y: 0,
+    y: -10,
     radius: height / 2 - 5,
     color: 0x000000,
   }, slide2)
@@ -506,7 +185,7 @@ const render = (attrs) => {
     color: 0xffffff,
     radius: height / 2 - 5,
     x: 0,
-    y: 0,
+    y: -10,
   }, slide2)
 
   text({ text: `ϟ`, w: 50, y: -height/2 + 10, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
@@ -529,26 +208,14 @@ const render = (attrs) => {
   isDefrosting && button({ ...UNDEFROST, y: -180, x: 0, w: 100, h: 100, click_func: undefrost }, slide3)
   !isDefrosting && button({ ...DEFROST, y: -180, x: 0, w: 100, h: 100, click_func: defrost }, slide3)
 
-  // BLE Controls Page
-  text({ h: 30, y: -180, text_size: 20, text: "BLE Direct Control", color: 0x00AAFF }, slide4)
-  bleStatusWidget = text({ h: 30, y: -140, text_size: 16, text: bleMessage, color: 0x777777 }, slide4)
+  text({ h: 30, y: -70, text_size: 16, text: "COMMING SOON" }, slide4)
+  text({ color: 0xF82127, y: 50, text: '♥', text_size: 69 }, slide4)
+  text({ h: 30, y: 110, text_size: 16, text: "buymeacoffee.com/galulex" }, slide4)
 
-  // Setup and Sync buttons
-  button({ x: -50, y: -70, w: 80, h: 40, radius: 20, text: "Setup", text_size: 16, normal_color: 0x336633, press_color: 0x448844, click_func: bleSetup }, slide4)
-  button({ x: 50, y: -70, w: 80, h: 40, radius: 20, text: "Sync", text_size: 16, normal_color: 0x333366, press_color: 0x444488, click_func: bleSyncKeys }, slide4)
-
-  // Lock / Unlock row
-  button({ x: -60, y: 30, w: 80, h: 80, src: 'lock', click_func: bleLock }, slide4)
-  button({ x: 60, y: 30, w: 80, h: 80, src: 'unlock', click_func: bleUnlock }, slide4)
-
-  // Trunk / Frunk row
-  button({ x: -60, y: 120, w: 60, h: 60, src: 'open', click_func: bleFrunk }, slide4)
-  button({ x: 60, y: 120, w: 60, h: 60, src: 'open', click_func: bleTrunk }, slide4)
-  text({ x: -60, y: 175, w: 80, h: 20, text_size: 14, text: "Frunk" }, slide4)
-  text({ x: 60, y: 175, w: 80, h: 20, text_size: 14, text: "Trunk" }, slide4)
-
-  // Clear button (clears saved BLE data)
-  button({ x: 0, y: -220, w: 80, h: 36, radius: 18, text: "Clear", text_size: 14, normal_color: 0x663333, press_color: 0x884444, click_func: bleClear }, slide4)
+  button({ x:50, y: -20, src: `flash` }, slide4)
+  button({ x: -50, y: -120, src: `horn` }, slide4)
+  button({ src: `homelink`, y: -20, x: -50 }, slide4)
+  button({ x: 50, y: -120, src: `boombox` }, slide4)
   // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
   // text({ text: "", text_size: 30 }, slide4)
 
@@ -605,9 +272,6 @@ Page(
       setWakeUpRelaunch(true)
       setPageBrightTime(300)
       currentPage = this
-
-      // Initialize BLE service
-      initBLE()
 
       onKey({
         callback: (key, keyEvent) => {
