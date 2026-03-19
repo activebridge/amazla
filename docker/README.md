@@ -1,52 +1,43 @@
-## Local Commands
+## Server Setup
 
-#### Build for local and server machines
+### Keys
 
+- **Tesla fleet key** (`/etc/ssl/private.pem`): generated once with `tesla-keygen`, registered with Tesla developer portal
+- **TLS cert** (`/etc/ssl/cloudflare-cert.pem`): Cloudflare Origin Certificate (15-year validity, no renewal needed)
+- **TLS key** (`/etc/ssl/cloudflare-key.pem`): Cloudflare Origin Certificate private key
+
+To generate Tesla fleet key:
 ```
-docker buildx build . -t tesla-proxy:mac
-docker buildx build . -t ediff/tesla-proxy:latest --platform linux/amd64
-```
-
-#### Run on Local
-
-To Generate Tesla proxy keys run: 
-
-```
-tesla-keygen -key-file private.pem create > public.pem
+docker run --rm -v /etc/ssl:/keys tesla/vehicle-command:latest --entrypoint tesla-keygen -- -key-file /keys/private.pem create > /etc/ssl/public.pem
 ```
 
-To run on local create folder and place 3 files
-
-- tls-key: privkey1.pem
-- tls-cert: fullchain1.pem
-- tesla private key: private.pem
-
-On run command change path to folder where are certs and keys placed.
+### Run
 
 ```
-docker run -v /Users/alexkarpenko/projects/files:/keys --rm -p 443:443/tcp tesla-proxy:mac
+docker run -d -v /etc/ssl:/keys -e TESLA_KEY_FILE=/keys/private.pem -e TESLA_HTTP_PROXY_TLS_CERT=/keys/cloudflare-cert.pem -e TESLA_HTTP_PROXY_TLS_KEY=/keys/cloudflare-key.pem --rm -p 32772:443/tcp tesla/vehicle-command:latest -host 0.0.0.0
 ```
 
-#### Push To DockerHub
+### Stop & restart
 
 ```
-docker push ediff/tesla-proxy:latest
+docker stop $(docker ps -q)
 ```
 
-## Server Commands
+### Nginx
 
-Before run image on server generate SSL certs via certbot. Once generated place your Tesla private-key to **/etc/letsencrypt/archive/domain_name** folder and rename file to **fullchain1.pem**
+Nginx terminates public TLS (Cloudflare orange cloud). Proxies to container over HTTPS on localhost:
 
-```
-docker pull ediff/tesla-proxy:latest
-docker stop $(docker ps -a -q)
-docker run -d -v /etc/letsencrypt/archive/tesla.activebridge.org:/keys --rm -p 443:443/tcp ediff/tesla-proxy:latest
+```nginx
+location / {
+    proxy_pass https://127.0.0.1:32772/;
+}
 ```
 
-## Update Certs
-```
-certbot certonly -d tesla.activebridge.org
-cd /etc/letsencrypt/archive/tesla.activebridge.org-0001
-cp ../tesla.activebridge.org/private.pem private.pem
-docker run -d -v /etc/letsencrypt/archive/tesla.activebridge.org-0001:/keys --rm -p 32772:443/tcp ediff/tesla-proxy:latest
-```
+Cloudflare SSL mode: **Full (Strict)** via Configuration Rule for `tesla.activebridge.org` only.
+
+### Notes
+
+- Uses official `tesla/vehicle-command:latest` image (replaces custom `ediff/tesla-proxy`)
+- No certbot needed — Cloudflare Origin Cert handles TLS, never expires in practice
+- `private.pem` is the Tesla fleet key, unrelated to TLS certs
+- `-host 0.0.0.0` required so the proxy binds to all interfaces inside the container
