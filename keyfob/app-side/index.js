@@ -112,20 +112,8 @@ AppSideService(
     },
 
     onRequest(req, res) {
-      console.log("=====> Request:", req.method, JSON.stringify(req.params || '').slice(0, 100));
-      const { method, params } = req
-
-      // Handle BLE Delegation to Phone Brain
-      if (method === 'BLE_PAIR') {
-        res(bleCrypto.buildPairMessage(params.publicKeyHex))
-      } else if (method === 'BLE_PARSE_PAIRING') {
-        res(bleCrypto.parsePairingResponse(params.responseHex))
-      } else if (method === 'BLE_SESSION_RESPONSE') {
-        res(bleCrypto.processSessionInfoResponse(params.responseHex))
-      } else {
-        // Handle legacy/other requests
-        dispatch(method, res, params || {})
-      }
+      console.log("=====>,", req.method, req.params || '');
+      dispatch(req.method, res, req.params || {})
     },
 
     onRun() {},
