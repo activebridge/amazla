@@ -202,12 +202,15 @@ describe('Pairing Response Parsing', () => {
     })
 
     test('handles response without payload', () => {
-      // FromVCSECMessage with no field 4 (commandStatus) — e.g. just a vehicleStatus field
-      const response = new Uint8Array([0x0a, 0x02, 0x08, 0x01]) // field 1 only
+      // FromVCSECMessage with only vehicleStatus (field 1 as bytes, no field 4 commandStatus).
+      // This is an unsolicited vehicle status push — return 'pending' so callers keep
+      // waiting. Some firmware sends this after NFC tap; doPair treats it as success
+      // only if sawTapRequired is already true.
+      const response = new Uint8Array([0x0a, 0x02, 0x08, 0x01]) // field 1 (bytes)
       const parsed = parsePairingResponse(response)
 
-      expect(parsed.success).toBe(false)
-      expect(parsed.error).toContain('command status')
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('pending')
     })
   })
 })
@@ -397,21 +400,29 @@ describe('WhitelistOperation Structure', () => {
     expect(messageHex.includes('8201')).toBe(true)
   })
 
-  test('message contains metadataForKey (field 16 of WhitelistOperation)', () => {
+  test('message contains metadataForKey at field 6 of WhitelistOperation', () => {
     const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+    const messageBytes = hexToBytes(result.messageHex)
     const messageHex = result.messageHex
 
-    // metadataForKey is also field 16, so we should see 0x82 0x01 appear twice
+    // vcsec.proto: WhitelistOperation.metadataForKey = field 6, wire type 2
+    // Field key = (6 << 3) | 2 = 50 = 0x32
+    // Followed by length 0x02 then KeyMetadata { keyFormFactor (field 1) = 7 } = 0x08 0x07
+    // So the exact sequence is: 32 02 08 07
+    expect(messageHex.includes('32020807')).toBe(true)
+
+    // UnsignedMessage.WhitelistOperation = field 16 (0x82 0x01) should still appear once
     const matches = messageHex.match(/8201/g)
     expect(matches).not.toBeNull()
-    expect(matches.length).toBeGreaterThanOrEqual(2)
+    expect(matches.length).toBeGreaterThanOrEqual(1)
   })
 })
 
 describe('Key Form Factor', () => {
-  test('uses ANDROID_DEVICE form factor by default', () => {
+  test('uses ANDROID_DEVICE form factor to trigger NFC tap UI on car screen', () => {
     // KEY_FORM_FACTOR_ANDROID_DEVICE = 7
-    // This should be encoded in the message
+    // This triggers the key-card-tap confirmation UI on the car's touchscreen.
+    // CLOUD_KEY (9) bypasses the UI and uses Tesla cloud verification instead.
     const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
     const messageHex = result.messageHex
 
@@ -438,7 +449,9 @@ describe('Timeout Handling', () => {
 })
 
 describe('Multiple Response Handling', () => {
-  // Tesla may send up to 3 responses to a pairing request
+  // Car pushes repeated status notifications before user taps NFC card.
+  // Each must return 'wait' so the callback re-registers indefinitely until
+  // the 60-second tapTimeout fires or an 'ok' response arrives.
 
   test('handles single WAIT response', () => {
     const response = buildWaitResponse()
@@ -452,13 +465,24 @@ describe('Multiple Response Handling', () => {
     expect(parsed.status).toBe('ok')
   })
 
-  test('can parse consecutive responses independently', () => {
-    // First response: WAIT
-    const wait = parsePairingResponse(buildWaitResponse())
-    expect(wait.status).toBe('wait')
+  test('can parse many consecutive WAIT responses without limit', () => {
+    // Car may push 10+ status notifications — all must return 'wait'
+    for (var i = 0; i < 20; i++) {
+      const parsed = parsePairingResponse(buildWaitResponse())
+      expect(parsed.status).toBe('wait')
+      expect(parsed.success).toBe(true)
+    }
+  })
 
-    // Second response: OK (after keycard tap)
+  test('WAIT followed by OK — correct sequence for NFC tap confirmation', () => {
+    // First N responses: WAIT (car status pushes)
+    for (var i = 0; i < 5; i++) {
+      const wait = parsePairingResponse(buildWaitResponse())
+      expect(wait.status).toBe('wait')
+    }
+    // Final response after NFC tap + touchscreen confirm: OK
     const ok = parsePairingResponse(buildOkResponse())
     expect(ok.status).toBe('ok')
+    expect(ok.success).toBe(true)
   })
 })

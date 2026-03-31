@@ -22,17 +22,16 @@ const RKE_ACTION_OPEN_FRUNK = 3
 const RKE_ACTION_OPEN_CHARGE_PORT = 4
 const RKE_ACTION_CLOSE_CHARGE_PORT = 5
 
-// Information request types
+// Information request types (from vcsec.proto InformationRequestType enum)
+// DO NOT CHANGE — verified from vcsec.proto
 const INFO_REQUEST_GET_STATUS = 0
-const INFO_REQUEST_GET_WHITELIST_INFO = 1
-const INFO_REQUEST_GET_WHITELIST_ENTRY_INFO = 2
-const INFO_REQUEST_SESSION_INFO = 3
+const INFO_REQUEST_GET_WHITELIST_INFO = 5
+const INFO_REQUEST_GET_WHITELIST_ENTRY_INFO = 6
 
-// Key roles for whitelist
-const KEY_ROLE_OWNER = 0
-const KEY_ROLE_DRIVER = 1
-const KEY_ROLE_SERVICE_TECH = 4
-const KEY_ROLE_CHARGING_MANAGER = 5
+// Key roles for whitelist (from keys.proto Keys.Role enum)
+// ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3 — DO NOT CHANGE, verified from keys.proto
+const KEY_ROLE_OWNER = 2
+const KEY_ROLE_DRIVER = 3
 
 // Key form factors
 const KEY_FORM_FACTOR_UNKNOWN = 0
@@ -113,7 +112,7 @@ function buildSessionInfoRequest(publicKey, challenge) {
 }
 
 // Build UnsignedMessage (for VCSEC)
-// Fields from vcsec.proto:
+// Fields from vcsec.proto (DO NOT CHANGE — verified from vcsec.proto):
 //   1: InformationRequest
 //   2: RKEAction (enum)
 //   4: closureMoveRequest
@@ -121,12 +120,12 @@ function buildSessionInfoRequest(publicKey, challenge) {
 function buildUnsignedMessage(options) {
   const parts = []
 
-  // RKE action (field 2)
+  // RKE action (field 2) — DO NOT CHANGE TO 1
   if (options.rkeAction !== undefined) {
     parts.push(encodeEnum(2, options.rkeAction))
   }
 
-  // Information request (field 1)
+  // Information request (field 1) — DO NOT CHANGE TO 4
   if (options.informationRequest) {
     parts.push(encodeBytes(1, options.informationRequest))
   }
@@ -156,25 +155,24 @@ function buildInformationRequest(requestType, keyId, publicKey) {
 }
 
 // Build SignedMessage wrapper
-// Fields:
-//   1: protobuf_message_as_bytes (bytes) - the unsigned message
-//   2: signature_type (enum)
+// Fields (from vcsec.proto):
+//   2: protobuf_message_as_bytes (bytes) - the unsigned message
+//   3: signature_type (enum)
+//   4: counter (uint32)
 //   5: signature (bytes)
-//   8: counter (uint32)
-//   9: epoch (bytes)
-//   10: expires_at (uint32)
-//   11: destination (Destination)
+//   6: epoch (bytes)
+//   7: expires_at (uint32)
 function buildSignedMessage(options) {
   const parts = []
 
-  // protobuf_message_as_bytes (field 1)
+  // protobuf_message_as_bytes (field 2)
   if (options.payload) {
-    parts.push(encodeBytes(1, options.payload))
+    parts.push(encodeBytes(2, options.payload))
   }
 
-  // signature_type (field 2)
+  // signature_type (field 3)
   if (options.signatureType !== undefined) {
-    parts.push(encodeEnum(2, options.signatureType))
+    parts.push(encodeEnum(3, options.signatureType))
   }
 
   // signature (field 5)
@@ -182,19 +180,19 @@ function buildSignedMessage(options) {
     parts.push(encodeBytes(5, options.signature))
   }
 
-  // counter (field 8)
+  // counter (field 4)
   if (options.counter !== undefined) {
-    parts.push(encodeVarintField(8, options.counter))
+    parts.push(encodeVarintField(4, options.counter))
   }
 
-  // epoch (field 9)
+  // epoch (field 6)
   if (options.epoch) {
-    parts.push(encodeBytes(9, options.epoch))
+    parts.push(encodeBytes(6, options.epoch))
   }
 
-  // expires_at (field 10)
+  // expires_at (field 7)
   if (options.expiresAt !== undefined) {
-    parts.push(encodeVarintField(10, options.expiresAt))
+    parts.push(encodeVarintField(7, options.expiresAt))
   }
 
   return concat(...parts)
@@ -283,22 +281,32 @@ function buildKeyMetadata(keyFormFactor) {
   return encodeEnum(1, keyFormFactor)
 }
 
-// Build WhitelistOperation message
-// This is the main message for adding/removing keys from the vehicle
+// Build PermissionChange message (for addKeyToWhitelistAndAddPermissions)
 // Fields:
-//   1: addPublicKeyToWhitelist (PublicKey message)
-//   16: metadataForKey (KeyMetadata)
+//   1: key (PublicKey)
+//   4: keyRole (Role enum)
+function buildPermissionChange(publicKeyMsg, role) {
+  return concat(
+    encodeBytes(1, publicKeyMsg),
+    encodeEnum(4, role)
+  )
+}
+
+// Build WhitelistOperation message
+// Fields (from vcsec.proto):
+//   5: addKeyToWhitelistAndAddPermissions (PermissionChange) - oneof sub_message
+//   6: metadataForKey (KeyMetadata)
+// NOTE: field 16 = removeAllImpermanentKeys (bool), NOT metadataForKey
 function buildWhitelistOperation(keyToAdd, keyFormFactor = KEY_FORM_FACTOR_ANDROID_DEVICE) {
-  const parts = []
+  // Build PermissionChange: { key: PublicKey, keyRole: ROLE_OWNER }
+  const permissionChange = buildPermissionChange(keyToAdd, KEY_ROLE_OWNER)
 
-  // addPublicKeyToWhitelist (field 1)
-  parts.push(encodeBytes(1, keyToAdd))
-
-  // metadataForKey (field 16) - required for Tesla to process pairing
   const metadata = buildKeyMetadata(keyFormFactor)
-  parts.push(encodeBytes(16, metadata))
 
-  return concat(...parts)
+  return concat(
+    encodeBytes(5, permissionChange),  // addKeyToWhitelistAndAddPermissions (field 5)
+    encodeBytes(6, metadata)           // metadataForKey = field 6 (VERIFIED from vcsec.proto, DO NOT CHANGE TO 16)
+  )
 }
 
 // Build UnsignedMessage with WhitelistOperation
@@ -354,48 +362,183 @@ function parseFromVCSECMessage(data) {
   return result
 }
 
-// Parse pairing response — Tesla replies with FromVCSECMessage directly (not RoutableMessage)
+// Parse pairing response — Tesla wraps response in RoutableMessage.
 //
-// WAIT response bytes (after stripping 2-byte length prefix):
-//   22 02 08 01  →  field 4 (commandStatus) { field 1 (operationStatus) = 1 (WAIT) }
+// RoutableMessage { protobuf_message_as_bytes (field 10): FromVCSECMessage }
+// FromVCSECMessage { commandStatus (field 4): CommandStatus }
 //
-// OK response after keycard tap:
-//   22 0a 1a 08 ...  →  field 4 (commandStatus) { field 3 (whitelistOperationStatus) = <sub-msg> }
-//   operationStatus (field 1) is absent because OK=0 is the protobuf default and not encoded
+// WAIT: commandStatus { operationStatus=1 }
+// OK:   commandStatus { whitelistOperationStatus sub-msg present, operationStatus absent (default=0) }
 //
 function parsePairingResponse(data) {
+  // dbg is always populated so callers can log exact wire details
+  const dbg = {
+    rxLen: data ? data.length : 0,
+    rawData: data || null,  // full raw bytes for hex dump in UI
+    outerKeys: '',
+    wrapped: false,
+    innerKeys: '',
+    f12opStatus: null,  // RoutableMessage signedMessageStatus.operation_status
+    f12fault: null,     // RoutableMessage signedMessageStatus.signed_message_fault
+    opStatus: null,     // FromVCSECMessage commandStatus.operationStatus
+    wlFault: null,      // WhitelistOperation fault code
+    f1type: '-',        // field 1 type: 'V=N' (varint N) | 'B(N)' (bytes len N) | '-'
+    f3type: '-',        // field 3 type: 'V=N' (varint N) | 'B(N)' (bytes len N) | '-'
+    f4type: '-',        // field 4: 'B(N)' | '-'
+    path: '?',          // which parse branch was taken
+  }
+
   try {
-    const fields = decodeMessage(data)
+    const outerFields = decodeMessage(data)
+    dbg.outerKeys = Object.keys(outerFields).join(',')
+
+    // Unwrap RoutableMessage — payload is in field 10 (protobuf_message_as_bytes)
+    let fields = outerFields
+    if (outerFields[10] instanceof Uint8Array) {
+      dbg.wrapped = true
+      fields = decodeMessage(outerFields[10])
+      dbg.innerKeys = Object.keys(fields).join(',')
+    }
+
+    // Capture raw field types so UI can show exactly what the car sent
+    if (fields[1] !== undefined) {
+      dbg.f1type = (typeof fields[1] === 'number') ? ('V=' + fields[1]) : ('B(' + fields[1].length + ')')
+    }
+    if (fields[3] !== undefined) {
+      dbg.f3type = (typeof fields[3] === 'number') ? ('V=' + fields[3]) : ('B(' + fields[3].length + ')')
+    }
+    if (fields[4] !== undefined) {
+      dbg.f4type = (fields[4] instanceof Uint8Array) ? ('B(' + fields[4].length + ')') : ('V=' + fields[4])
+    }
+
+    // Check for protocol-level error in RoutableMessage (field 12 = signedMessageStatus)
+    if (outerFields[12] instanceof Uint8Array) {
+      const statusFields = decodeMessage(outerFields[12])
+      dbg.f12opStatus = statusFields[1] !== undefined ? statusFields[1] : 0
+      dbg.f12fault = statusFields[2] !== undefined ? statusFields[2] : 0
+      if (dbg.f12fault && dbg.f12fault !== 0) {
+        dbg.path = 'f12err'
+        return { success: false, status: 'error', error: 'Proto fault:' + dbg.f12fault, dbg }
+      }
+    }
+
+    // Car sends CommandStatus directly (no FromVCSECMessage wrapper):
+    //   field 1 (varint) = operationStatus, field 3 (bytes) = whitelistOperationStatus
+    // WhitelistOperation_status { field 1 = whitelistOperationInformation (enum) }
+    //   0 = NONE (success), 14 = NOT_ALLOWED_TO_ADD_UNLESS_ON_READER (tap required), other = error
+    if (!fields[4] && fields[3] instanceof Uint8Array) {
+      dbg.path = 'f3B'
+      dbg.f3len = fields[3].length
+      dbg.f3bytes = fields[3]
+
+      const outerOpStatus = fields[1] !== undefined ? fields[1] : 0
+      dbg.opStatus = outerOpStatus
+
+      if (outerOpStatus === OPERATIONSTATUS_WAIT) {
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
+      }
+      if (outerOpStatus === OPERATIONSTATUS_ERROR) {
+        return { success: false, status: 'error', error: 'WL op error', dbg }
+      }
+
+      // outerOpStatus = OK (0 or absent): decode WhitelistOperation_status to get real result
+      // WhitelistOperation_status fields (from vcsec.proto):
+      //   1: whitelistOperationInformation (enum) — 0=NONE=success, 14=tap required, etc.
+      //   2: signerOfOperation (KeyIdentifier bytes) — which authorized key approved this
+      //   3: operationStatus (enum)
+      const wlStatus = decodeMessage(fields[3])
+      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : 0
+      dbg.wlFault = wlInfo
+      if (wlStatus[2] instanceof Uint8Array) {
+        const signer = decodeMessage(wlStatus[2])
+        dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
+      }
+
+      // NONE (0) = key successfully added
+      if (wlInfo === 0) {
+        return { success: true, status: 'ok', message: 'Key added', dbg }
+      }
+      // NOT_ALLOWED_TO_ADD_UNLESS_ON_READER (14) = car waiting for NFC keycard tap
+      if (wlInfo === 14) {
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
+      }
+      // Any other code = error (e.g. 25 = tap timeout, 5 = no permission, etc.)
+      return { success: false, status: 'error', error: 'WL info:' + wlInfo, dbg }
+    }
+
+    // Car sends CommandStatus directly with only operationStatus (no sub-message field)
+    if (!fields[4] && typeof fields[1] === 'number') {
+      dbg.path = 'f1N'
+      dbg.opStatus = fields[1]
+      if (fields[1] === OPERATIONSTATUS_WAIT) {
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
+      }
+      if (fields[1] === OPERATIONSTATUS_ERROR) {
+        return { success: false, status: 'error', error: 'OpStatus error', dbg }
+      }
+      return { success: true, status: 'ok', message: 'Key added', dbg }
+    }
+
+    // field 1 = FromVCSECMessage.vehicleStatus (bytes) — unsolicited status push from car,
+    // not related to the pairing operation. Return 'pending' so callers keep waiting
+    // without incorrectly treating this as a tap-required or success signal.
+    if (!fields[4] && fields[1] instanceof Uint8Array) {
+      dbg.path = 'f1B'
+      dbg.f1len = fields[1].length
+      return { success: true, status: 'pending', message: 'Vehicle status push (ignore)', dbg }
+    }
 
     // field 4 = commandStatus (bytes)
     const commandStatusBytes = fields[4]
     if (!commandStatusBytes) {
-      return { success: false, error: 'No command status in response' }
+      dbg.path = 'noF4'
+      return { success: false, error: 'No command status (field 4)', dbg }
     }
 
+    dbg.path = 'f4'
     const csFields = decodeMessage(commandStatusBytes)
 
-    // field 1 = operationStatus (varint) — present for WAIT and ERROR, absent for OK
+    // field 1 = operationStatus (varint) — absent means OK (default=0)
     const operationStatus = csFields[1] !== undefined ? csFields[1] : null
+    dbg.opStatus = operationStatus
 
-    // field 3 can be:
-    //   Uint8Array → whitelistOperationStatus sub-message (success after keycard tap)
-    //   number    → whitelistOperationFault code (error detail)
+    // field 3: Uint8Array = whitelistOperationStatus bytes, number = fault code
     const field3 = csFields[3]
-    const hasWhitelistOpStatus = field3 instanceof Uint8Array
+    if (typeof field3 === 'number') dbg.wlFault = field3
 
-    if (hasWhitelistOpStatus || operationStatus === OPERATIONSTATUS_OK) {
-      return { success: true, status: 'ok', message: 'Key added successfully' }
+    if (field3 instanceof Uint8Array) {
+      // Decode WhitelistOperation_status to get the actual info code:
+      //   field 1 = whitelistOperationInformation (enum): 0=NONE=success, 14=tap required
+      //   field 2 = signerOfOperation (KeyIdentifier bytes)
+      const wlStatus = decodeMessage(field3)
+      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : 0
+      dbg.wlFault = wlInfo
+      if (wlStatus[2] instanceof Uint8Array) {
+        const signer = decodeMessage(wlStatus[2])
+        dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
+      }
+      if (wlInfo === 0) {
+        return { success: true, status: 'ok', message: 'Key added successfully', dbg }
+      }
+      if (wlInfo === 14) {
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
+      }
+      return { success: false, status: 'error', error: 'WL info:' + wlInfo, dbg }
+    } else if (operationStatus === OPERATIONSTATUS_OK) {
+      return { success: true, status: 'ok', message: 'Key added successfully', dbg }
     } else if (operationStatus === OPERATIONSTATUS_WAIT) {
-      return { success: true, status: 'wait', message: 'Tap key card on car' }
+      return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
     } else if (operationStatus === OPERATIONSTATUS_ERROR) {
       const faultCode = typeof field3 === 'number' ? field3 : 0
-      return { success: false, status: 'error', error: 'Pairing error code: ' + faultCode }
+      dbg.wlFault = faultCode
+      return { success: false, status: 'error', error: 'WL fault:' + faultCode, dbg }
     }
 
-    return { success: false, error: 'Unknown response format', rawFields: fields }
+    dbg.path = 'unk'
+    return { success: false, error: 'Unknown fmt', dbg }
   } catch (e) {
-    return { success: false, error: e.message }
+    dbg.exception = e.message
+    return { success: false, error: e.message, dbg }
   }
 }
 
@@ -425,7 +568,8 @@ export {
   RKE_ACTION_OPEN_CHARGE_PORT,
   RKE_ACTION_CLOSE_CHARGE_PORT,
   INFO_REQUEST_GET_STATUS,
-  INFO_REQUEST_SESSION_INFO,
+  INFO_REQUEST_GET_WHITELIST_INFO,
+  INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   KEY_ROLE_OWNER,
   KEY_ROLE_DRIVER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,

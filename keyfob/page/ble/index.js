@@ -1,5 +1,6 @@
 import * as hmUI from '@zos/ui'
 import { BasePage } from '@zeppos/zml/base-page'
+import { keepScreenOn } from '../../../zeppify/index.js'
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
 import { TESLA_PUBLIC_KEY } from '../../../secrets.js'
@@ -30,6 +31,18 @@ function hexToBytes(hex) {
     bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
   }
   return bytes
+}
+
+// Dump first n bytes of a Uint8Array as compact hex
+function dumpHex(bytes, n) {
+  if (!bytes) return 'null'
+  var s = ''
+  var limit = Math.min(bytes.length, n || 10)
+  for (var i = 0; i < limit; i++) {
+    s += ('0' + bytes[i].toString(16)).slice(-2)
+  }
+  if (bytes.length > limit) s += '..'
+  return s
 }
 
 // ── state ────────────────────────────────────────────────────────────────────
@@ -78,37 +91,12 @@ function updateDeviceInfo() {
     'KEY:' + keyPart + ' SAVE:' + savePart + ' NOW:' + nowPart)
 }
 
-// ── pair flow (inline — avoids importing session.js + heavy crypto) ───────────
-function _waitForPairingConfirmation() {
-  addLog('Waiting for tap...', 0xffcc00)
-  var tapTimeout = setTimeout(function() {
-    teslaBLE.responseCallback = null
-    state = 'IDLE'
-    updateStatus('TIMEOUT', 0xff4444)
-    addLog('Keycard tap timeout', 0xff4444)
-  }, 60000)
-
-  teslaBLE.responseCallback = function(result) {
-    clearTimeout(tapTimeout)
-    if (!result.success) {
-      state = 'IDLE'
-      updateStatus('ERROR', 0xff4444)
-      addLog('Tap err: ' + (result.error || '?'), 0xff4444)
-      return
-    }
-    var parsed = parsePairingResponse(result.data)
-    if (parsed.status === 'ok') {
-      state = 'DONE'
-      updateStatus('PAIRED!', 0x00cc44)
-      addLog('Key added!', 0x00cc44)
-      updateDeviceInfo()
-    } else {
-      state = 'IDLE'
-      updateStatus('ERROR', 0xff4444)
-      addLog('Tap err: ' + (parsed.error || parsed.status || '?'), 0xff4444)
-    }
-  }
-}
+// ── pair flow ─────────────────────────────────────────────────────────────────
+// Mirrors Tesla Go SDK exactly:
+//   1. doPair()  — fire-and-forget SendAddKeyRequest (ToVCSECMessage, PRESENT_KEY)
+//                  Tell user to watch car touchscreen and tap NFC key card.
+//   2. doVerify() — on second PAIR press: query VCSEC whitelist for our key.
+//                   Car returns whitelistEntryInfo (enrolled) or ERROR (not enrolled).
 
 function doPair() {
   state = 'PAIRING'
@@ -124,40 +112,183 @@ function doPair() {
         return
       }
       var msgBytes = hexToBytes(result.messageHex)
-      addLog('Sending ' + msgBytes.length + 'B...', 0xcccccc)
+      addLog('TX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
 
-      teslaBLE.sendAndWaitForResponse(msgBytes, function(bleResult) {
-        if (!bleResult.success) {
-          state = 'IDLE'
-          updateStatus('ERROR', 0xff4444)
-          addLog('BLE err: ' + (bleResult.error || '?'), 0xff4444)
+      // Car should reply with wlInfo=14 (tap NFC) within 5s.
+      // After WAIT: actively listen for car's confirmation push after NFC tap (60s).
+      teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
+        if (!r.success) {
+          addLog('PRX:timeout', 0x888888)
           return
         }
-        var parsed = parsePairingResponse(bleResult.data)
-        addLog('Status: ' + (parsed.status || '?'), 0xcccccc)
+        var parsed = parsePairingResponse(r.data)
+        var wlStr = (parsed.dbg && parsed.dbg.wlFault) ? ' wl:' + parsed.dbg.wlFault : ''
+        addLog('PRX:' + parsed.status + wlStr, 0x4488ff)
 
-        if (parsed.status === 'wait') {
-          state = 'WAITING_KEYCARD'
-          updateStatus('TAP KEY CARD', 0xffcc00)
-          addLog('TAP KEY CARD ON CAR', 0xff8800)
-          _waitForPairingConfirmation()
-        } else if (parsed.status === 'ok') {
+        if (parsed.status === 'ok') {
           state = 'DONE'
           updateStatus('PAIRED!', 0x00cc44)
-          addLog('Key added!', 0x00cc44)
-          updateDeviceInfo()
-        } else {
-          state = 'IDLE'
-          updateStatus('ERROR', 0xff4444)
-          addLog('Err: ' + (parsed.error || '?'), 0xff4444)
+          addLog('Key enrolled!', 0x00cc44)
+          return
         }
-      }, 15000)
+
+        if (parsed.status === 'wait' || parsed.status === 'pending') {
+          // Actively wait for car's confirmation push after NFC tap (up to 60s)
+          teslaBLE.waitForNextResponse(60000, function(r2) {
+            if (!r2.success) {
+              addLog('NFC timeout', 0x888888)
+              addLog('(press PAIR to verify)', 0x666666)
+              return
+            }
+            var p2 = parsePairingResponse(r2.data)
+            var wl2 = (p2.dbg && p2.dbg.wlFault) ? ' wl:' + p2.dbg.wlFault : ''
+            addLog('NFC push:' + p2.status + wl2, 0x4488ff)
+            if (p2.status === 'ok') {
+              state = 'DONE'
+              updateStatus('PAIRED!', 0x00cc44)
+              addLog('Key enrolled!', 0x00cc44)
+            } else if (p2.status === 'error') {
+              state = 'IDLE'
+              updateStatus('PAIR ERROR', 0xff4444)
+              addLog(p2.error || 'Error', 0xff4444)
+            }
+          })
+        }
+      }, 5000)
+
+      state = 'WAITING_KEYCARD'
+      updateStatus('TAP KEY CARD', 0xff4444)
+      addLog('TAP KEY CARD', 0xff4444)
+      addLog('on center console!', 0xff8800)
+      addLog('then press PAIR to verify', 0x888888)
     })
     .catch(function(err) {
       state = 'IDLE'
       updateStatus('ERROR', 0xff4444)
       addLog('Exc: ' + (err.message || '?'), 0xff4444)
     })
+}
+
+function doVerify() {
+  if (!teslaBleApi.isConnected()) {
+    state = 'IDLE'
+    updateStatus('CONN LOST', 0xff4444)
+    addLog('BLE dropped.', 0xff8800)
+    addLog('Reconnect & retry', 0xff8800)
+    return
+  }
+  updateStatus('QUERYING...', 0xffcc00)
+  addLog('Querying whitelist...', 0xcccccc)
+
+  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyHex: TESLA_PUBLIC_KEY } })
+    .then(function(result) {
+      if (!result.success) {
+        state = 'IDLE'
+        updateStatus('ERROR', 0xff4444)
+        addLog('Query build err: ' + (result.error || '?'), 0xff4444)
+        return
+      }
+      var msgBytes = hexToBytes(result.messageHex)
+      addLog('QTX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
+
+      function handleQueryResponse(r, attempt) {
+        if (!r.success) {
+          state = 'IDLE'
+          updateStatus('NO RESPONSE', 0xff8800)
+          addLog('Query timeout', 0xff8800)
+          return
+        }
+        var rx = r.data
+        addLog('QRX[' + rx.length + ']:' + dumpHex(rx, 6), 0x4488ff)
+
+        var fields = decodeRawFields(rx)
+        var fkeys = Object.keys(fields).join(',')
+        addLog('f:' + fkeys, 0x4488ff)
+
+        // Field 3 only = keychainStatus push (car sends on CCCD enable and occasionally).
+        // Skip up to 3 ambients and wait for the real query response.
+        if (fkeys === '3' && attempt < 3) {
+          addLog('Ambient#' + (attempt + 1) + ' skip', 0x888888)
+          teslaBLE.waitForNextResponse(6000, function(r2) {
+            handleQueryResponse(r2, attempt + 1)
+          })
+          return
+        }
+
+        if (fkeys === '3') {
+          // Still only field 3 after 3 retries — car never responded to query
+          state = 'IDLE'
+          updateStatus('NO QUERY RESP', 0xff8800)
+          addLog('Only ambients,', 0xff8800)
+          addLog('no query resp', 0xff8800)
+          return
+        }
+
+        if (fields[17]) {
+          // whitelistEntryInfo (field 17) present — our key is in the whitelist
+          state = 'DONE'
+          updateStatus('PAIRED!', 0x00cc44)
+          addLog('Key enrolled!', 0x00cc44)
+          updateDeviceInfo()
+        } else if (fields[4]) {
+          // commandStatus (field 4) = not enrolled or error
+          state = 'IDLE'
+          updateStatus('NOT ENROLLED', 0xff4444)
+          addLog('Not in whitelist', 0xff8800)
+        } else {
+          state = 'IDLE'
+          updateStatus('NOT ENROLLED', 0xff4444)
+          addLog('Tap key card first', 0xff8800)
+        }
+      }
+
+      teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
+        handleQueryResponse(r, 0)
+      }, 8000)
+    })
+    .catch(function(err) {
+      state = 'IDLE'
+      updateStatus('ERROR', 0xff4444)
+      addLog('Exc: ' + (err.message || '?'), 0xff4444)
+    })
+}
+
+// Minimal protobuf field decoder — returns raw field map {fieldNum: bytes|number}
+function decodeRawFields(data) {
+  var fields = {}
+  var offset = 0
+  while (offset < data.length) {
+    var tag = 0, shift = 0
+    while (offset < data.length) {
+      var b = data[offset++]
+      tag |= (b & 0x7f) << shift
+      if (!(b & 0x80)) break
+      shift += 7
+    }
+    var fieldNum = tag >> 3
+    var wireType = tag & 7
+    if (wireType === 0) {
+      var val = 0; shift = 0
+      while (offset < data.length) {
+        var b = data[offset++]
+        val |= (b & 0x7f) << shift
+        if (!(b & 0x80)) break
+        shift += 7
+      }
+      fields[fieldNum] = val
+    } else if (wireType === 2) {
+      var len = 0; shift = 0
+      while (offset < data.length) {
+        var b = data[offset++]
+        len |= (b & 0x7f) << shift
+        if (!(b & 0x80)) break
+        shift += 7
+      }
+      fields[fieldNum] = data.slice(offset, offset + len)
+      offset += len
+    } else { break }
+  }
+  return fields
 }
 
 // ── button handlers ──────────────────────────────────────────────────────────
@@ -190,8 +321,14 @@ function onScan() {
 }
 
 function onPair() {
-  if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING' || state === 'WAITING_KEYCARD') {
+  if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING') {
     addLog('Busy: ' + state, 0xff8800)
+    return
+  }
+
+  // Second press after sending pair TX: verify enrollment via whitelist query
+  if (state === 'WAITING_KEYCARD') {
+    doVerify()
     return
   }
 
@@ -212,6 +349,11 @@ function onPair() {
   addLog('Connecting to:', 0xcccccc)
   addLog(mac.slice(-17), 0xcccccc)
 
+  // Delay before connect so ZeppOS BLE stack can recover after a previous attempt
+  setTimeout(function() { doConnect(mac) }, 500)
+}
+
+function doConnect(mac) {
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
       state = 'IDLE'
@@ -315,8 +457,27 @@ Page(BasePage({
       click_func: onClear,
     })
 
+    teslaBleApi.onDisconnect = function() {
+      if (state === 'WAITING_KEYCARD' || state === 'PAIRING') {
+        state = 'IDLE'
+        updateStatus('DISCONNECTED', 0xff4444)
+        addLog('BLE dropped - reconnect', 0xff8800)
+      }
+    }
+
     updateDeviceInfo()
     if (teslaBleApi.isConnected()) updateStatus('CONNECTED', 0x00cc44)
     addLog('BLE debug ready', 0xcccccc)
+    keepScreenOn(true, 600000)
+  },
+
+  onDestroy() {
+    keepScreenOn(false)
+    teslaBleApi.disconnect()
+  },
+
+  onHide() {
+    keepScreenOn(false)
+    teslaBleApi.disconnect()
   }
 }))

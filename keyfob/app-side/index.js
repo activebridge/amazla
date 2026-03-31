@@ -74,6 +74,16 @@ const actions = {
     return result
   },
 
+  // Verify pairing: query car's VCSEC whitelist for our public key.
+  // Car responds: FromVCSECMessage { whitelistEntryInfo } if enrolled,
+  //              FromVCSECMessage { commandStatus { ERROR } } if not.
+  BLE_VERIFY_PAIR: async ({ publicKeyHex }) => {
+    console.log('[BLE] Building whitelist query...')
+    const result = bleCrypto.buildWhitelistQueryMessage(publicKeyHex)
+    console.log('[BLE] Whitelist query built, hex length:', result.messageHex?.length || 0)
+    return result
+  },
+
   // Session: process Tesla's response and derive session key via ECDH
   BLE_SESSION_RESPONSE: async ({ responseHex }) => {
     console.log('[BLE] Processing session response...')

@@ -360,6 +360,7 @@ function ecdh(privateKeyBytes, publicKeyBytes) {
 // ============================================
 
 const DOMAIN_VEHICLE_SECURITY = 2
+const DOMAIN_INFOTAINMENT = 3
 const SIGNATURE_TYPE_PRESENT_KEY = 2
 const SIGNATURE_TYPE_HMAC = 5
 
@@ -418,6 +419,7 @@ function buildPublicKey(publicKeyBytes) {
 
 // Key form factors from vcsec.proto
 const KEY_FORM_FACTOR_ANDROID_DEVICE = 7
+const KEY_FORM_FACTOR_CLOUD_KEY = 9
 
 function buildKeyMetadata(keyFormFactor) {
   // KeyMetadata { keyFormFactor (field 1) = enum }
@@ -445,25 +447,26 @@ function buildUnsignedMessageWithWhitelist(whitelistOp) {
 
 function buildUnsignedMessage(options) {
   // UnsignedMessage field numbers from vcsec.proto:
-  // 1: InformationRequest
-  // 2: RKEAction
-  // 4: closureMoveRequest
+  // 1: RKEAction_E (enum)
+  // 2: closureMoveRequest
+  // 3: vehicleSecurityCommandMessage
+  // 4: informationRequest
   // 16: WhitelistOperation
   const parts = []
   if (options.rkeAction !== undefined) {
-    parts.push(encodeEnum(2, options.rkeAction))  // RKEAction is field 2
+    parts.push(encodeEnum(1, options.rkeAction))  // RKEAction is field 1
   }
   return concat(...parts)
 }
 
 function buildSignedMessage(options) {
   const parts = []
-  if (options.payload) parts.push(encodeBytes(1, options.payload))
-  if (options.signatureType !== undefined) parts.push(encodeEnum(2, options.signatureType))
+  if (options.payload) parts.push(encodeBytes(2, options.payload))
+  if (options.signatureType !== undefined) parts.push(encodeEnum(3, options.signatureType))
+  if (options.counter !== undefined) parts.push(encodeVarintField(4, options.counter))  // field 4
   if (options.signature) parts.push(encodeBytes(5, options.signature))
-  if (options.counter !== undefined) parts.push(encodeVarintField(8, options.counter))
-  if (options.epoch) parts.push(encodeBytes(9, options.epoch))
-  if (options.expiresAt !== undefined) parts.push(encodeVarintField(10, options.expiresAt))
+  if (options.epoch) parts.push(encodeBytes(6, options.epoch))              // field 6
+  if (options.expiresAt !== undefined) parts.push(encodeVarintField(7, options.expiresAt)) // field 7
   return concat(...parts)
 }
 
@@ -520,6 +523,28 @@ class BLECryptoSession {
       messageHex: bytesToHex(message),
       ephemeralPublicKeyHex: bytesToHex(this.ephemeralPublicKey),
       routingAddressHex: bytesToHex(this.routingAddress)
+    }
+  }
+
+  // Build verification message: SessionInfoRequest to DOMAIN_INFOTAINMENT.
+  // Mirrors Go SDK's RequestSessionInfo: sends the ENROLLED public key (not ephemeral),
+  // no FromDestination, no uuid, no challenge — exactly as dispatcher.SessionInfoRequest does.
+  // Car responds with SessionInfo (field 15) if key is enrolled, error (field 12) if not.
+  buildVerifyMessage(enrolledPublicKeyHex) {
+    const enrolledPublicKey = hexToBytes(enrolledPublicKeyHex)
+
+    // Only PublicKey field — no challenge (Go SDK omits it)
+    const sessionInfoRequest = buildSessionInfoRequest(enrolledPublicKey)
+
+    // Only ToDestination — Go SDK sends no FromDestination, no uuid
+    const message = buildRoutableMessage({
+      toDomain: DOMAIN_INFOTAINMENT,
+      sessionInfoRequest: sessionInfoRequest,
+    })
+
+    return {
+      success: true,
+      messageHex: bytesToHex(message)
     }
   }
 
@@ -651,18 +676,27 @@ class BLECryptoSession {
     // Build PublicKey message: { PublicKeyRaw (field 1) = bytes }
     const publicKeyMsg = buildPublicKey(publicKeyBytes)
 
-    // Build WhitelistOperation: { addPublicKeyToWhitelist (field 1) = PublicKey,
-    //                              metadataForKey (field 16) = KeyMetadata }
+    // Build PermissionChange: { key (field 1) = PublicKey, keyRole (field 4) = ROLE_OWNER (2) }
+    // keys.proto: ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3 — DO NOT CHANGE, verified from keys.proto
+    const permissionChange = concat(
+      encodeBytes(1, publicKeyMsg),
+      encodeEnum(4, 2)  // keyRole = ROLE_OWNER = 2
+    )
+
+    // Build WhitelistOperation (from vcsec.proto):
+    //   addKeyToWhitelistAndAddPermissions (field 5) = PermissionChange
+    //   metadataForKey (field 6) = KeyMetadata
+    // NOTE: field 16 in WhitelistOperation is removeAllImpermanentKeys (bool), NOT metadataForKey
     const metadata = buildKeyMetadata(KEY_FORM_FACTOR_ANDROID_DEVICE)
     const whitelistOp = concat(
-      encodeBytes(1, publicKeyMsg),
-      encodeBytes(16, metadata)
+      encodeBytes(5, permissionChange),  // addKeyToWhitelistAndAddPermissions
+      encodeBytes(6, metadata)           // metadataForKey = field 6 (VERIFIED from vcsec.proto, DO NOT CHANGE TO 16)
     )
 
     // Build UnsignedMessage: { WhitelistOperation (field 16) = whitelistOp }
     const unsignedMessage = encodeBytes(16, whitelistOp)
 
-    // Wrap in SignedMessage: { protobufMessageAsBytes (field 1), signatureType (field 2) = PRESENT_KEY }
+    // Wrap in SignedMessage: { protobufMessageAsBytes (field 2), signatureType (field 3) = PRESENT_KEY }
     const signedMsg = buildSignedMessage({
       payload: unsignedMessage,
       signatureType: SIGNATURE_TYPE_PRESENT_KEY
@@ -675,6 +709,36 @@ class BLECryptoSession {
     return {
       success: true,
       messageHex: bytesToHex(message)
+    }
+  }
+
+  // Build whitelist entry query: asks car if our public key is enrolled.
+  // UnsignedMessage (field 1 = informationRequest) { type=GET_WHITELIST_ENTRY_INFO(6), publicKey }
+  // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,
+  //               FromVCSECMessage { commandStatus (field 4) } if not enrolled.
+  buildWhitelistQueryMessage(publicKeyHex) {
+    const publicKeyBytes = hexToBytes(publicKeyHex)
+
+    // InformationRequest { informationRequestType (field 1) = 6, publicKey (field 3) = raw bytes }
+    // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE, verified from vcsec.proto InformationRequestType enum
+    // publicKey in InformationRequest is raw bytes, not a PublicKey sub-message
+    const infoReq = concat(
+      encodeEnum(1, 6),               // GET_WHITELIST_ENTRY_INFO = 6
+      encodeBytes(3, publicKeyBytes)  // raw public key bytes
+    )
+
+    // UnsignedMessage { InformationRequest (field 1) = infoReq }
+    // field 1 = InformationRequest — DO NOT CHANGE TO 4 (field 4 = closureMoveRequest)
+    const unsignedMessage = encodeBytes(1, infoReq)
+
+    const signedMsg = buildSignedMessage({
+      payload: unsignedMessage,
+      signatureType: SIGNATURE_TYPE_PRESENT_KEY
+    })
+
+    return {
+      success: true,
+      messageHex: bytesToHex(buildToVCSECMessage(signedMsg))
     }
   }
 

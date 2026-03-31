@@ -5,13 +5,18 @@ import {
   RKE_ACTION_LOCK,
   RKE_ACTION_OPEN_TRUNK,
   KEY_ROLE_OWNER,
+  KEY_ROLE_DRIVER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,
+  INFO_REQUEST_GET_STATUS,
+  INFO_REQUEST_GET_WHITELIST_INFO,
+  INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   OPERATIONSTATUS_OK,
   OPERATIONSTATUS_WAIT,
   OPERATIONSTATUS_ERROR,
   buildRoutableMessage,
   buildSessionInfoRequest,
   buildUnsignedMessage,
+  buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
   buildKeyToAdd,
@@ -40,7 +45,20 @@ describe('VCSEC Protocol', () => {
     })
 
     test('key role constants are defined', () => {
-      expect(KEY_ROLE_OWNER).toBe(0)
+      expect(KEY_ROLE_OWNER).toBe(2)   // keys.proto: ROLE_SERVICE=1, ROLE_OWNER=2 — DO NOT CHANGE
+      expect(KEY_ROLE_DRIVER).toBe(3)  // keys.proto: ROLE_DRIVER=3 — DO NOT CHANGE
+    })
+
+    test('information request type constants are defined', () => {
+      // vcsec.proto InformationRequestType enum — DO NOT CHANGE
+      expect(INFO_REQUEST_GET_STATUS).toBe(0)
+      expect(INFO_REQUEST_GET_WHITELIST_INFO).toBe(5)
+      expect(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO).toBe(6)
+    })
+
+    test('key form factor constants are defined', () => {
+      // vcsec.proto KeyFormFactor enum — DO NOT CHANGE
+      expect(KEY_FORM_FACTOR_ANDROID_DEVICE).toBe(7)
     })
   })
 
@@ -94,13 +112,49 @@ describe('VCSEC Protocol', () => {
     })
   })
 
+  describe('buildInformationRequest', () => {
+    test('builds request with type only', () => {
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_INFO)
+      const decoded = decodeMessage(req)
+
+      expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_INFO) // informationRequestType field 1
+      expect(decoded[3]).toBeUndefined() // no publicKey
+    })
+
+    test('builds GET_WHITELIST_ENTRY_INFO request with publicKey', () => {
+      const publicKey = new Uint8Array(65).fill(0xab)
+      publicKey[0] = 0x04
+
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, publicKey)
+      const decoded = decodeMessage(req)
+
+      // vcsec.proto InformationRequest: informationRequestType=1, keyId=2, publicKey=3
+      expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO) // type = 6
+      expect(decoded[2]).toBeUndefined() // no keyId
+      expect(decoded[3].length).toBe(65) // publicKey at field 3
+    })
+
+    test('builds request with all fields', () => {
+      const keyId = new Uint8Array(20).fill(0x11)
+      const publicKey = new Uint8Array(65)
+      publicKey[0] = 0x04
+
+      const req = buildInformationRequest(INFO_REQUEST_GET_STATUS, keyId, publicKey)
+      const decoded = decodeMessage(req)
+
+      expect(decoded[1]).toBe(INFO_REQUEST_GET_STATUS)
+      expect(decoded[2].length).toBe(20) // keyId at field 2
+      expect(decoded[3].length).toBe(65) // publicKey at field 3
+    })
+  })
+
   describe('buildUnsignedMessage', () => {
     test('builds unlock message', () => {
       const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_UNLOCK })
       expect(message).toBeInstanceOf(Uint8Array)
 
       const decoded = decodeMessage(message)
-      // RKE action is now field 2 (not field 1)
+      // RKEAction is field 2 in UnsignedMessage — DO NOT CHANGE TO 1
       expect(decoded[2]).toBe(RKE_ACTION_UNLOCK)
     })
 
@@ -116,6 +170,20 @@ describe('VCSEC Protocol', () => {
 
       const decoded = decodeMessage(message)
       expect(decoded[2]).toBe(RKE_ACTION_OPEN_TRUNK)
+    })
+
+    test('builds informationRequest message at field 1', () => {
+      const infoReq = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
+      const message = buildUnsignedMessage({ informationRequest: infoReq })
+
+      const decoded = decodeMessage(message)
+      // InformationRequest is field 1 in UnsignedMessage — DO NOT CHANGE TO 4
+      expect(decoded[1]).toBeDefined()
+      expect(decoded[2]).toBeUndefined() // no rkeAction
+
+      // Verify the informationRequest type is preserved inside
+      const infoDecoded = decodeMessage(decoded[1])
+      expect(infoDecoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
     })
   })
 
@@ -137,12 +205,13 @@ describe('VCSEC Protocol', () => {
       expect(message).toBeInstanceOf(Uint8Array)
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBeDefined() // payload
-      expect(decoded[2]).toBe(SIGNATURE_TYPE_HMAC) // signatureType
-      expect(decoded[5]).toBeDefined() // signature
-      expect(decoded[8]).toBe(1) // counter
-      expect(decoded[9]).toBeDefined() // epoch
-      expect(decoded[10]).toBe(1234567890) // expiresAt
+      // vcsec.proto: protobufMessageAsBytes=2, signatureType=3
+      expect(decoded[2]).toBeDefined() // payload (field 2)
+      expect(decoded[3]).toBe(SIGNATURE_TYPE_HMAC) // signatureType (field 3)
+      expect(decoded[4]).toBe(1) // counter (field 4)
+      expect(decoded[5]).toBeDefined() // signature (field 5)
+      expect(decoded[6]).toBeDefined() // epoch (field 6)
+      expect(decoded[7]).toBe(1234567890) // expiresAt (field 7)
     })
 
     test('builds message without optional fields', () => {
@@ -151,9 +220,9 @@ describe('VCSEC Protocol', () => {
       const message = buildSignedMessage({ payload })
 
       const decoded = decodeMessage(message)
-      expect(decoded[1]).toBeDefined()
-      expect(decoded[2]).toBeUndefined()
-      expect(decoded[5]).toBeUndefined()
+      expect(decoded[2]).toBeDefined()  // payload at field 2
+      expect(decoded[3]).toBeUndefined() // signatureType absent
+      expect(decoded[5]).toBeUndefined() // signature absent
     })
   })
 
@@ -195,13 +264,15 @@ describe('VCSEC Protocol', () => {
   })
 
   describe('buildWhitelistOperation', () => {
-    test('wraps key in whitelist operation with metadata', () => {
+    test('wraps key using addKeyToWhitelistAndAddPermissions with metadata', () => {
       const keyToAdd = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
       const operation = buildWhitelistOperation(keyToAdd)
 
       const decoded = decodeMessage(operation)
-      expect(decoded[1]).toBeDefined() // addPublicKeyToWhitelist
-      expect(decoded[16]).toBeDefined() // metadataForKey with keyFormFactor
+      // vcsec.proto: addKeyToWhitelistAndAddPermissions = field 5, metadataForKey = field 6
+      expect(decoded[5]).toBeDefined()   // addKeyToWhitelistAndAddPermissions (PermissionChange)
+      expect(decoded[6]).toBeDefined()   // metadataForKey (field 6)
+      expect(decoded[16]).toBeUndefined() // field 16 = removeAllImpermanentKeys (bool), must be absent
     })
 
     test('includes KeyMetadata with keyFormFactor', () => {
@@ -209,8 +280,8 @@ describe('VCSEC Protocol', () => {
       const operation = buildWhitelistOperation(keyToAdd, KEY_FORM_FACTOR_ANDROID_DEVICE)
 
       const decoded = decodeMessage(operation)
-      // metadataForKey field 16 should contain KeyMetadata
-      const metadata = decodeMessage(decoded[16])
+      // metadataForKey is field 6
+      const metadata = decodeMessage(decoded[6])
       expect(metadata[1]).toBe(KEY_FORM_FACTOR_ANDROID_DEVICE) // keyFormFactor is field 1
     })
   })
@@ -408,10 +479,185 @@ describe('VCSEC Protocol', () => {
       expect(parsed.status).toBe('error')
     })
 
+    test('f3B with signerOfOperation (field 2 bytes) is a valid success — signerOfOperation is per vcsec.proto', async () => {
+      const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // WhitelistOperation_status.signerOfOperation is field 2 (KeyIdentifier = bytes).
+      // Per vcsec.proto this is a real field. field 1 absent = NONE = success.
+      // This matches the actual response seen on device after auto-approval by an existing key.
+      const sha1 = new Uint8Array(20).fill(0xab)
+      const keyIdentifier = encodeBytes(1, sha1)         // KeyIdentifier { publicKeySHA1 }
+      const wlOpStatus = encodeBytes(2, keyIdentifier)   // WhitelistOperation_status { signerOfOperation }
+      const msg = encodeBytes(3, wlOpStatus)             // CommandStatus { whitelistOperationStatus }
+
+      const parsed = parsePairingResponse(msg)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('ok')
+      expect(parsed.dbg.path).toBe('f3B')
+      expect(parsed.dbg.wlFault).toBe(0)
+      expect(parsed.dbg.signer).toBeInstanceOf(Uint8Array)
+    })
+
     test('handles empty response', () => {
       const parsed = parsePairingResponse(new Uint8Array(0))
       expect(parsed.success).toBe(false)
-      expect(parsed.error).toBe('No command status in response')
+      expect(parsed.error).toContain('command status')
+    })
+
+    // Real Tesla format: FromVCSECMessage wrapped in RoutableMessage (field 10)
+    test('parses wait response wrapped in RoutableMessage', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
+      const fromVcsec = encodeBytes(4, commandStatus)
+      const routable = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routable)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('wait')
+      expect(parsed.dbg.wrapped).toBe(true)
+    })
+
+    test('parses ok response wrapped in RoutableMessage', async () => {
+      const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const whitelistOpStatus = new Uint8Array([0x12, 0x02, 0x08, 0x00])
+      const commandStatus = encodeBytes(3, whitelistOpStatus)
+      const fromVcsec = encodeBytes(4, commandStatus)
+      const routable = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routable)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('ok')
+      expect(parsed.dbg.wrapped).toBe(true)
+    })
+
+    test('parses error response wrapped in RoutableMessage', async () => {
+      const { concat, encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = concat(
+        encodeEnum(1, OPERATIONSTATUS_ERROR),
+        encodeEnum(3, 10)
+      )
+      const fromVcsec = encodeBytes(4, commandStatus)
+      const routable = encodeBytes(10, fromVcsec)
+
+      const parsed = parsePairingResponse(routable)
+      expect(parsed.success).toBe(false)
+      expect(parsed.status).toBe('error')
+      expect(parsed.dbg.wrapped).toBe(true)
+    })
+
+    test('returns error on f12 signedMessageStatus fault (MESSAGEFAULT_ERROR_DECODING=10)', async () => {
+      const { concat, encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // RoutableMessage field 12 = signedMessageStatus { field 2 = signed_message_fault = 10 }
+      const signedMessageStatus = concat(
+        encodeEnum(1, 0),   // operation_status = OK
+        encodeEnum(2, 10)   // signed_message_fault = DECODING error
+      )
+      const routable = encodeBytes(12, signedMessageStatus)
+
+      const parsed = parsePairingResponse(routable)
+      expect(parsed.success).toBe(false)
+      expect(parsed.status).toBe('error')
+      expect(parsed.dbg.f12fault).toBe(10)
+    })
+
+    test('dbg object is always populated', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.dbg).toBeDefined()
+      expect(typeof parsed.dbg.rxLen).toBe('number')
+      expect(typeof parsed.dbg.wrapped).toBe('boolean')
+      expect(parsed.dbg.outerKeys).toBeDefined()
+    })
+
+    test('dbg.rxLen is 0 for empty response', () => {
+      const parsed = parsePairingResponse(new Uint8Array(0))
+      expect(parsed.dbg).toBeDefined()
+      expect(parsed.dbg.rxLen).toBe(0)
+    })
+
+    test('dbg.wrapped is false for unwrapped FromVCSECMessage', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.dbg.wrapped).toBe(false)
+    })
+
+    test('wlInfo=25 (tap timeout) returns error', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // CommandStatus { field 3 (bytes) = WhitelistOperation_status { field 1 = 25 } }
+      // 25 = NOT_ALLOWED_TO_ADD_UNLESS_RECENTLY_BEEN_ON_READER (tap timeout)
+      const wlStatus = encodeEnum(1, 25)
+      const commandStatus = encodeBytes(3, wlStatus)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.success).toBe(false)
+      expect(parsed.status).toBe('error')
+      expect(parsed.dbg.wlFault).toBe(25)
+    })
+
+    test('wlInfo=5 (no permission) returns error', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      const wlStatus = encodeEnum(1, 5)
+      const commandStatus = encodeBytes(3, wlStatus)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.success).toBe(false)
+      expect(parsed.status).toBe('error')
+      expect(parsed.dbg.wlFault).toBe(5)
+    })
+
+    test('wlInfo=14 in f4 path returns wait (tap required)', async () => {
+      const { encodeBytes, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // 14 = NOT_ALLOWED_TO_ADD_UNLESS_ON_READER
+      const wlStatus = encodeEnum(1, 14)
+      const commandStatus = encodeBytes(3, wlStatus)
+      const fromVcsec = encodeBytes(4, commandStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('wait')
+    })
+
+    test('f1N path: direct varint operationStatus=WAIT without outer wrapper', async () => {
+      const { encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // Some firmware sends CommandStatus directly (not in field 4 of FromVCSECMessage)
+      // field 1 (varint) = OPERATIONSTATUS_WAIT
+      const direct = encodeEnum(1, OPERATIONSTATUS_WAIT)
+
+      const parsed = parsePairingResponse(direct)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('wait')
+      expect(parsed.dbg.path).toBe('f1N')
+    })
+
+    test('f1B path: field 1 as bytes = vehicleStatus push returns pending', async () => {
+      const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // FromVCSECMessage { vehicleStatus (field 1 bytes) } — unsolicited push
+      const vehicleStatus = new Uint8Array([0x08, 0x01]) // some status payload
+      const fromVcsec = encodeBytes(1, vehicleStatus)
+
+      const parsed = parsePairingResponse(fromVcsec)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('pending')
+      expect(parsed.dbg.path).toBe('f1B')
     })
   })
 })

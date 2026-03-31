@@ -67,6 +67,11 @@ class TeslaBleApi {
     teslaBLE.disconnect()
   }
 
+  // Set disconnect callback (fires when Tesla drops BLE connection)
+  set onDisconnect(fn) {
+    teslaBLE.onDisconnect = fn
+  }
+
   // Check connection status
   isConnected() {
     return teslaBLE.isConnected()

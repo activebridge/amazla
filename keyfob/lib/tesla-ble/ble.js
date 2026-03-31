@@ -8,6 +8,10 @@ const TESLA_SERVICE_UUID = "00000211-b2d1-43f0-9b88-960cebf8b91e"
 const TESLA_WRITE_UUID = "00000212-b2d1-43f0-9b88-960cebf8b91e"
 const TESLA_READ_UUID = "00000213-b2d1-43f0-9b88-960cebf8b91e"
 
+// BLE ATT payload size (MTU 23 - 3 ATT header = 20 bytes)
+// Tesla's vehicle-command sends in 20-byte chunks with Write Without Response
+const BLE_CHUNK_SIZE = 20
+
 // Tesla BLE device name pattern: S + SHA1(VIN)[:8].hex + C
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 
@@ -19,11 +23,14 @@ class TeslaBLE {
     this.mac = null
     this.profile = null
     this.responseCallback = null
+    this.onDisconnect = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
     this.charaNotificationHandler = null
     this._lastResponseData = null  // dedup: ignore duplicate data within 200ms
     this._lastResponseTime = 0
+    this._rxBuf = null             // reassembly buffer for chunked responses
+    this._rxExpected = 0
 
     // Tesla service profile for easy-ble
     // Write characteristic: no descriptor needed
@@ -49,7 +56,7 @@ class TeslaBLE {
     if (this.ble) {
       try {
         if (this.writeCompleteHandler) {
-          this.ble.off?.charaWriteComplete?.(this.writeCompleteHandler)
+          this.ble.off?.descWriteComplete?.()
           this.writeCompleteHandler = null
         }
         if (this.charaValueHandler) {
@@ -166,7 +173,14 @@ class TeslaBLE {
 
     this._ensureBLE().connect(mac, (result) => {
       console.log('[BLE] Connect result:', JSON.stringify(result))
-      if (callbackCalled) return
+      if (callbackCalled) {
+        // Post-connection callback = disconnect event from EasyBle
+        if (!result.connected) {
+          this.connected = false
+          if (this.onDisconnect) this.onDisconnect()
+        }
+        return
+      }
 
       if (result.connected) {
         // Guard against duplicate connected callbacks
@@ -194,9 +208,14 @@ class TeslaBLE {
             return
           }
 
-          // Generate profile and start listener
+          // Generate profile and start listener.
+          // Write char: 0x04 = WRITE_WITHOUT_RESPONSE (Tesla TX char only supports WOR)
+          // Read char:  0x20 = INDICATE (CCCD=0x0002, Tesla sends indications not notifications)
           console.log('[BLE] Generating profile...')
-          this.profile = this._ensureBLE().generateProfileObject(this.services)
+          this.profile = this._ensureBLE().generateProfileObject(this.services, {
+            [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
+            [TESLA_READ_UUID]:  { value: 0x20 },  // INDICATE
+          })
           console.log('[BLE] Starting listener...')
 
           this._ensureBLE().startListener(this.profile, (response) => {
@@ -224,6 +243,13 @@ class TeslaBLE {
               }
             }
             this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+
+            // Register descWriteComplete so the QueueManager detects the CCCD write ACK
+            // immediately (~50-200ms) instead of timing out after 5 seconds.
+            this.writeCompleteHandler = (chara, desc, status) => {
+              console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
+            }
+            this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
 
             // Write CCCD with INDICATE value (0x0002, little-endian "0200")
             // enableCharaNotifications writes "0100" (NOTIFY=0x0001) which Tesla ignores
@@ -274,7 +300,7 @@ class TeslaBLE {
     // Clean up handlers to prevent memory leaks
     if (this.ble) {
       if (this.writeCompleteHandler) {
-        this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+        this._ensureBLE().off.descWriteComplete()
         this.writeCompleteHandler = null
       }
       if (this.charaValueHandler) {
@@ -294,6 +320,8 @@ class TeslaBLE {
     this.mac = null
     this.profile = null
     this.responseCallback = null
+    this._rxBuf = null
+    this._rxExpected = 0
   }
 
   // Send command to vehicle (with 2-byte length prefix)
@@ -314,49 +342,37 @@ class TeslaBLE {
       return
     }
 
-    // Store callback for response
     this.responseCallback = callback
 
     // Add 2-byte big-endian length prefix (Tesla protocol requirement)
     const length = data.length
     const message = new Uint8Array(2 + length)
-    message[0] = (length >> 8) & 0xFF  // High byte
-    message[1] = length & 0xFF          // Low byte
+    message[0] = (length >> 8) & 0xFF
+    message[1] = length & 0xFF
     message.set(data, 2)
 
-    console.log('[BLE] Preparing to write', message.length, 'bytes to Tesla')
-    console.log('[BLE] First 20 bytes:', Array.from(message.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' '))
+    const numChunks = Math.ceil(message.length / BLE_CHUNK_SIZE)
+    console.log('[BLE] Sending', message.length, 'bytes in', numChunks, 'chunks')
 
-    // Set up write complete handler - use single handler to prevent memory leak
-    // Remove previous handler before adding new one
-    if (this.writeCompleteHandler) {
-      this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+    for (let i = 0; i < message.length; i += BLE_CHUNK_SIZE) {
+      const chunk = message.slice(i, Math.min(i + BLE_CHUNK_SIZE, message.length))
+      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
     }
+  }
 
-    this.writeCompleteHandler = (uuid, status) => {
-      if (uuid.toUpperCase() === TESLA_WRITE_UUID.toUpperCase()) {
-        console.log('[BLE] Write complete, status:', status)
-        if (status !== 0) {
-          if (this.responseCallback) {
-            this.responseCallback({ success: false, error: `Write failed: ${status}` })
-            this.responseCallback = null
-          }
-        } else {
-          // Write succeeded - for pairing, Tesla responds after keycard tap
-          // Call success immediately so UI can prompt user
-          if (this.responseCallback) {
-            this.responseCallback({ success: true })
-            this.responseCallback = null
-          }
-        }
-      }
+  // Register a callback to receive the next BLE indication without sending anything.
+  // Used after an initial sendAndWaitForResponse returns 'wait' (e.g. wlInfo=14 = tap NFC),
+  // to wait for the car's second notification once the user taps the NFC card.
+  waitForNextResponse(timeout, callback) {
+    const responseTimeout = setTimeout(() => {
+      this.responseCallback = null
+      callback({ success: false, error: 'NFC tap timeout' })
+    }, timeout)
+
+    this.responseCallback = (result) => {
+      clearTimeout(responseTimeout)
+      callback(result)
     }
-
-    this._ensureBLE().on.charaWriteComplete(this.writeCompleteHandler)
-
-    // Write to Tesla write characteristic
-    console.log('[BLE] Writing to characteristic...')
-    this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer)
   }
 
   // Send command and wait for Tesla's response via BLE notification
@@ -383,7 +399,11 @@ class TeslaBLE {
       callback({ success: false, error: 'Response timeout' })
     }, timeout)
 
-    // Store callback that will be triggered when data arrives
+    // Reset reassembly buffer in case a prior operation left partial data
+    this._rxBuf = null
+    this._rxExpected = 0
+
+    // Store callback that will be triggered when data arrives via BLE indication
     this.responseCallback = (result) => {
       clearTimeout(responseTimeout)
       callback(result)
@@ -396,62 +416,77 @@ class TeslaBLE {
     message[1] = length & 0xFF
     message.set(data, 2)
 
-    console.log('[BLE] Sending', message.length, 'bytes and waiting for response')
+    // Split into BLE_CHUNK_SIZE chunks and send with Write Without Response.
+    // This matches Tesla's vehicle-command Go implementation which uses
+    // WriteWithoutResponse in 20-byte chunks — the car reassembles via the
+    // 2-byte length prefix in the first chunk.
+    const numChunks = Math.ceil(message.length / BLE_CHUNK_SIZE)
+    console.log('[BLE] Sending', message.length, 'bytes in', numChunks, 'chunks')
 
-    // Set up write complete handler
-    if (this.writeCompleteHandler) {
-      this._ensureBLE().off.charaWriteComplete(this.writeCompleteHandler)
+    for (let i = 0; i < message.length; i += BLE_CHUNK_SIZE) {
+      const chunk = message.slice(i, Math.min(i + BLE_CHUNK_SIZE, message.length))
+      // write_without_response=true: Tesla TX characteristic (0212) only supports
+      // Write Without Response (GATT property 0x04). Write Requests (0x08) are
+      // rejected by the car's ATT layer with "Request Not Supported" and never
+      // reach the VCSEC service. Must use Write Without Response.
+      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
     }
-
-    this.writeCompleteHandler = (uuid, status) => {
-      if (uuid.toUpperCase() === TESLA_WRITE_UUID.toUpperCase()) {
-        console.log('[BLE] Write complete, status:', status, '- waiting for response...')
-        if (status !== 0) {
-          clearTimeout(responseTimeout)
-          this.responseCallback = null
-          callback({ success: false, error: `Write failed: ${status}` })
-        }
-        // On success, don't call callback - wait for response via _handleResponse
-      }
-    }
-
-    this._ensureBLE().on.charaWriteComplete(this.writeCompleteHandler)
-    this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer)
+    // Tesla will reassemble chunks and respond via BLE indication → _handleResponse
   }
 
-  // Handle response from vehicle
-  _handleResponse(data, len) {
-    console.log('[BLE] _handleResponse called, have callback:', !!this.responseCallback)
-
+  // Handle response from vehicle — reassembles chunked BLE indications.
+  // Tesla sends responses framed with a 2-byte big-endian length prefix,
+  // then the payload split into MTU-sized chunks (same framing as TX).
+  _handleResponse(data, _len) {
     if (!this.responseCallback) return
 
-    // Dedup: charaValueArrived and charaNotification can both fire for the same packet
+    const chunk = new Uint8Array(data)
+
+    // Dedup: charaValueArrived and charaNotification both fire for the same packet
     const now = Date.now()
-    const view = new Uint8Array(data)
-    const sig = view.length + '_' + (view[0] || 0) + '_' + (view[1] || 0)
+    const sig = chunk.length + '_' + (chunk[0] || 0) + '_' + (chunk[1] || 0)
     if (sig === this._lastResponseData && (now - this._lastResponseTime) < 200) {
-      console.log('[BLE] Duplicate response ignored')
+      console.log('[BLE] Duplicate chunk ignored')
       return
     }
     this._lastResponseData = sig
     this._lastResponseTime = now
 
-    // Capture and clear BEFORE calling — allows callback to set a new responseCallback
-    // (e.g. _waitForPairingConfirmation sets one during the 'wait' response handler)
+    if (this._rxBuf === null) {
+      // First chunk: read 2-byte length prefix
+      if (chunk.length < 2) {
+        const cb = this.responseCallback
+        this.responseCallback = null
+        cb({ success: false, error: 'Response too short' })
+        return
+      }
+      this._rxExpected = (chunk[0] << 8) | chunk[1]
+      this._rxBuf = chunk.slice(2)
+    } else {
+      // Subsequent chunk: append to reassembly buffer
+      const combined = new Uint8Array(this._rxBuf.length + chunk.length)
+      combined.set(this._rxBuf)
+      combined.set(chunk, this._rxBuf.length)
+      this._rxBuf = combined
+    }
+
+    console.log('[BLE] RX buf', this._rxBuf.length, '/', this._rxExpected, 'bytes')
+
+    if (this._rxBuf.length < this._rxExpected) {
+      return  // still waiting for more chunks
+    }
+
+    // Complete message — deliver and reset buffer
+    const payload = this._rxBuf.slice(0, this._rxExpected)
+    this._rxBuf = null
+    this._rxExpected = 0
+
+    // Capture and clear BEFORE calling so callback can set a new responseCallback
+    // (e.g. _waitForPairingConfirmation sets one inside the 'wait' handler)
     const cb = this.responseCallback
     this.responseCallback = null
 
-    // Parse length prefix (view already created above for dedup)
-    if (view.length < 2) {
-      cb({ success: false, error: 'Response too short' })
-      return
-    }
-
-    const messageLength = (view[0] << 8) | view[1]
-    const payload = view.slice(2, 2 + messageLength)
-
-    console.log('[BLE] Got response payload:', messageLength, 'bytes')
-
+    console.log('[BLE] Got complete response:', payload.length, 'bytes')
     cb({ success: true, data: payload })
   }
 

@@ -177,13 +177,15 @@ describe('WhitelistOperation Message Structure', () => {
     expect(fieldKey).toBe(130)
   })
 
-  test('addPublicKeyToWhitelist field key is correct', () => {
-    // addPublicKeyToWhitelist is field 1 in WhitelistOperation, wire type 2
-    const fieldNumber = 1
+  test('addKeyToWhitelistAndAddPermissions field key is correct', () => {
+    // addKeyToWhitelistAndAddPermissions is field 5 in WhitelistOperation, wire type 2
+    // (field 1 = addPublicKeyToWhitelist is deprecated/unused)
+    const fieldNumber = 5
     const wireType = 2
     const fieldKey = (fieldNumber << 3) | wireType
 
-    expect(fieldKey).toBe(0x0A)
+    // 5 << 3 = 40, + 2 = 42 = 0x2A
+    expect(fieldKey).toBe(0x2A)
   })
 
   test('PublicKeyRaw field key is correct', () => {
