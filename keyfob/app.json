@@ -30,7 +30,6 @@
         "page": {
           "pages": [
             "page/index",
-            "page/crypto/index",
             "page/ble/index"
           ]
         },
