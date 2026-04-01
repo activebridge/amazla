@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-snap-type: y mandatory;
+    scroll-padding-top: 4rem; /* fixed header h-16 */
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+      scroll-snap-type: none;
+    }
+    .motion-reduce\:animate-none {
+      animation: none !important;
+    }
+  }
+}
+
+main > section {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
+[data-tilt],
+[data-tilt-subtle] {
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+
+/* Logo key: initial state (no animation until .hero-logo-animate is set by JS) */
+#hero-logo-key .logo-key-rotate {
+  transform-origin: 200px 180px;
+  transform: rotate(0deg);
+}
+#hero-logo-key .logo-key-slide {
+  transform: translateX(0);
+}
+.hero-text-logo,
+.hero-reveal-after {
+  opacity: 0;
+}
+
+/* When hero is in view: rotate 90° with slight overshoot, pause, then slide left; text fades in with subtle rise */
+.hero-logo-animate #hero-logo-key .logo-key-rotate {
+  animation: logo-key-rotate 2.5s 0.4s cubic-bezier(0.34, 1.2, 0.64, 1) forwards;
+}
+@keyframes logo-key-rotate {
+  0%   { transform: rotate(0deg); }
+  28%  { transform: rotate(85deg); }
+  34%  { transform: rotate(93deg); }
+  38%  { transform: rotate(90deg); }
+  100% { transform: rotate(90deg); }
+}
+
+.hero-logo-animate #hero-logo-key .logo-key-slide {
+  animation: logo-key-slide 2.5s 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes logo-key-slide {
+  0%   { transform: translateX(0); }
+  40%  { transform: translateX(0); }
+  100% { transform: translateX(-250px); }
+}
+
+.hero-logo-animate .hero-text-logo,
+.hero-logo-animate .hero-reveal-after {
+  animation: hero-text-logo-in 1s 1.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes hero-text-logo-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-logo-animate #hero-logo-key .logo-key-rotate {
+    animation: none;
+    transform: rotate(90deg);
+  }
+  .hero-logo-animate #hero-logo-key .logo-key-slide {
+    animation: none;
+    transform: translateX(-250px);
+  }
+  .hero-logo-animate .hero-text-logo,
+  .hero-logo-animate .hero-reveal-after {
+    animation: none;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

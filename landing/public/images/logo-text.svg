@@ -1,0 +1,10 @@
+<svg width="320" height="100" viewBox="0 0 320 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <style>
+            .dark-text { fill: #243043; font-family: sans-serif; font-weight: bold; }
+            .gray-text { fill: #64748B; font-family: sans-serif; font-weight: normal; }
+        </style>
+    </defs>
+    <text x="0" y="52" font-size="48" class="dark-text">AMAZL<tspan fill="#E82127">A</tspan></text>
+    <text x="0" y="88" font-size="22" class="gray-text">Amazfit to Tesla Control</text>
+</svg>
