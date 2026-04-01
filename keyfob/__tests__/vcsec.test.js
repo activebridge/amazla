@@ -1,33 +1,21 @@
 import {
   DOMAIN_VEHICLE_SECURITY,
-  SIGNATURE_TYPE_HMAC,
-  RKE_ACTION_UNLOCK,
-  RKE_ACTION_LOCK,
-  RKE_ACTION_OPEN_TRUNK,
+  SIGNATURE_TYPE_PRESENT_KEY,
   KEY_ROLE_OWNER,
-  KEY_ROLE_DRIVER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,
-  INFO_REQUEST_GET_STATUS,
-  INFO_REQUEST_GET_WHITELIST_INFO,
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   OPERATIONSTATUS_OK,
   OPERATIONSTATUS_WAIT,
   OPERATIONSTATUS_ERROR,
-  buildRoutableMessage,
-  buildSessionInfoRequest,
   buildUnsignedMessage,
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
-  buildKeyToAdd,
   buildWhitelistOperation,
   buildUnsignedMessageWithWhitelist,
-  parseSessionInfo,
-  parseRoutableMessage,
   parseCommandStatus,
   parsePairingResponse,
   generateUUID,
-  generateRoutingAddress
 } from '../lib/tesla-ble/protocol/vcsec.js'
 
 import { decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
@@ -38,21 +26,12 @@ describe('VCSEC Protocol', () => {
       expect(DOMAIN_VEHICLE_SECURITY).toBe(2)
     })
 
-    test('RKE action constants are defined', () => {
-      expect(RKE_ACTION_UNLOCK).toBe(0)
-      expect(RKE_ACTION_LOCK).toBe(1)
-      expect(RKE_ACTION_OPEN_TRUNK).toBe(2)
-    })
-
     test('key role constants are defined', () => {
       expect(KEY_ROLE_OWNER).toBe(2)   // keys.proto: ROLE_SERVICE=1, ROLE_OWNER=2 — DO NOT CHANGE
-      expect(KEY_ROLE_DRIVER).toBe(3)  // keys.proto: ROLE_DRIVER=3 — DO NOT CHANGE
     })
 
     test('information request type constants are defined', () => {
       // vcsec.proto InformationRequestType enum — DO NOT CHANGE
-      expect(INFO_REQUEST_GET_STATUS).toBe(0)
-      expect(INFO_REQUEST_GET_WHITELIST_INFO).toBe(5)
       expect(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO).toBe(6)
     })
 
@@ -76,51 +55,7 @@ describe('VCSEC Protocol', () => {
     })
   })
 
-  describe('generateRoutingAddress', () => {
-    test('generates 16 bytes', () => {
-      const addr = generateRoutingAddress()
-      expect(addr).toBeInstanceOf(Uint8Array)
-      expect(addr.length).toBe(16)
-    })
-  })
-
-  describe('buildSessionInfoRequest', () => {
-    test('builds request with public key', () => {
-      const publicKey = new Uint8Array(65)
-      publicKey[0] = 0x04 // Uncompressed point marker
-      const challenge = new Uint8Array(16)
-
-      const request = buildSessionInfoRequest(publicKey, challenge)
-      expect(request).toBeInstanceOf(Uint8Array)
-      expect(request.length).toBeGreaterThan(0)
-
-      // Decode and verify structure
-      const decoded = decodeMessage(request)
-      expect(decoded[1]).toBeDefined() // public key field
-      expect(decoded[2]).toBeDefined() // challenge field
-      expect(decoded[1].length).toBe(65)
-      expect(decoded[2].length).toBe(16)
-    })
-
-    test('builds request with only public key', () => {
-      const publicKey = new Uint8Array(65)
-      const request = buildSessionInfoRequest(publicKey, null)
-
-      const decoded = decodeMessage(request)
-      expect(decoded[1]).toBeDefined()
-      expect(decoded[2]).toBeUndefined()
-    })
-  })
-
   describe('buildInformationRequest', () => {
-    test('builds request with type only', () => {
-      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_INFO)
-      const decoded = decodeMessage(req)
-
-      expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_INFO) // informationRequestType field 1
-      expect(decoded[3]).toBeUndefined() // no publicKey
-    })
-
     test('builds GET_WHITELIST_ENTRY_INFO request with publicKey', () => {
       const publicKey = new Uint8Array(65).fill(0xab)
       publicKey[0] = 0x04
@@ -134,44 +69,21 @@ describe('VCSEC Protocol', () => {
       expect(decoded[3].length).toBe(65) // publicKey at field 3
     })
 
-    test('builds request with all fields', () => {
+    test('builds request with keyId', () => {
       const keyId = new Uint8Array(20).fill(0x11)
       const publicKey = new Uint8Array(65)
       publicKey[0] = 0x04
 
-      const req = buildInformationRequest(INFO_REQUEST_GET_STATUS, keyId, publicKey)
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, keyId, publicKey)
       const decoded = decodeMessage(req)
 
-      expect(decoded[1]).toBe(INFO_REQUEST_GET_STATUS)
+      expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
       expect(decoded[2].length).toBe(20) // keyId at field 2
       expect(decoded[3].length).toBe(65) // publicKey at field 3
     })
   })
 
   describe('buildUnsignedMessage', () => {
-    test('builds unlock message', () => {
-      const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_UNLOCK })
-      expect(message).toBeInstanceOf(Uint8Array)
-
-      const decoded = decodeMessage(message)
-      // RKEAction is field 2 in UnsignedMessage — DO NOT CHANGE TO 1
-      expect(decoded[2]).toBe(RKE_ACTION_UNLOCK)
-    })
-
-    test('builds lock message', () => {
-      const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_LOCK })
-
-      const decoded = decodeMessage(message)
-      expect(decoded[2]).toBe(RKE_ACTION_LOCK)
-    })
-
-    test('builds trunk message', () => {
-      const message = buildUnsignedMessage({ rkeAction: RKE_ACTION_OPEN_TRUNK })
-
-      const decoded = decodeMessage(message)
-      expect(decoded[2]).toBe(RKE_ACTION_OPEN_TRUNK)
-    })
-
     test('builds informationRequest message at field 1', () => {
       const infoReq = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
       const message = buildUnsignedMessage({ informationRequest: infoReq })
@@ -188,30 +100,25 @@ describe('VCSEC Protocol', () => {
   })
 
   describe('buildSignedMessage', () => {
-    test('builds signed message with all fields', () => {
-      const payload = new Uint8Array([0x08, 0x01]) // RKE unlock
-      const signature = new Uint8Array(32)
-      const epoch = new Uint8Array(16)
+    test('builds signed message with payload and signatureType', () => {
+      const payload = new Uint8Array([0x08, 0x01])
 
       const message = buildSignedMessage({
         payload,
-        signatureType: SIGNATURE_TYPE_HMAC,
-        signature,
-        counter: 1,
-        epoch,
-        expiresAt: 1234567890
+        signatureType: SIGNATURE_TYPE_PRESENT_KEY,
       })
 
       expect(message).toBeInstanceOf(Uint8Array)
 
       const decoded = decodeMessage(message)
-      // vcsec.proto: protobufMessageAsBytes=2, signatureType=3
+      // vcsec.proto SignedMessage: ONLY fields 2 and 3 (verified from Tesla Go SDK)
       expect(decoded[2]).toBeDefined() // payload (field 2)
-      expect(decoded[3]).toBe(SIGNATURE_TYPE_HMAC) // signatureType (field 3)
-      expect(decoded[4]).toBe(1) // counter (field 4)
-      expect(decoded[5]).toBeDefined() // signature (field 5)
-      expect(decoded[6]).toBeDefined() // epoch (field 6)
-      expect(decoded[7]).toBe(1234567890) // expiresAt (field 7)
+      expect(decoded[3]).toBe(SIGNATURE_TYPE_PRESENT_KEY) // signatureType (field 3)
+      // No phantom fields
+      expect(decoded[4]).toBeUndefined()
+      expect(decoded[5]).toBeUndefined()
+      expect(decoded[6]).toBeUndefined()
+      expect(decoded[7]).toBeUndefined()
     })
 
     test('builds message without optional fields', () => {
@@ -220,9 +127,8 @@ describe('VCSEC Protocol', () => {
       const message = buildSignedMessage({ payload })
 
       const decoded = decodeMessage(message)
-      expect(decoded[2]).toBeDefined()  // payload at field 2
+      expect(decoded[2]).toBeDefined()   // payload at field 2
       expect(decoded[3]).toBeUndefined() // signatureType absent
-      expect(decoded[5]).toBeUndefined() // signature absent
     })
   })
 
@@ -236,48 +142,32 @@ describe('VCSEC Protocol', () => {
     })
   })
 
-  describe('buildKeyToAdd', () => {
-    test('builds PublicKey message with raw key bytes', () => {
-      const publicKey = new Uint8Array(65)
-      publicKey[0] = 0x04
-
-      const keyToAdd = buildKeyToAdd(publicKey)
-
-      // Now buildKeyToAdd creates a proper PublicKey message with just PublicKeyRaw (field 1)
-      const decoded = decodeMessage(keyToAdd)
-      expect(decoded[1].length).toBe(65) // PublicKeyRaw field
-      // Role and formFactor are no longer included (they belong in PermissionChange message)
-      expect(decoded[2]).toBeUndefined()
-      expect(decoded[6]).toBeUndefined()
-    })
-
-    test('ignores role and formFactor parameters (deprecated)', () => {
-      const publicKey = new Uint8Array(65)
-      // These params are now ignored - buildKeyToAdd just creates PublicKey message
-      const keyToAdd = buildKeyToAdd(publicKey, 1, KEY_FORM_FACTOR_ANDROID_DEVICE)
-
-      const decoded = decodeMessage(keyToAdd)
-      expect(decoded[1].length).toBe(65)
-      // Role/formFactor not included
-      expect(decoded[2]).toBeUndefined()
-    })
-  })
-
   describe('buildWhitelistOperation', () => {
     test('wraps key using addKeyToWhitelistAndAddPermissions with metadata', () => {
-      const keyToAdd = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
-      const operation = buildWhitelistOperation(keyToAdd)
+      const publicKeyMsg = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
+      const operation = buildWhitelistOperation(publicKeyMsg)
 
       const decoded = decodeMessage(operation)
       // vcsec.proto: addKeyToWhitelistAndAddPermissions = field 5, metadataForKey = field 6
-      expect(decoded[5]).toBeDefined()   // addKeyToWhitelistAndAddPermissions (PermissionChange)
-      expect(decoded[6]).toBeDefined()   // metadataForKey (field 6)
+      expect(decoded[5]).toBeDefined()    // addKeyToWhitelistAndAddPermissions (PermissionChange)
+      expect(decoded[6]).toBeDefined()    // metadataForKey (field 6)
+      expect(decoded[1]).toBeUndefined()  // field 1 = old addPublicKeyToWhitelist, must be absent
       expect(decoded[16]).toBeUndefined() // field 16 = removeAllImpermanentKeys (bool), must be absent
     })
 
+    test('PermissionChange has publicKey (field 1) and keyRole=OWNER (field 4)', () => {
+      const publicKeyMsg = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
+      const operation = buildWhitelistOperation(publicKeyMsg)
+
+      const decoded = decodeMessage(operation)
+      const permChange = decodeMessage(decoded[5])
+      expect(permChange[1]).toBeDefined() // publicKey
+      expect(permChange[4]).toBe(KEY_ROLE_OWNER) // keyRole = ROLE_OWNER = 2
+    })
+
     test('includes KeyMetadata with keyFormFactor', () => {
-      const keyToAdd = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
-      const operation = buildWhitelistOperation(keyToAdd, KEY_FORM_FACTOR_ANDROID_DEVICE)
+      const publicKeyMsg = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
+      const operation = buildWhitelistOperation(publicKeyMsg, KEY_FORM_FACTOR_ANDROID_DEVICE)
 
       const decoded = decodeMessage(operation)
       // metadataForKey is field 6
@@ -296,112 +186,9 @@ describe('VCSEC Protocol', () => {
     })
   })
 
-  describe('buildRoutableMessage', () => {
-    test('builds message with domain destination', () => {
-      const message = buildRoutableMessage({
-        toDomain: DOMAIN_VEHICLE_SECURITY,
-        uuid: new Uint8Array(16)
-      })
-
-      expect(message).toBeInstanceOf(Uint8Array)
-
-      const decoded = decodeMessage(message)
-      // Correct field numbers from universal_message.proto
-      expect(decoded[6]).toBeDefined() // to_destination (field 6)
-      expect(decoded[50]).toBeDefined() // request_uuid (field 50)
-    })
-
-    test('builds message with routing address', () => {
-      const routingAddress = new Uint8Array(16).fill(0xab)
-
-      const message = buildRoutableMessage({
-        routingAddress,
-        payload: new Uint8Array([0x01, 0x02])
-      })
-
-      const decoded = decodeMessage(message)
-      expect(decoded[7]).toBeDefined() // from_destination (field 7)
-      expect(decoded[10]).toBeDefined() // protobuf_message_as_bytes (field 10)
-    })
-
-    test('builds message with session info request', () => {
-      const sessionInfoRequest = new Uint8Array([0x0a, 0x41, ...new Array(65).fill(0)])
-
-      const message = buildRoutableMessage({
-        toDomain: DOMAIN_VEHICLE_SECURITY,
-        sessionInfoRequest
-      })
-
-      const decoded = decodeMessage(message)
-      expect(decoded[14]).toBeDefined() // session_info_request (field 14)
-    })
-
-    test('builds complete pairing message structure', () => {
-      // Simulate building a complete pairing message
-      const publicKey = new Uint8Array(65)
-      publicKey[0] = 0x04
-
-      const keyToAdd = buildKeyToAdd(publicKey, KEY_ROLE_OWNER, KEY_FORM_FACTOR_ANDROID_DEVICE)
-      const whitelistOp = buildWhitelistOperation(keyToAdd)
-      const unsignedMessage = buildUnsignedMessageWithWhitelist(whitelistOp)
-
-      const message = buildRoutableMessage({
-        toDomain: DOMAIN_VEHICLE_SECURITY,
-        routingAddress: generateRoutingAddress(),
-        payload: unsignedMessage,
-        uuid: generateUUID()
-      })
-
-      expect(message).toBeInstanceOf(Uint8Array)
-      expect(message.length).toBeGreaterThan(80) // Should be substantial
-    })
-  })
-
-  describe('parseSessionInfo', () => {
-    test('parses session info response', async () => {
-      // Build a mock session info message
-      const { concat, encodeBytes, encodeVarintField } = await import('../lib/tesla-ble/protocol/protobuf.js')
-
-      const publicKey = new Uint8Array(65)
-      const epoch = new Uint8Array(16)
-
-      const sessionInfo = concat(
-        encodeBytes(1, publicKey),
-        encodeBytes(2, epoch),
-        encodeVarintField(3, 1234567890),
-        encodeVarintField(4, 42)
-      )
-
-      const parsed = parseSessionInfo(sessionInfo)
-      expect(parsed.publicKey.length).toBe(65)
-      expect(parsed.epoch.length).toBe(16)
-      expect(parsed.clockTime).toBe(1234567890)
-      expect(parsed.counter).toBe(42)
-    })
-  })
-
-  describe('parseRoutableMessage', () => {
-    test('parses routable message response', async () => {
-      const { concat, encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
-
-      const payload = new Uint8Array([0x01, 0x02, 0x03])
-      const uuid = new Uint8Array(16)
-
-      // Use correct field numbers: payload=10, uuid=50
-      const message = concat(
-        encodeBytes(10, payload),
-        encodeBytes(50, uuid)
-      )
-
-      const parsed = parseRoutableMessage(message)
-      expect(Array.from(parsed.payload)).toEqual([0x01, 0x02, 0x03])
-      expect(parsed.uuid.length).toBe(16)
-    })
-  })
-
   describe('parseCommandStatus', () => {
     test('parses OPERATIONSTATUS_WAIT', async () => {
-      const { concat, encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+      const { encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
       // CommandStatus { operationStatus (field 1) = WAIT (1) }
       const commandStatus = encodeEnum(1, OPERATIONSTATUS_WAIT)

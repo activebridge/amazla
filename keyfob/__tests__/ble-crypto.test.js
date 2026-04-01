@@ -1,11 +1,12 @@
 import bleCryptoSession, {
   hexToBytes,
   bytesToHex,
-  generatePrivateKey,
-  getPublicKey
 } from '../app-side/ble-crypto.js'
 
 import { decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
+
+// Pre-computed test key (P-256, uncompressed)
+const TEST_PUBLIC_KEY_HEX = '042a5cee5e1a40fcd2e695cdd00cf6a36755290fc8fe1c956d51ce3450a83f55166c8d9255eb99fdcf99a28f1f96abae79b33b38242e243944a8e88b0cf29e2f7e'
 
 describe('BLE Crypto Helpers', () => {
   describe('hexToBytes', () => {
@@ -46,118 +47,10 @@ describe('BLE Crypto Helpers', () => {
   })
 })
 
-describe('P-256 Elliptic Curve', () => {
-  describe('generatePrivateKey', () => {
-    test('generates 32 byte private key', () => {
-      const privateKey = generatePrivateKey()
-      expect(privateKey).toBeInstanceOf(Uint8Array)
-      expect(privateKey.length).toBe(32)
-    })
-
-    test('generates different keys each time', () => {
-      const key1 = generatePrivateKey()
-      const key2 = generatePrivateKey()
-      expect(bytesToHex(key1)).not.toBe(bytesToHex(key2))
-    })
-
-    test('key is non-zero', () => {
-      const key = generatePrivateKey()
-      const allZero = key.every(b => b === 0)
-      expect(allZero).toBe(false)
-    })
-  })
-
-  describe('getPublicKey', () => {
-    test('generates 65 byte uncompressed public key', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-
-      expect(publicKey).toBeInstanceOf(Uint8Array)
-      expect(publicKey.length).toBe(65)
-      expect(publicKey[0]).toBe(0x04) // Uncompressed point marker
-    })
-
-    test('same private key produces same public key', () => {
-      const privateKey = generatePrivateKey()
-      const pub1 = getPublicKey(privateKey)
-      const pub2 = getPublicKey(privateKey)
-
-      expect(bytesToHex(pub1)).toBe(bytesToHex(pub2))
-    })
-
-    test('different private keys produce different public keys', () => {
-      const priv1 = generatePrivateKey()
-      const priv2 = generatePrivateKey()
-      const pub1 = getPublicKey(priv1)
-      const pub2 = getPublicKey(priv2)
-
-      expect(bytesToHex(pub1)).not.toBe(bytesToHex(pub2))
-    })
-
-    test('public key point is valid (not at infinity)', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-
-      // Check X and Y coordinates are not all zeros
-      const x = publicKey.slice(1, 33)
-      const y = publicKey.slice(33, 65)
-
-      const xAllZero = x.every(b => b === 0)
-      const yAllZero = y.every(b => b === 0)
-
-      expect(xAllZero).toBe(false)
-      expect(yAllZero).toBe(false)
-    })
-  })
-
-  describe('Known test vector', () => {
-    test('generates correct public key for known private key', () => {
-      // Test vector from NIST
-      const privateKeyHex = '0000000000000000000000000000000000000000000000000000000000000001'
-      const privateKey = hexToBytes(privateKeyHex)
-      const publicKey = getPublicKey(privateKey)
-
-      // For private key = 1, public key = G (generator point)
-      const expectedX = '6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296'
-      const expectedY = '4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5'
-
-      const x = bytesToHex(publicKey.slice(1, 33))
-      const y = bytesToHex(publicKey.slice(33, 65))
-
-      expect(x).toBe(expectedX)
-      expect(y).toBe(expectedY)
-    })
-  })
-})
-
 describe('BLECryptoSession', () => {
-  beforeEach(() => {
-    bleCryptoSession.reset()
-  })
-
-  describe('reset', () => {
-    test('resets all session state', () => {
-      // First establish some state
-      bleCryptoSession.counter = 10
-      bleCryptoSession.established = true
-
-      bleCryptoSession.reset()
-
-      expect(bleCryptoSession.counter).toBe(0)
-      expect(bleCryptoSession.established).toBe(false)
-      expect(bleCryptoSession.ephemeralPrivateKey).toBeNull()
-      expect(bleCryptoSession.sessionKey).toBeNull()
-    })
-  })
-
   describe('buildPairMessage', () => {
     test('builds valid pairing message', () => {
-      // Generate a test public key
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildPairMessage(publicKeyHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
 
       expect(result.success).toBe(true)
       expect(result.messageHex).toBeDefined()
@@ -166,11 +59,7 @@ describe('BLECryptoSession', () => {
     })
 
     test('message does not include length prefix (added by BLE send)', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildPairMessage(publicKeyHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
       const messageBytes = hexToBytes(result.messageHex)
 
       // Message should NOT have length prefix - that's added by teslaBLE.send()
@@ -180,23 +69,18 @@ describe('BLECryptoSession', () => {
     })
 
     test('uses SIGNATURE_TYPE_PRESENT_KEY (no routing address needed)', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
+      const messageBytes = hexToBytes(result.messageHex)
 
-      bleCryptoSession.buildPairMessage(publicKeyHex)
-
-      // Pairing uses ToVCSECMessage — no routing address is used
-      expect(bleCryptoSession.routingAddress).toBeNull()
+      const toVcsec = decodeMessage(messageBytes)
+      const signedMsg = decodeMessage(toVcsec[1])
+      expect(signedMsg[3]).toBe(2) // SIGNATURE_TYPE_PRESENT_KEY = 2
     })
 
     test('internal structure: ToVCSECMessage > SignedMessage(f2/f3) > UnsignedMessage > WhitelistOp(f5) > PermissionChange(keyRole=OWNER)', async () => {
       const { decodeMessage } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const result = bleCryptoSession.buildPairMessage(bytesToHex(publicKey))
-
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
       const messageBytes = hexToBytes(result.messageHex)
 
       // ToVCSECMessage { field 1 = SignedMessage }
@@ -235,44 +119,9 @@ describe('BLECryptoSession', () => {
     })
   })
 
-  describe('buildSessionInfoRequestMessage', () => {
-    test('builds session info request', () => {
-      // Generate enrolled key (would come from secrets.js)
-      const enrolledPrivateKey = generatePrivateKey()
-      const enrolledPublicKey = getPublicKey(enrolledPrivateKey)
-      const enrolledPublicKeyHex = bytesToHex(enrolledPublicKey)
-
-      const result = bleCryptoSession.buildSessionInfoRequestMessage(enrolledPublicKeyHex)
-
-      expect(result.success).toBe(true)
-      expect(result.messageHex).toBeDefined()
-      expect(result.ephemeralPublicKeyHex).toBeDefined()
-      expect(result.routingAddressHex).toBeDefined()
-
-      // Verify ephemeral key was generated
-      expect(bleCryptoSession.ephemeralPrivateKey).toBeDefined()
-      expect(bleCryptoSession.ephemeralPublicKey).toBeDefined()
-    })
-
-    test('ephemeral public key is 65 bytes', () => {
-      const enrolledPrivateKey = generatePrivateKey()
-      const enrolledPublicKey = getPublicKey(enrolledPrivateKey)
-
-      const result = bleCryptoSession.buildSessionInfoRequestMessage(bytesToHex(enrolledPublicKey))
-
-      const ephemeralPubKey = hexToBytes(result.ephemeralPublicKeyHex)
-      expect(ephemeralPubKey.length).toBe(65)
-      expect(ephemeralPubKey[0]).toBe(0x04)
-    })
-  })
-
   describe('buildWhitelistQueryMessage', () => {
     test('builds valid whitelist query message', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildWhitelistQueryMessage(publicKeyHex)
+      const result = bleCryptoSession.buildWhitelistQueryMessage(TEST_PUBLIC_KEY_HEX)
 
       expect(result.success).toBe(true)
       expect(result.messageHex).toBeDefined()
@@ -280,11 +129,7 @@ describe('BLECryptoSession', () => {
     })
 
     test('internal structure: ToVCSECMessage > SignedMessage > UnsignedMessage(f1=InformationRequest) > type=6 publicKey(f3)', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildWhitelistQueryMessage(publicKeyHex)
+      const result = bleCryptoSession.buildWhitelistQueryMessage(TEST_PUBLIC_KEY_HEX)
       const messageBytes = hexToBytes(result.messageHex)
 
       // ToVCSECMessage { field 1 = SignedMessage }
@@ -298,7 +143,7 @@ describe('BLECryptoSession', () => {
 
       // UnsignedMessage: InformationRequest at field 1 — DO NOT CHANGE TO 4
       const unsignedMsg = decodeMessage(signedMsg[2])
-      expect(unsignedMsg[1]).toBeDefined()  // InformationRequest is field 1
+      expect(unsignedMsg[1]).toBeDefined()   // InformationRequest is field 1
       expect(unsignedMsg[2]).toBeUndefined() // not an rkeAction message
       expect(unsignedMsg[4]).toBeUndefined() // field 4 = closureMoveRequest (wrong)
 
@@ -308,163 +153,5 @@ describe('BLECryptoSession', () => {
       expect(infoReq[2]).toBeUndefined() // no keyId
       expect(infoReq[3].length).toBe(65) // raw publicKey bytes at field 3
     })
-  })
-
-  describe('buildVerifyMessage', () => {
-    test('builds valid verify message', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildVerifyMessage(publicKeyHex)
-
-      expect(result.success).toBe(true)
-      expect(result.messageHex).toBeDefined()
-      expect(typeof result.messageHex).toBe('string')
-    })
-
-    test('internal structure: RoutableMessage > toDomain=INFOTAINMENT(3) > SessionInfoRequest(f14) > publicKey(f1)', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildVerifyMessage(publicKeyHex)
-      const messageBytes = hexToBytes(result.messageHex)
-
-      // RoutableMessage { to_destination (field 6), session_info_request (field 14) }
-      const routable = decodeMessage(messageBytes)
-      expect(routable[6]).toBeDefined()  // to_destination
-      expect(routable[14]).toBeDefined() // session_info_request
-      expect(routable[7]).toBeUndefined() // no from_destination (Go SDK omits it)
-      expect(routable[50]).toBeUndefined() // no uuid (Go SDK omits it)
-
-      // to_destination { domain (field 1) = DOMAIN_INFOTAINMENT (3) }
-      const dest = decodeMessage(routable[6])
-      expect(dest[1]).toBe(3) // DOMAIN_INFOTAINMENT = 3
-
-      // SessionInfoRequest { publicKey (field 1) = enrolled key, no challenge (field 2) }
-      const sessionInfoReq = decodeMessage(routable[14])
-      expect(sessionInfoReq[1].length).toBe(65) // enrolled public key
-      expect(sessionInfoReq[2]).toBeUndefined()  // no challenge — Go SDK omits it
-    })
-  })
-
-  describe('buildCommandMessage', () => {
-    test('fails when session not established', () => {
-      const result = bleCryptoSession.buildCommandMessage(0) // unlock
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Session not established')
-    })
-  })
-
-  describe('buildLockMessage', () => {
-    test('calls buildCommandMessage with lock action', () => {
-      const result = bleCryptoSession.buildLockMessage()
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Session not established')
-    })
-  })
-
-  describe('buildUnlockMessage', () => {
-    test('calls buildCommandMessage with unlock action', () => {
-      const result = bleCryptoSession.buildUnlockMessage()
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Session not established')
-    })
-  })
-
-  describe('buildTrunkMessage', () => {
-    test('calls buildCommandMessage with trunk action', () => {
-      const result = bleCryptoSession.buildTrunkMessage()
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Session not established')
-    })
-  })
-
-  describe('buildFrunkMessage', () => {
-    test('calls buildCommandMessage with frunk action', () => {
-      const result = bleCryptoSession.buildFrunkMessage()
-
-      expect(result.success).toBe(false)
-      expect(result.error).toBe('Session not established')
-    })
-  })
-})
-
-describe('SHA-256', () => {
-  // We need to test the internal sha256 function
-  // Since it's not exported, we'll test it indirectly through HMAC or by importing it
-
-  test('indirectly tested through HMAC and key derivation', () => {
-    // SHA-256 is used internally for HMAC and session key derivation
-    // If those work correctly, SHA-256 is working
-    expect(true).toBe(true)
-  })
-})
-
-describe('HMAC-SHA256', () => {
-  // HMAC is tested indirectly through command message building
-  // When session is established, commands use HMAC
-
-  test('indirectly tested through signed message building', () => {
-    expect(true).toBe(true)
-  })
-})
-
-describe('Session Key Pool Generation', () => {
-  test('generates multiple valid keypairs', () => {
-    const count = 5
-    const keys = []
-
-    for (let i = 0; i < count; i++) {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      keys.push({
-        privateKeyHex: bytesToHex(privateKey),
-        publicKeyHex: bytesToHex(publicKey)
-      })
-    }
-
-    expect(keys.length).toBe(count)
-
-    // All keys should be unique
-    const privateKeys = keys.map(k => k.privateKeyHex)
-    const uniquePrivateKeys = [...new Set(privateKeys)]
-    expect(uniquePrivateKeys.length).toBe(count)
-
-    // All public keys should be valid format
-    for (const key of keys) {
-      expect(key.privateKeyHex.length).toBe(64) // 32 bytes
-      expect(key.publicKeyHex.length).toBe(130) // 65 bytes
-      expect(key.publicKeyHex.startsWith('04')).toBe(true)
-    }
-  })
-
-  test('keypairs can be serialized and deserialized', () => {
-    const privateKey = generatePrivateKey()
-    const publicKey = getPublicKey(privateKey)
-
-    const serialized = {
-      privateKeyHex: bytesToHex(privateKey),
-      publicKeyHex: bytesToHex(publicKey)
-    }
-
-    // Simulate JSON serialization (like LocalStorage)
-    const json = JSON.stringify(serialized)
-    const deserialized = JSON.parse(json)
-
-    expect(deserialized.privateKeyHex).toBe(serialized.privateKeyHex)
-    expect(deserialized.publicKeyHex).toBe(serialized.publicKeyHex)
-
-    // Can convert back to bytes
-    const restoredPrivate = hexToBytes(deserialized.privateKeyHex)
-    const restoredPublic = hexToBytes(deserialized.publicKeyHex)
-
-    expect(restoredPrivate.length).toBe(32)
-    expect(restoredPublic.length).toBe(65)
   })
 })

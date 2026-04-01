@@ -1,7 +1,7 @@
 // Pairing Flow Tests
 // Tests for the complete Tesla BLE pairing flow with mocked BLE layer
 
-import { hexToBytes, bytesToHex, generatePrivateKey, getPublicKey } from '../app-side/ble-crypto.js'
+import { hexToBytes, bytesToHex } from '../app-side/ble-crypto.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import {
   parsePairingResponse,
@@ -68,10 +68,6 @@ function buildErrorResponse(faultCode = 1) {
 }
 
 describe('Pairing Message Building', () => {
-  beforeEach(() => {
-    bleCryptoSession.reset()
-  })
-
   describe('buildPairMessage', () => {
     test('builds valid pairing message with test public key', () => {
       const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
@@ -99,10 +95,11 @@ describe('Pairing Message Building', () => {
       expect(messageBytes[0]).toBe(0x0A)
     })
 
-    test('uses SIGNATURE_TYPE_PRESENT_KEY — no routing address', () => {
-      bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      // Pairing uses ToVCSECMessage, not RoutableMessage — no routing address needed
-      expect(bleCryptoSession.routingAddress).toBeNull()
+    test('uses SIGNATURE_TYPE_PRESENT_KEY — no RoutableMessage wrapper', () => {
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const messageBytes = hexToBytes(result.messageHex)
+      // Pairing uses ToVCSECMessage (0x0A = field 1, wire type 2), not RoutableMessage
+      expect(messageBytes[0]).toBe(0x0A)
     })
   })
 
@@ -118,12 +115,10 @@ describe('Pairing Message Building', () => {
       expect(TEST_PUBLIC_KEY.startsWith('04')).toBe(true)
     })
 
-    test('dynamically generated key works', () => {
-      const privateKey = generatePrivateKey()
-      const publicKey = getPublicKey(privateKey)
-      const publicKeyHex = bytesToHex(publicKey)
-
-      const result = bleCryptoSession.buildPairMessage(publicKeyHex)
+    test('another valid key works', () => {
+      // Different pre-computed test key
+      const otherKey = '04f4d912cb840b7f9eb974847a5566e886add14357c3f85df255e7397a98a13463b6b5d8ed03aa720fc6d7c721e7319e0b627f18f84199852fca23897b32710ece'
+      const result = bleCryptoSession.buildPairMessage(otherKey)
       expect(result.success).toBe(true)
     })
   })

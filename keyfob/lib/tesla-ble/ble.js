@@ -1,7 +1,5 @@
 import { BLEMaster } from "@silver-zepp/easy-ble"
-
-// Enable mock mode for testing without real Tesla (simulator)
-const MOCK_MODE = false
+import * as hmBle from "@zos/ble"
 
 // Tesla BLE UUIDs (from tesla-motors/vehicle-command)
 const TESLA_SERVICE_UUID = "00000211-b2d1-43f0-9b88-960cebf8b91e"
@@ -31,6 +29,7 @@ class TeslaBLE {
     this._lastResponseTime = 0
     this._rxBuf = null             // reassembly buffer for chunked responses
     this._rxExpected = 0
+    this._mtu = 20                 // negotiated MTU payload size (default 20)
 
     // Tesla service profile for easy-ble
     // Write characteristic: no descriptor needed
@@ -77,28 +76,11 @@ class TeslaBLE {
     this.profile = null
     this.responseCallback = null
     this.mac = null
+    this._mtu = 20
   }
 
   // Scan for Tesla vehicles
   scan(callback, duration = 10000) {
-    // Mock mode - return fake Tesla after short delay
-    if (MOCK_MODE) {
-      console.log('[BLE MOCK] Scanning...')
-      setTimeout(() => {
-        const mockDevice = {
-          name: 'S1234567890abcdefC',
-          mac: 'AA:BB:CC:DD:EE:FF',
-          rssi: -50,
-          type: 'tesla'
-        }
-        callback({ type: 'device', device: mockDevice })
-        setTimeout(() => {
-          callback({ type: 'complete', devices: [mockDevice] })
-        }, 500)
-      }, 1000)
-      return true
-    }
-
     const devices = []
     let completed = false
 
@@ -138,23 +120,11 @@ class TeslaBLE {
 
   // Stop scanning
   stopScan() {
-    if (MOCK_MODE) return true
     return this._ensureBLE().stopScan()
   }
 
   // Connect to Tesla vehicle
   connect(mac, callback) {
-    // Mock mode - simulate successful connection
-    if (MOCK_MODE) {
-      console.log('[BLE MOCK] Connecting to:', mac)
-      setTimeout(() => {
-        this.connected = true
-        this.mac = mac
-        console.log('[BLE MOCK] Connected!')
-        callback({ success: true, mac: mac })
-      }, 500)
-      return
-    }
     let callbackCalled = false
     let setupStarted = false
 
@@ -208,6 +178,21 @@ class TeslaBLE {
             return
           }
 
+          // Fix 1: negotiate MTU — mirrors Tesla Go SDK ExchangeMTU().
+          // Larger MTU lets us send the full framed message in one write instead of chunks.
+          // mstSetMTU is a low-level @zos/ble function, not exposed by easy-ble.
+          console.log('[BLE] Requesting MTU 247...')
+          try {
+            hmBle.mstSetMTU(247, (result) => {
+              // result.mtu is the negotiated size (may be lower than requested)
+              const negotiated = (result && result.mtu) ? result.mtu - 3 : 20
+              this._mtu = Math.max(20, negotiated)
+              console.log('[BLE] MTU negotiated:', result && result.mtu, '→ payload', this._mtu)
+            })
+          } catch (e) {
+            console.log('[BLE] mstSetMTU not available:', e.message || e)
+          }
+
           // Generate profile and start listener.
           // Write char: 0x04 = WRITE_WITHOUT_RESPONSE (Tesla TX char only supports WOR)
           // Read char:  0x20 = INDICATE (CCCD=0x0002, Tesla sends indications not notifications)
@@ -221,8 +206,6 @@ class TeslaBLE {
           this._ensureBLE().startListener(this.profile, (response) => {
           console.log('[BLE] Listener response:', JSON.stringify(response))
           if (callbackCalled) return
-          clearTimeout(timeout)
-          callbackCalled = true
 
           if (response.success) {
             // Set up response handler for both NOTIFY and INDICATE
@@ -244,10 +227,16 @@ class TeslaBLE {
             }
             this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
 
-            // Register descWriteComplete so the QueueManager detects the CCCD write ACK
-            // immediately (~50-200ms) instead of timing out after 5 seconds.
+            // Fix 5: gate the connected callback on descWriteComplete so CCCD is
+            // confirmed set before the caller sends the pairing message.
             this.writeCompleteHandler = (chara, desc, status) => {
               console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
+              if (!callbackCalled) {
+                callbackCalled = true
+                clearTimeout(timeout)
+                console.log('[BLE] CCCD confirmed, ready')
+                callback({ success: true, mac: mac })
+              }
             }
             this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
 
@@ -256,9 +245,18 @@ class TeslaBLE {
             console.log('[BLE] Enabling indications (CCCD=0x0002)...')
             this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
 
-            console.log('[BLE] Connected successfully')
-            callback({ success: true, mac: mac })
+            // Safety fallback: if descWriteComplete never fires, proceed after 2s
+            setTimeout(() => {
+              if (!callbackCalled) {
+                callbackCalled = true
+                clearTimeout(timeout)
+                console.log('[BLE] CCCD timeout fallback, continuing')
+                callback({ success: true, mac: mac })
+              }
+            }, 2000)
           } else {
+            callbackCalled = true
+            clearTimeout(timeout)
             this.connected = false
             console.log('[BLE] Listener failed:', response.message)
             this._cleanup()
@@ -290,13 +288,6 @@ class TeslaBLE {
 
   // Disconnect from vehicle
   disconnect() {
-    if (MOCK_MODE) {
-      console.log('[BLE MOCK] Disconnected')
-      this.connected = false
-      this.mac = null
-      return
-    }
-
     // Clean up handlers to prevent memory leaks
     if (this.ble) {
       if (this.writeCompleteHandler) {
@@ -322,23 +313,13 @@ class TeslaBLE {
     this.responseCallback = null
     this._rxBuf = null
     this._rxExpected = 0
+    this._mtu = 20
   }
 
   // Send command to vehicle (with 2-byte length prefix)
   send(data, callback) {
     if (!this.connected) {
       callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    // Mock mode - simulate successful send with fake response
-    if (MOCK_MODE) {
-      console.log('[BLE MOCK] Sending', data.length, 'bytes')
-      setTimeout(() => {
-        // Simulate successful response
-        console.log('[BLE MOCK] Command sent successfully')
-        callback({ success: true, data: new Uint8Array([0x00]) })
-      }, 300)
       return
     }
 
@@ -351,13 +332,7 @@ class TeslaBLE {
     message[1] = length & 0xFF
     message.set(data, 2)
 
-    const numChunks = Math.ceil(message.length / BLE_CHUNK_SIZE)
-    console.log('[BLE] Sending', message.length, 'bytes in', numChunks, 'chunks')
-
-    for (let i = 0; i < message.length; i += BLE_CHUNK_SIZE) {
-      const chunk = message.slice(i, Math.min(i + BLE_CHUNK_SIZE, message.length))
-      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
-    }
+    this._sendMessage(message)
   }
 
   // Register a callback to receive the next BLE indication without sending anything.
@@ -380,15 +355,6 @@ class TeslaBLE {
   sendAndWaitForResponse(data, callback, timeout = 30000) {
     if (!this.connected) {
       callback({ success: false, error: 'Not connected' })
-      return
-    }
-
-    // Mock mode
-    if (MOCK_MODE) {
-      console.log('[BLE MOCK] Sending', data.length, 'bytes and waiting for response')
-      setTimeout(() => {
-        callback({ success: true, data: new Uint8Array([0x52, 0x03, 0x08, 0x01]) })
-      }, 500)
       return
     }
 
@@ -416,22 +382,35 @@ class TeslaBLE {
     message[1] = length & 0xFF
     message.set(data, 2)
 
-    // Split into BLE_CHUNK_SIZE chunks and send with Write Without Response.
-    // This matches Tesla's vehicle-command Go implementation which uses
-    // WriteWithoutResponse in 20-byte chunks — the car reassembles via the
-    // 2-byte length prefix in the first chunk.
-    const numChunks = Math.ceil(message.length / BLE_CHUNK_SIZE)
-    console.log('[BLE] Sending', message.length, 'bytes in', numChunks, 'chunks')
-
-    for (let i = 0; i < message.length; i += BLE_CHUNK_SIZE) {
-      const chunk = message.slice(i, Math.min(i + BLE_CHUNK_SIZE, message.length))
-      // write_without_response=true: Tesla TX characteristic (0212) only supports
-      // Write Without Response (GATT property 0x04). Write Requests (0x08) are
-      // rejected by the car's ATT layer with "Request Not Supported" and never
-      // reach the VCSEC service. Must use Write Without Response.
-      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
-    }
+    this._sendMessage(message)
     // Tesla will reassemble chunks and respond via BLE indication → _handleResponse
+  }
+
+  // Send a framed message — single write if MTU fits, otherwise 20ms-serialized chunks.
+  // Mirrors Tesla Go SDK: WriteCharacteristic blocks per packet so chunks are naturally
+  // paced to one per BLE connection interval. Firing all chunks at once floods the OS
+  // queue and causes silent packet loss.
+  _sendMessage(message) {
+    if (message.length <= this._mtu) {
+      // Fits in one write — matches Go SDK behaviour after MTU negotiation
+      console.log('[BLE] TX', message.length, 'bytes (single write)')
+      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer, true)
+    } else {
+      // Serialized chunks: one chunk per setTimeout tick (20ms) so the BLE radio
+      // has time to transmit each packet before the next arrives in the OS queue.
+      const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
+      console.log('[BLE] TX', message.length, 'bytes in', total, 'chunks (20ms paced)')
+      this._sendChunk(message, 0)
+    }
+  }
+
+  _sendChunk(message, offset) {
+    const end = Math.min(offset + BLE_CHUNK_SIZE, message.length)
+    const chunk = message.slice(offset, end)
+    this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
+    if (end < message.length) {
+      setTimeout(() => this._sendChunk(message, end), 20)
+    }
   }
 
   // Handle response from vehicle — reassembles chunked BLE indications.
@@ -442,15 +421,19 @@ class TeslaBLE {
 
     const chunk = new Uint8Array(data)
 
-    // Dedup: charaValueArrived and charaNotification both fire for the same packet
-    const now = Date.now()
-    const sig = chunk.length + '_' + (chunk[0] || 0) + '_' + (chunk[1] || 0)
-    if (sig === this._lastResponseData && (now - this._lastResponseTime) < 200) {
-      console.log('[BLE] Duplicate chunk ignored')
-      return
+    // Dedup: charaValueArrived and charaNotification both fire for the same packet.
+    // Only check on the first chunk of a new message (_rxBuf === null) — mid-reassembly
+    // chunks cannot be duplicates and must never be dropped.
+    if (this._rxBuf === null) {
+      const now = Date.now()
+      const sig = chunk.length + '_' + (chunk[0] || 0) + '_' + (chunk[1] || 0)
+      if (sig === this._lastResponseData && (now - this._lastResponseTime) < 200) {
+        console.log('[BLE] Duplicate first chunk ignored')
+        return
+      }
+      this._lastResponseData = sig
+      this._lastResponseTime = now
     }
-    this._lastResponseData = sig
-    this._lastResponseTime = now
 
     if (this._rxBuf === null) {
       // First chunk: read 2-byte length prefix

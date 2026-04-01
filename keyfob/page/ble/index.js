@@ -114,16 +114,21 @@ function doPair() {
       var msgBytes = hexToBytes(result.messageHex)
       addLog('TX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
 
-      // Car should reply with wlInfo=14 (tap NFC) within 5s.
+      // Car should reply with wlInfo=14 (tap NFC) — allow up to 15s (car can be slow).
       // After WAIT: actively listen for car's confirmation push after NFC tap (60s).
       teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
         if (!r.success) {
           addLog('PRX:timeout', 0x888888)
           return
         }
+        addLog('RX[' + r.data.length + ']:' + dumpHex(r.data, 8), 0x888888)
         var parsed = parsePairingResponse(r.data)
-        var wlStr = (parsed.dbg && parsed.dbg.wlFault) ? ' wl:' + parsed.dbg.wlFault : ''
-        addLog('PRX:' + parsed.status + wlStr, 0x4488ff)
+        var dbg = parsed.dbg || {}
+        var wlStr = dbg.wlFault ? ' wl:' + dbg.wlFault : ''
+        var pathStr = dbg.path ? ' p:' + dbg.path : ''
+        var keysStr = dbg.outerKeys ? ' k:' + dbg.outerKeys : ''
+        addLog('PRX:' + parsed.status + wlStr + pathStr, 0x4488ff)
+        addLog(keysStr || 'no keys', 0x666666)
 
         if (parsed.status === 'ok') {
           state = 'DONE'
@@ -140,9 +145,11 @@ function doPair() {
               addLog('(press PAIR to verify)', 0x666666)
               return
             }
+            addLog('RX2[' + r2.data.length + ']:' + dumpHex(r2.data, 8), 0x888888)
             var p2 = parsePairingResponse(r2.data)
-            var wl2 = (p2.dbg && p2.dbg.wlFault) ? ' wl:' + p2.dbg.wlFault : ''
-            addLog('NFC push:' + p2.status + wl2, 0x4488ff)
+            var d2 = p2.dbg || {}
+            var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
+            addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
             if (p2.status === 'ok') {
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
@@ -154,7 +161,7 @@ function doPair() {
             }
           })
         }
-      }, 5000)
+      }, 15000)
 
       state = 'WAITING_KEYCARD'
       updateStatus('TAP KEY CARD', 0xff4444)

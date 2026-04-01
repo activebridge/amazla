@@ -173,7 +173,7 @@ const render = (attrs) => {
     end_angle: limit + 3,
     line_width: 12,
     x: 0,
-    y: -10,
+    y: 0,
     radius: height / 2 - 5,
     color: 0x000000,
   }, slide2)
@@ -186,10 +186,10 @@ const render = (attrs) => {
     color: 0xffffff,
     radius: height / 2 - 5,
     x: 0,
-    y: -10,
+    y: 0,
   }, slide2)
 
-  text({ text: `ϟ`, w: 50, y: -height/2 + 26, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
+  text({ text: `ϟ`, w: 50, y: -height/2 + 28, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
   !isChargerOpen && !isConnected && button({ x: 55, y: 15, w: 100, h: 100, src: `open_charger`, click_func: openCharger }, slide2)
   isChargerOpen && !isConnected && button({ x: 55, y: 15, w: 100, h: 100, src: `close_charger`, click_func: closeCharger }, slide2)
 
