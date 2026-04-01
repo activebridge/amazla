@@ -138,28 +138,38 @@ function doPair() {
         }
 
         if (parsed.status === 'wait' || parsed.status === 'pending') {
-          // Actively wait for car's confirmation push after NFC tap (up to 60s)
-          teslaBLE.waitForNextResponse(60000, function(r2) {
-            if (!r2.success) {
-              addLog('NFC timeout', 0x888888)
-              addLog('(press PAIR to verify)', 0x666666)
-              return
-            }
-            addLog('RX2[' + r2.data.length + ']:' + dumpHex(r2.data, 8), 0x888888)
-            var p2 = parsePairingResponse(r2.data)
-            var d2 = p2.dbg || {}
-            var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
-            addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
-            if (p2.status === 'ok') {
-              state = 'DONE'
-              updateStatus('PAIRED!', 0x00cc44)
-              addLog('Key enrolled!', 0x00cc44)
-            } else if (p2.status === 'error') {
-              state = 'IDLE'
-              updateStatus('PAIR ERROR', 0xff4444)
-              addLog(p2.error || 'Error', 0xff4444)
-            }
-          })
+          // Car may send several sequential notifications before the final result:
+          //   ambient push (pending) → tap-required (wait) → enrollment result (ok/error)
+          // Loop up to 4 rounds so none are dropped.
+          function waitForResult(depth) {
+            teslaBLE.waitForNextResponse(60000, function(r2) {
+              if (!r2.success) {
+                addLog('NFC timeout', 0x888888)
+                addLog('(press PAIR to verify)', 0x666666)
+                return
+              }
+              addLog('RX' + (depth + 2) + '[' + r2.data.length + ']:' + dumpHex(r2.data, 8), 0x888888)
+              var p2 = parsePairingResponse(r2.data)
+              var d2 = p2.dbg || {}
+              var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
+              addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
+              if (p2.status === 'ok') {
+                state = 'DONE'
+                updateStatus('PAIRED!', 0x00cc44)
+                addLog('Key enrolled!', 0x00cc44)
+              } else if (p2.status === 'error') {
+                state = 'IDLE'
+                updateStatus('PAIR ERROR', 0xff4444)
+                addLog(p2.error || 'Error', 0xff4444)
+              } else if ((p2.status === 'wait' || p2.status === 'pending') && depth < 4) {
+                waitForResult(depth + 1)
+              } else if (depth >= 4) {
+                addLog('Too many pushes', 0xff8800)
+                addLog('(press PAIR to verify)', 0x666666)
+              }
+            })
+          }
+          waitForResult(0)
         }
       }, 15000)
 
@@ -357,12 +367,18 @@ function onPair() {
   addLog(mac.slice(-17), 0xcccccc)
 
   // Delay before connect so ZeppOS BLE stack can recover after a previous attempt
-  setTimeout(function() { doConnect(mac) }, 500)
+  setTimeout(function() { doConnect(mac, 0) }, 1500)
 }
 
-function doConnect(mac) {
+function doConnect(mac, attempt) {
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
+      if (attempt < 1) {
+        // Auto-retry once — ZeppOS BLE stack often needs a second try
+        addLog('Retry ' + (attempt + 2) + '...', 0xff8800)
+        setTimeout(function() { doConnect(mac, attempt + 1) }, 2000)
+        return
+      }
       state = 'IDLE'
       updateStatus('CONN FAIL', 0xff4444)
       addLog('Conn err: ' + (result.error || '?'), 0xff4444)

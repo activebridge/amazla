@@ -25,6 +25,16 @@ const OPERATIONSTATUS_OK = 0
 const OPERATIONSTATUS_WAIT = 1
 const OPERATIONSTATUS_ERROR = 2
 
+// WhitelistOperation error descriptions (vcsec.proto WhitelistOperation_information_E)
+function wlErrorMessage(code) {
+  switch (code) {
+    case 5:  return 'No permission (wl:5) - owner must approve'
+    case 6:  return 'Invalid keycard (wl:6) - wrong card?'
+    case 25: return 'Keycard tap timeout (wl:25) - tap faster'
+    default: return 'WL info:' + code
+  }
+}
+
 // Build UnsignedMessage (for VCSEC)
 // Fields from vcsec.proto (DO NOT CHANGE — verified from vcsec.proto):
 //   1: InformationRequest
@@ -247,13 +257,20 @@ function parsePairingResponse(data) {
       //   2: signerOfOperation (KeyIdentifier bytes) — which authorized key approved this
       //   3: operationStatus (enum)
       const wlStatus = decodeMessage(fields[3])
-      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : 0
+      // Use -1 sentinel (not 0) when field 1 is absent — field 3 with no inner field 1
+      // is an ambient push (e.g. keychainStatus), NOT a WhitelistOperation_status result.
+      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo
       if (wlStatus[2] instanceof Uint8Array) {
         const signer = decodeMessage(wlStatus[2])
         dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
       }
 
+      // Field 1 absent — this is an ambient car push (keychainStatus etc.), not a pairing result
+      if (wlInfo === -1) {
+        dbg.path = 'f3B-ambient'
+        return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
+      }
       // NONE (0) = key successfully added
       if (wlInfo === 0) {
         return { success: true, status: 'ok', message: 'Key added', dbg }
@@ -262,8 +279,7 @@ function parsePairingResponse(data) {
       if (wlInfo === 14) {
         return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       }
-      // Any other code = error (e.g. 25 = tap timeout, 5 = no permission, etc.)
-      return { success: false, status: 'error', error: 'WL info:' + wlInfo, dbg }
+      return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
     }
 
     // Car sends CommandStatus directly with only operationStatus (no sub-message field)
@@ -311,11 +327,15 @@ function parsePairingResponse(data) {
       //   field 1 = whitelistOperationInformation (enum): 0=NONE=success, 14=tap required
       //   field 2 = signerOfOperation (KeyIdentifier bytes)
       const wlStatus = decodeMessage(field3)
-      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : 0
+      // Use -1 sentinel when field 1 absent — ambient push, not a real result
+      const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo
       if (wlStatus[2] instanceof Uint8Array) {
         const signer = decodeMessage(wlStatus[2])
         dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
+      }
+      if (wlInfo === -1) {
+        return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
       if (wlInfo === 0) {
         return { success: true, status: 'ok', message: 'Key added successfully', dbg }
@@ -323,7 +343,7 @@ function parsePairingResponse(data) {
       if (wlInfo === 14) {
         return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       }
-      return { success: false, status: 'error', error: 'WL info:' + wlInfo, dbg }
+      return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
     } else if (operationStatus === OPERATIONSTATUS_OK) {
       return { success: true, status: 'ok', message: 'Key added successfully', dbg }
     } else if (operationStatus === OPERATIONSTATUS_WAIT) {

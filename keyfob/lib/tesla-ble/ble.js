@@ -29,6 +29,7 @@ class TeslaBLE {
     this._lastResponseTime = 0
     this._rxBuf = null             // reassembly buffer for chunked responses
     this._rxExpected = 0
+    this._rxLastChunkTime = 0      // timestamp of last received chunk (for stale buffer reset)
     this._mtu = 20                 // negotiated MTU payload size (default 20)
 
     // Tesla service profile for easy-ble
@@ -130,7 +131,7 @@ class TeslaBLE {
 
     console.log('[BLE] Connecting to:', mac)
 
-    // Timeout for connection
+    // Timeout for connection — 15s is enough for Tesla; 30s just keeps the user waiting
     const timeout = setTimeout(() => {
       if (!callbackCalled) {
         callbackCalled = true
@@ -139,7 +140,7 @@ class TeslaBLE {
         this._cleanup()
         callback({ success: false, error: 'Connection timeout' })
       }
-    }, 30000)
+    }, 15000)
 
     this._ensureBLE().connect(mac, (result) => {
       console.log('[BLE] Connect result:', JSON.stringify(result))
@@ -178,21 +179,6 @@ class TeslaBLE {
             return
           }
 
-          // Fix 1: negotiate MTU — mirrors Tesla Go SDK ExchangeMTU().
-          // Larger MTU lets us send the full framed message in one write instead of chunks.
-          // mstSetMTU is a low-level @zos/ble function, not exposed by easy-ble.
-          console.log('[BLE] Requesting MTU 247...')
-          try {
-            hmBle.mstSetMTU(247, (result) => {
-              // result.mtu is the negotiated size (may be lower than requested)
-              const negotiated = (result && result.mtu) ? result.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', result && result.mtu, '→ payload', this._mtu)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
-
           // Generate profile and start listener.
           // Write char: 0x04 = WRITE_WITHOUT_RESPONSE (Tesla TX char only supports WOR)
           // Read char:  0x20 = INDICATE (CCCD=0x0002, Tesla sends indications not notifications)
@@ -227,13 +213,26 @@ class TeslaBLE {
             }
             this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
 
-            // Fix 5: gate the connected callback on descWriteComplete so CCCD is
-            // confirmed set before the caller sends the pairing message.
+            // Gate the connected callback on descWriteComplete so CCCD is confirmed
+            // before the caller sends the pairing message — mirrors Go SDK's Subscribe
+            // blocking until the CCCD write is acknowledged.
             this.writeCompleteHandler = (chara, desc, status) => {
               console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
               if (!callbackCalled) {
                 callbackCalled = true
                 clearTimeout(timeout)
+                // Negotiate MTU after CCCD — mirrors Go SDK ExchangeMTU() order:
+                // Subscribe first, then ExchangeMTU.
+                console.log('[BLE] Requesting MTU 247...')
+                try {
+                  hmBle.mstSetMTU(247, (mtuResult) => {
+                    const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+                    this._mtu = Math.max(20, negotiated)
+                    console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+                  })
+                } catch (e) {
+                  console.log('[BLE] mstSetMTU not available:', e.message || e)
+                }
                 console.log('[BLE] CCCD confirmed, ready')
                 callback({ success: true, mac: mac })
               }
@@ -245,7 +244,7 @@ class TeslaBLE {
             console.log('[BLE] Enabling indications (CCCD=0x0002)...')
             this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
 
-            // Safety fallback: if descWriteComplete never fires, proceed after 2s
+            // Safety fallback: if descWriteComplete never fires, proceed after 3s
             setTimeout(() => {
               if (!callbackCalled) {
                 callbackCalled = true
@@ -253,7 +252,7 @@ class TeslaBLE {
                 console.log('[BLE] CCCD timeout fallback, continuing')
                 callback({ success: true, mac: mac })
               }
-            }, 2000)
+            }, 3000)
           } else {
             callbackCalled = true
             clearTimeout(timeout)
@@ -263,7 +262,7 @@ class TeslaBLE {
             callback({ success: false, error: response.message || 'Listener failed' })
           }
         })
-        }, 1500) // Delay for BLE stack stabilization (increased for Tesla)
+        }, 2000) // Delay for BLE stack stabilization
       } else {
         // Mark as disconnected so the setTimeout check catches it
         this.connected = false
@@ -437,6 +436,9 @@ class TeslaBLE {
 
     if (this._rxBuf === null) {
       // First chunk: read 2-byte length prefix
+      // Mirror Go SDK rxTimeout: if >1s has passed since the last chunk of a prior
+      // message, the previous reassembly was stale — the buffer was already null here,
+      // so nothing to reset, but record the time for mid-message stale detection.
       if (chunk.length < 2) {
         const cb = this.responseCallback
         this.responseCallback = null
@@ -445,8 +447,17 @@ class TeslaBLE {
       }
       this._rxExpected = (chunk[0] << 8) | chunk[1]
       this._rxBuf = chunk.slice(2)
+      this._rxLastChunkTime = Date.now()
     } else {
-      // Subsequent chunk: append to reassembly buffer
+      // Subsequent chunk: reset stale buffer if >1s since last chunk (mirrors Go SDK rxTimeout)
+      if (Date.now() - this._rxLastChunkTime > 1000) {
+        console.log('[BLE] Stale reassembly buffer reset')
+        this._rxBuf = null
+        this._rxExpected = 0
+        return
+      }
+      this._rxLastChunkTime = Date.now()
+      // Append to reassembly buffer
       const combined = new Uint8Array(this._rxBuf.length + chunk.length)
       combined.set(this._rxBuf)
       combined.set(chunk, this._rxBuf.length)
