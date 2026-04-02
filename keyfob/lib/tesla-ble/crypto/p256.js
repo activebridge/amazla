@@ -62,7 +62,8 @@ const _m = new Uint32Array(16)
 const _t = new Float64Array(17)
 const M32 = 2.3283064365386963e-10  // 1/2^32
 const mul256 = (r, a, b) => {
-  _t.fill(0)
+  // Manual reset instead of fill (faster - avoid function call overhead)
+  for (let i = 0; i < 16; i++) _t[i] = 0
   for (let i = 0; i < 8; i++) {
     const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
     for (let j = 0; j < 8; j++) {
@@ -100,7 +101,8 @@ const mul256 = (r, a, b) => {
 
 // Specialized squaring - exploits symmetry for ~1.5x speedup
 const sqr256 = (r, a) => {
-  _t.fill(0)
+  // Manual reset instead of fill (faster - avoid function call)
+  for (let i = 0; i < 16; i++) _t[i] = 0
   for (let i = 0; i < 8; i++) {
     const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
     // Diagonal: a[i] * a[i]
