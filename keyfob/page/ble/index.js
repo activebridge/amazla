@@ -114,8 +114,12 @@ function doPair() {
       var msgBytes = hexToBytes(result.messageHex)
       addLog('TX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
 
-      // Car should reply with wlInfo=14 (tap NFC) — allow up to 15s (car can be slow).
-      // After WAIT: actively listen for car's confirmation push after NFC tap (60s).
+      // Primary false-positive guard.
+      // Set to true when car sends wlInfo=14 (tap required).
+      // 'ok' is only accepted as genuine when sawTapRequired=true OR dbg.hasSigner=true.
+      var sawTapRequired = false
+
+      // Car should reply with wlInfo=14 (tap NFC) within 15s.
       teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
         if (!r.success) {
           addLog('PRX:timeout', 0x888888)
@@ -131,47 +135,62 @@ function doPair() {
         addLog(keysStr || 'no keys', 0x666666)
 
         if (parsed.status === 'ok') {
-          state = 'DONE'
-          updateStatus('PAIRED!', 0x00cc44)
-          addLog('Key enrolled!', 0x00cc44)
+          if (sawTapRequired || dbg.hasSigner) {
+            state = 'DONE'
+            updateStatus('PAIRED!', 0x00cc44)
+            addLog('Key enrolled!', 0x00cc44)
+          } else {
+            // False positive — ambient push before NFC tap; keep waiting
+            addLog('PRX:ok-skip(no tap)', 0xff8800)
+            waitForResult()
+          }
           return
         }
 
+        if (parsed.status === 'wait') sawTapRequired = true
+
         if (parsed.status === 'wait' || parsed.status === 'pending') {
-          // Car may send several sequential notifications before the final result:
-          //   ambient push (pending) → tap-required (wait) → enrollment result (ok/error)
-          // Loop up to 4 rounds so none are dropped.
-          function waitForResult(depth) {
-            teslaBLE.waitForNextResponse(60000, function(r2) {
-              if (!r2.success) {
-                addLog('NFC timeout', 0x888888)
-                addLog('(press PAIR to verify)', 0x666666)
-                return
-              }
-              addLog('RX' + (depth + 2) + '[' + r2.data.length + ']:' + dumpHex(r2.data, 8), 0x888888)
-              var p2 = parsePairingResponse(r2.data)
-              var d2 = p2.dbg || {}
-              var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
-              addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
-              if (p2.status === 'ok') {
-                state = 'DONE'
-                updateStatus('PAIRED!', 0x00cc44)
-                addLog('Key enrolled!', 0x00cc44)
-              } else if (p2.status === 'error') {
-                state = 'IDLE'
-                updateStatus('PAIR ERROR', 0xff4444)
-                addLog(p2.error || 'Error', 0xff4444)
-              } else if ((p2.status === 'wait' || p2.status === 'pending') && depth < 4) {
-                waitForResult(depth + 1)
-              } else if (depth >= 4) {
-                addLog('Too many pushes', 0xff8800)
-                addLog('(press PAIR to verify)', 0x666666)
-              }
-            })
-          }
-          waitForResult(0)
+          waitForResult()
         }
       }, 15000)
+
+      // Loops until ok (with valid tap/signer), error, or 60s timeout.
+      // No depth limit — car may push many intermediate notifications.
+      // sawTapRequired is captured by closure from the outer doPair() scope.
+      function waitForResult() {
+        teslaBLE.waitForNextResponse(60000, function(r2) {
+          if (!r2.success) {
+            addLog('NFC timeout', 0x888888)
+            addLog('(press PAIR to verify)', 0x666666)
+            return
+          }
+          addLog('RX[' + r2.data.length + ']:' + dumpHex(r2.data, 8), 0x888888)
+          var p2 = parsePairingResponse(r2.data)
+          var d2 = p2.dbg || {}
+          var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
+          addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
+
+          if (p2.status === 'wait') {
+            sawTapRequired = true
+            waitForResult()
+          } else if (p2.status === 'pending') {
+            waitForResult()
+          } else if (p2.status === 'ok') {
+            if (sawTapRequired || d2.hasSigner) {
+              state = 'DONE'
+              updateStatus('PAIRED!', 0x00cc44)
+              addLog('Key enrolled!', 0x00cc44)
+            } else {
+              addLog('NFC:ok-skip(no tap)', 0xff8800)
+              waitForResult()
+            }
+          } else if (p2.status === 'error') {
+            state = 'IDLE'
+            updateStatus('PAIR ERROR', 0xff4444)
+            addLog(p2.error || 'Error', 0xff4444)
+          }
+        })
+      }
 
       state = 'WAITING_KEYCARD'
       updateStatus('TAP KEY CARD', 0xff4444)

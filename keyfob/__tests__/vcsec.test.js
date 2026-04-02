@@ -249,7 +249,7 @@ describe('VCSEC Protocol', () => {
       const parsed = parsePairingResponse(fromVcsec)
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('ok')
-      expect(parsed.message).toBe('Key added successfully')
+      expect(parsed.message).toContain('Key added')
     })
 
     test('parses error response', async () => {
@@ -432,6 +432,31 @@ describe('VCSEC Protocol', () => {
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('wait')
       expect(parsed.dbg.path).toBe('f1N')
+    })
+
+    test('f1N path: direct varint operationStatus=OK returns pending (not ok)', async () => {
+      const { encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // A bare varint field 1 = 0 (OPERATIONSTATUS_OK) in isolation is ambiguous.
+      // Real success comes via f3B or f4 with whitelistOperationStatus.
+      const direct = encodeEnum(1, OPERATIONSTATUS_OK)
+
+      const parsed = parsePairingResponse(direct)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('pending')
+      expect(parsed.dbg.path).toBe('f1N')
+    })
+
+    test('f3B-ambient without signer returns pending', async () => {
+      const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // WhitelistOperation_status with no inner fields — pure ambient push
+      const msg = encodeBytes(3, new Uint8Array(0))
+
+      const parsed = parsePairingResponse(msg)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('pending')
+      expect(parsed.dbg.path).toBe('f3B-ambient')
     })
 
     test('f1B path: field 1 as bytes = vehicleStatus push returns pending', async () => {

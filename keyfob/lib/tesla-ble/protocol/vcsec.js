@@ -262,12 +262,17 @@ function parsePairingResponse(data) {
       const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo
       if (wlStatus[2] instanceof Uint8Array) {
-        const signer = decodeMessage(wlStatus[2])
-        dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
+        dbg.signer = wlStatus[2]  // raw KeyIdentifier bytes — presence means an enrolled key approved
       }
 
-      // Field 1 absent — this is an ambient car push (keychainStatus etc.), not a pairing result
+      // Field 1 absent — check for signer before treating as ambient
       if (wlInfo === -1) {
+        if (dbg.signer) {
+          // signerOfOperation present without wlInfo = auto-approval by already-enrolled key
+          dbg.wlFault = 0
+          dbg.hasSigner = true
+          return { success: true, status: 'ok', message: 'Key added (auto-approved)', dbg }
+        }
         dbg.path = 'f3B-ambient'
         return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
@@ -292,7 +297,7 @@ function parsePairingResponse(data) {
       if (fields[1] === OPERATIONSTATUS_ERROR) {
         return { success: false, status: 'error', error: 'OpStatus error', dbg }
       }
-      return { success: true, status: 'ok', message: 'Key added', dbg }
+      return { success: true, status: 'pending', message: 'Op status ok (awaiting result)', dbg }
     }
 
     // field 1 = FromVCSECMessage.vehicleStatus (bytes) — unsolicited status push from car,
@@ -331,10 +336,15 @@ function parsePairingResponse(data) {
       const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo
       if (wlStatus[2] instanceof Uint8Array) {
-        const signer = decodeMessage(wlStatus[2])
-        dbg.signer = signer[1] instanceof Uint8Array ? signer[1] : null
+        dbg.signer = wlStatus[2]  // raw KeyIdentifier bytes — presence means an enrolled key approved
       }
       if (wlInfo === -1) {
+        if (dbg.signer) {
+          // signerOfOperation present without wlInfo = auto-approval by already-enrolled key
+          dbg.wlFault = 0
+          dbg.hasSigner = true
+          return { success: true, status: 'ok', message: 'Key added (auto-approved)', dbg }
+        }
         return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
       if (wlInfo === 0) {

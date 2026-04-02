@@ -231,8 +231,9 @@ describe('Pairing Flow State Machine', () => {
       expect(okParsed.success).toBe(true)
     })
 
-    test('immediate OK response (rare but valid)', () => {
-      // In some cases, Tesla might accept immediately without keycard
+    test('parsePairingResponse returns ok for immediate OK, but doPair() skips it without prior tap', () => {
+      // Parser returns 'ok' for this wire format (operationStatus=0 in commandStatus field 4).
+      // At the flow level, doPair() rejects it because sawTapRequired=false and no signer.
       const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
       expect(pairResult.success).toBe(true)
 
