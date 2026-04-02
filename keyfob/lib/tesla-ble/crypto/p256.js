@@ -228,15 +228,30 @@ const jacDbl = (RX, RY, RZ, X, Y, Z) => {
   if (_profile) _profile.jacDbl_calls = (_profile.jacDbl_calls || 0) + 1
   if (isZero(Z)) { for (let i = 0; i < 8; i++) RZ[i] = 0; return }
   // A = Y^2, B = 4*X*Y^2, C = 8*Y^4
-  modSqr(_dbl_A, Y); modMul(_dbl_B, X, _dbl_A); modAdd(_dbl_B, _dbl_B, _dbl_B); modAdd(_dbl_B, _dbl_B, _dbl_B)
+  const t0 = _profile ? Date.now() : 0
+  modSqr(_dbl_A, Y)
+  if (_profile) _profile.dbl_sqr_A_ms = (_profile.dbl_sqr_A_ms || 0) + (Date.now() - t0)
+  
+  const t1 = _profile ? Date.now() : 0
+  modMul(_dbl_B, X, _dbl_A); modAdd(_dbl_B, _dbl_B, _dbl_B); modAdd(_dbl_B, _dbl_B, _dbl_B)
+  if (_profile) _profile.dbl_mul_B_ms = (_profile.dbl_mul_B_ms || 0) + (Date.now() - t1)
+  
+  const t2 = _profile ? Date.now() : 0
   modSqr(_dbl_C, _dbl_A); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C)
+  if (_profile) _profile.dbl_sqr_C_ms = (_profile.dbl_sqr_C_ms || 0) + (Date.now() - t2)
+  
   // D = 3*(X-Z^2)*(X+Z^2) for a=-3
+  const t3 = _profile ? Date.now() : 0
   modSqr(_dbl_t, Z); modSub(_dbl_D, X, _dbl_t); modAdd(_dbl_t, X, _dbl_t)
   modMul(_dbl_D, _dbl_D, _dbl_t); modAdd(_dbl_t, _dbl_D, _dbl_D); modAdd(_dbl_D, _dbl_t, _dbl_D)
+  if (_profile) _profile.dbl_mul_D_ms = (_profile.dbl_mul_D_ms || 0) + (Date.now() - t3)
+  
   // X' = D^2 - 2*B, Y' = D*(B-X') - C, Z' = 2*Y*Z
+  const t4 = _profile ? Date.now() : 0
   modSqr(RX, _dbl_D); modSub(RX, RX, _dbl_B); modSub(RX, RX, _dbl_B)
   modSub(_dbl_t, _dbl_B, RX); modMul(RY, _dbl_D, _dbl_t); modSub(RY, RY, _dbl_C)
   modMul(RZ, Y, Z); modAdd(RZ, RZ, RZ)
+  if (_profile) _profile.dbl_final_ms = (_profile.dbl_final_ms || 0) + (Date.now() - t4)
 }
 
 const _madd_t = new Uint32Array(8), _madd_t2 = new Uint32Array(8)
@@ -245,17 +260,24 @@ const _madd_H = new Uint32Array(8), _madd_R = new Uint32Array(8), _madd_V = new 
 const jacAddAffine = (RX, RY, RZ, X1, Y1, Z1, X2, Y2) => {
   if (_profile) _profile.jacAdd_calls = (_profile.jacAdd_calls || 0) + 1
   if (isZero(Z1)) { copy(RX, X2); copy(RY, Y2); RZ[0] = 1; for (let i = 1; i < 8; i++) RZ[i] = 0; return }
+  
+  const t0 = _profile ? Date.now() : 0
   modSqr(_madd_t, Z1); modMul(_madd_t2, X2, _madd_t)
   modSub(_madd_H, _madd_t2, X1)
   modMul(_madd_t, _madd_t, Z1); modMul(_madd_t2, Y2, _madd_t)
   modSub(_madd_R, _madd_t2, Y1)
+  if (_profile) _profile.add_setup_ms = (_profile.add_setup_ms || 0) + (Date.now() - t0)
+  
   if (isZero(_madd_H)) { if (isZero(_madd_R)) { jacDbl(RX, RY, RZ, X1, Y1, Z1) } else { for (let i = 0; i < 8; i++) RZ[i] = 0 } return }
+  
+  const t1 = _profile ? Date.now() : 0
   modSqr(_madd_t, _madd_H)
   modMul(_madd_V, X1, _madd_t)
   modMul(_madd_t2, _madd_t, _madd_H)
   modSqr(RX, _madd_R); modSub(RX, RX, _madd_t2); modSub(RX, RX, _madd_V); modSub(RX, RX, _madd_V)
   modSub(_madd_t, _madd_V, RX); modMul(RY, _madd_R, _madd_t); modMul(_madd_t, Y1, _madd_t2); modSub(RY, RY, _madd_t)
   modMul(RZ, Z1, _madd_H)
+  if (_profile) _profile.add_compute_ms = (_profile.add_compute_ms || 0) + (Date.now() - t1)
 }
 
 // Buffers for scalar multiplication

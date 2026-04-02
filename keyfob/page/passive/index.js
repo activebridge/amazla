@@ -129,7 +129,27 @@ function onPerfTest() {
     console.log('[PERF] ECDH:', profile.scalarMul_ms + 'ms')
     console.log('[PERF] modInv calls:', profile.modInv_calls + ', time:', profile.modInv_ms + 'ms')
     console.log('[PERF] jacDbl calls:', profile.jacDbl_calls)
+    
+    // Granular jacDbl breakdown
+    if (profile.dbl_sqr_A_ms || profile.dbl_mul_B_ms) {
+      console.log('[PERF] jacDbl breakdown (per call avg):')
+      console.log('[PERF]   sqr(A):', (profile.dbl_sqr_A_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
+      console.log('[PERF]   mul(B):', (profile.dbl_mul_B_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
+      console.log('[PERF]   sqr(C):', (profile.dbl_sqr_C_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
+      console.log('[PERF]   mul(D):', (profile.dbl_mul_D_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
+      console.log('[PERF]   final:', (profile.dbl_final_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
+      var dbl_total = (profile.dbl_sqr_A_ms || 0) + (profile.dbl_mul_B_ms || 0) + (profile.dbl_sqr_C_ms || 0) + (profile.dbl_mul_D_ms || 0) + (profile.dbl_final_ms || 0)
+      console.log('[PERF]   jacDbl total:', dbl_total + 'ms')
+    }
+    
     console.log('[PERF] jacAdd calls:', profile.jacAdd_calls)
+    if (profile.add_setup_ms || profile.add_compute_ms) {
+      console.log('[PERF] jacAdd breakdown (per call avg):')
+      console.log('[PERF]   setup:', (profile.add_setup_ms / profile.jacAdd_calls).toFixed(2) + 'ms')
+      console.log('[PERF]   compute:', (profile.add_compute_ms / profile.jacAdd_calls).toFixed(2) + 'ms')
+      var add_total = (profile.add_setup_ms || 0) + (profile.add_compute_ms || 0)
+      console.log('[PERF]   jacAdd total:', add_total + 'ms')
+    }
     console.log('[PERF] Result:', dumpHex(shared, 16))
     
     addLog('Total: ' + elapsed + 'ms', 0x00cc44)
