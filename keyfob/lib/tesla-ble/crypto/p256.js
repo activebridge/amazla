@@ -346,9 +346,11 @@ const toWNAF = (k) => {
 }
 
 const precompute = (Px, Py) => {
-  // Currently only wNAF-4 is stable; wNAF-9 has implementation issues
-  precompute4(Px, Py)
-  // TODO: Fix and enable wNAF-9 for better performance
+  if (_WNAF_WIDTH === 5) {
+    precompute8(Px, Py)
+  } else {
+    precompute4(Px, Py)
+  }
 }
 
 // Original wNAF-4 (proven, unchanged)
@@ -383,13 +385,111 @@ const precompute4 = (Px, Py) => {
   sub(_pre.ny[1], P, _pre.y[1])
 }
 
-// Buffers for wNAF-9 precomputation
-const _pre9_tmp_x = new Uint32Array(8), _pre9_tmp_y = new Uint32Array(8), _pre9_tmp_z = new Uint32Array(8)
-const _pre9_acc_x = new Uint32Array(8), _pre9_acc_y = new Uint32Array(8), _pre9_acc_z = new Uint32Array(8)
-const _pre9_2P_x = new Uint32Array(8), _pre9_2P_y = new Uint32Array(8), _pre9_2P_z = new Uint32Array(8)
-const _pre9_zi = new Uint32Array(8), _pre9_zi2 = new Uint32Array(8), _pre9_zi3 = new Uint32Array(8)
+// Allocate extra buffers for wNAF-5 precomputation (8 points via batch inversion)
+const _pre5_buf_x = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), 
+                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
+const _pre5_buf_y = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8),
+                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
+const _pre5_buf_z = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8),
+                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
+const _pre5_prod = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), 
+                     new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
+const _pre5_inv = new Uint32Array(8), _pre5_t = new Uint32Array(8)
+const _pre5_2x = new Uint32Array(8), _pre5_2y = new Uint32Array(8), _pre5_2z = new Uint32Array(8)
+const _pre9_zi = new Uint32Array(8), _pre9_zi2 = new Uint32Array(8) // Needed for both precompute8 and other uses
 
-// wNAF-9: Optimized using Montgomery batch inversion for all 256 points
+// wNAF-5: Precompute 8 odd multiples {P, 3P, 5P, 7P, 9P, 11P, 13P, 15P}
+// Uses batch inversion: 1 modInv + 6 modMul for all 7 points
+const precompute8 = (Px, Py) => {
+  // Step 1: Compute 2P
+  copy(_pre.x[0], Px); copy(_pre.y[0], Py); sub(_pre.ny[0], P, Py)
+  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
+  jacDbl(_pre5_2x, _pre5_2y, _pre5_2z, Px, Py, _pre_tz)
+  
+  // Step 2: Convert 2P to affine
+  modInv(_pre5_t, _pre5_2z); modSqr(_pre5_inv, _pre5_t)
+  modMul(_pre_tx, _pre5_2x, _pre5_inv)
+  modMul(_pre5_t, _pre5_inv, _pre5_t)
+  modMul(_pre_ty, _pre5_2y, _pre5_t)
+  
+  // Step 3: Compute odd multiples: 3P, 5P, 7P, 9P, 11P, 13P, 15P
+  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
+  jacAddAffine(_pre5_buf_x[0], _pre5_buf_y[0], _pre5_buf_z[0], Px, Py, _pre_tz, _pre_tx, _pre_ty) // 3P
+  jacAddAffine(_pre5_buf_x[1], _pre5_buf_y[1], _pre5_buf_z[1], _pre5_buf_x[0], _pre5_buf_y[0], _pre5_buf_z[0], _pre_tx, _pre_ty) // 5P
+  jacAddAffine(_pre5_buf_x[2], _pre5_buf_y[2], _pre5_buf_z[2], _pre5_buf_x[1], _pre5_buf_y[1], _pre5_buf_z[1], _pre_tx, _pre_ty) // 7P
+  jacAddAffine(_pre5_buf_x[3], _pre5_buf_y[3], _pre5_buf_z[3], _pre5_buf_x[2], _pre5_buf_y[2], _pre5_buf_z[2], _pre_tx, _pre_ty) // 9P
+  jacAddAffine(_pre5_buf_x[4], _pre5_buf_y[4], _pre5_buf_z[4], _pre5_buf_x[3], _pre5_buf_y[3], _pre5_buf_z[3], _pre_tx, _pre_ty) // 11P
+  jacAddAffine(_pre5_buf_x[5], _pre5_buf_y[5], _pre5_buf_z[5], _pre5_buf_x[4], _pre5_buf_y[4], _pre5_buf_z[4], _pre_tx, _pre_ty) // 13P
+  jacAddAffine(_pre5_buf_x[6], _pre5_buf_y[6], _pre5_buf_z[6], _pre5_buf_x[5], _pre5_buf_y[5], _pre5_buf_z[5], _pre_tx, _pre_ty) // 15P
+  
+  // Step 4: Batch invert all 7 Z coordinates with 1 modInv + 6 modMul
+  copy(_pre5_prod[0], _pre5_buf_z[0])
+  modMul(_pre5_prod[1], _pre5_prod[0], _pre5_buf_z[1])
+  modMul(_pre5_prod[2], _pre5_prod[1], _pre5_buf_z[2])
+  modMul(_pre5_prod[3], _pre5_prod[2], _pre5_buf_z[3])
+  modMul(_pre5_prod[4], _pre5_prod[3], _pre5_buf_z[4])
+  modMul(_pre5_prod[5], _pre5_prod[4], _pre5_buf_z[5])
+  modMul(_pre5_prod[6], _pre5_prod[5], _pre5_buf_z[6])
+  modInv(_pre5_inv, _pre5_prod[6])
+  
+  // Back-substitute to get individual inversions
+  modMul(_pre5_t, _pre5_prod[5], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_buf_z[6])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[7], _pre5_buf_x[6], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[7], _pre5_buf_y[6], _pre5_t)
+  sub(_pre.ny[7], P, _pre.y[7])
+  
+  modMul(_pre5_t, _pre5_prod[4], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[6], _pre5_buf_x[5], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[6], _pre5_buf_y[5], _pre5_t)
+  sub(_pre.ny[6], P, _pre.y[6])
+  
+  modMul(_pre5_t, _pre5_prod[3], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[5], _pre5_buf_x[4], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[5], _pre5_buf_y[4], _pre5_t)
+  sub(_pre.ny[5], P, _pre.y[5])
+  
+  modMul(_pre5_t, _pre5_prod[2], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[4], _pre5_buf_x[3], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[4], _pre5_buf_y[3], _pre5_t)
+  sub(_pre.ny[4], P, _pre.y[4])
+  
+  modMul(_pre5_t, _pre5_prod[1], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[3], _pre5_buf_x[2], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[3], _pre5_buf_y[2], _pre5_t)
+  sub(_pre.ny[3], P, _pre.y[3])
+  
+  modMul(_pre5_t, _pre5_prod[0], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[2], _pre5_buf_x[1], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[2], _pre5_buf_y[1], _pre5_t)
+  sub(_pre.ny[2], P, _pre.y[2])
+  
+  modMul(_pre5_t, _pre5_buf_z[0], _pre5_inv)
+  modMul(_pre5_t, _pre5_t, _pre5_prod[0])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
+  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
+  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[1], _pre5_buf_x[0], _pre9_zi2)
+  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[1], _pre5_buf_y[0], _pre5_t)
+  sub(_pre.ny[1], P, _pre.y[1])
+}
 // wNAF-9: disabled due to implementation bugs
 // Original plan was to optimize precomputation with 256 points instead of 4,
 // but current implementation produces incorrect ECDH results
