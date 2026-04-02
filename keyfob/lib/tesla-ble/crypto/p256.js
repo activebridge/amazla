@@ -223,7 +223,6 @@ const modInv = (r, a) => {
 // Point operations in Jacobian coordinates
 const _dbl_A = new Uint32Array(8), _dbl_B = new Uint32Array(8)
 const _dbl_C = new Uint32Array(8), _dbl_D = new Uint32Array(8), _dbl_t = new Uint32Array(8)
-const _dbl_z2 = new Uint32Array(8), _dbl_z4 = new Uint32Array(8), _dbl_x2 = new Uint32Array(8)
 
 const jacDbl = (RX, RY, RZ, X, Y, Z) => {
   if (_profile) _profile.jacDbl_calls = (_profile.jacDbl_calls || 0) + 1
@@ -241,17 +240,10 @@ const jacDbl = (RX, RY, RZ, X, Y, Z) => {
   modSqr(_dbl_C, _dbl_A); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C)
   if (_profile) _profile.dbl_sqr_C_ms = (_profile.dbl_sqr_C_ms || 0) + (Date.now() - t2)
   
-  // D = 3*(X-Z^2)*(X+Z^2) = 3*(X^2 - Z^4) for a=-3
-  // Optimized: replace modMul with 2 modSqr operations
-  // Original: modMul(_dbl_D, _dbl_D, _dbl_t) = (X-Z^2)*(X+Z^2)
-  // Optimized: Compute X^2 - Z^4, then multiply by 3 using only additions
+  // D = 3*(X-Z^2)*(X+Z^2) for a=-3
   const t3 = _profile ? Date.now() : 0
-  modSqr(_dbl_z2, Z);                    // z2 = Z^2
-  modSqr(_dbl_z4, _dbl_z2);              // z4 = Z^4
-  modSqr(_dbl_x2, X);                    // x2 = X^2
-  modSub(_dbl_D, _dbl_x2, _dbl_z4);      // D = X^2 - Z^4
-  modAdd(_dbl_t, _dbl_D, _dbl_D);        // t = 2*D
-  modAdd(_dbl_D, _dbl_t, _dbl_D);        // D = 3*D
+  modSqr(_dbl_t, Z); modSub(_dbl_D, X, _dbl_t); modAdd(_dbl_t, X, _dbl_t)
+  modMul(_dbl_D, _dbl_D, _dbl_t); modAdd(_dbl_t, _dbl_D, _dbl_D); modAdd(_dbl_D, _dbl_t, _dbl_D)
   if (_profile) _profile.dbl_mul_D_ms = (_profile.dbl_mul_D_ms || 0) + (Date.now() - t3)
   
   // X' = D^2 - 2*B, Y' = D*(B-X') - C, Z' = 2*Y*Z
