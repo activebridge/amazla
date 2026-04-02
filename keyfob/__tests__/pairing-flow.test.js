@@ -36,14 +36,15 @@ function buildMockFromVCSECResponse(operationStatus, whitelistFault = null) {
 }
 
 // Build mock OK response for keycard tap confirmation
-// Tesla sends commandStatus { whitelistOperationStatus (field 3, bytes) } — operationStatus absent (defaults to OK=0)
-// Real example bytes (after length prefix stripped): 22 0a 1a 08 12 06 0a 04 5f 0d 64 b3
+// Tesla sends commandStatus { whitelistOperationStatus { wlInfo=0 (NONE=success) } }
+// operationStatus (field 1 of commandStatus) absent — OK=0 is protobuf default
+// Per Tesla SDK: this is the ONLY terminal success condition.
 function buildOkKeycardResponse() {
-  const whitelistOpStatus = new Uint8Array([0x12, 0x02, 0x08, 0x00]) // minimal sub-message
-  const commandStatus = new Uint8Array(2 + whitelistOpStatus.length)
-  commandStatus[0] = 0x1a // field 3, wire type 2
-  commandStatus[1] = whitelistOpStatus.length
-  commandStatus.set(whitelistOpStatus, 2)
+  const wlStatusBytes = new Uint8Array([0x08, 0x00]) // field 1 (wlInfo) = varint 0 (NONE=success)
+  const commandStatus = new Uint8Array(2 + wlStatusBytes.length)
+  commandStatus[0] = 0x1a // field 3 (whitelistOperationStatus), wire type 2
+  commandStatus[1] = wlStatusBytes.length
+  commandStatus.set(wlStatusBytes, 2)
 
   const result = new Uint8Array(2 + commandStatus.length)
   result[0] = 0x22 // field 4 (commandStatus), wire type 2
@@ -145,8 +146,8 @@ describe('Pairing Response Parsing', () => {
   })
 
   describe('OK response (success)', () => {
-    test('parses OK status correctly', () => {
-      const response = buildOkResponse()
+    test('parses OK status correctly — requires whitelistOperationStatus per Tesla SDK', () => {
+      const response = buildOkKeycardResponse()
       const parsed = parsePairingResponse(response)
 
       expect(parsed.status).toBe('ok')
@@ -154,11 +155,20 @@ describe('Pairing Response Parsing', () => {
     })
 
     test('OK response indicates key was added', () => {
-      const response = buildOkResponse()
+      const response = buildOkKeycardResponse()
       const parsed = parsePairingResponse(response)
 
       expect(parsed.status).toBe('ok')
-      expect(parsed.message).toContain('success')
+      expect(parsed.message).toContain('Key added')
+    })
+
+    test('commandStatus with only operationStatus=OK (no whitelistOperationStatus) returns pending', () => {
+      // Per Tesla SDK: operationStatus alone is not terminal — keep waiting for whitelistOperationStatus
+      const response = buildOkResponse()
+      const parsed = parsePairingResponse(response)
+
+      expect(parsed.status).toBe('pending')
+      expect(parsed.success).toBe(true)
     })
   })
 
@@ -214,7 +224,7 @@ describe('Pairing Flow State Machine', () => {
   // These tests verify the expected state transitions during pairing
 
   describe('Happy path', () => {
-    test('flow: send request -> WAIT -> tap card -> OK', () => {
+    test('flow: send request -> WAIT -> tap card -> OK (with whitelistOperationStatus)', () => {
       // Step 1: Build and send pair message
       const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
       expect(pairResult.success).toBe(true)
@@ -224,22 +234,19 @@ describe('Pairing Flow State Machine', () => {
       const waitParsed = parsePairingResponse(waitResponse)
       expect(waitParsed.status).toBe('wait')
 
-      // Step 3: User taps keycard, receive OK response
-      const okResponse = buildOkResponse()
-      const okParsed = parsePairingResponse(okResponse)
+      // Step 3: User taps keycard — Tesla sends commandStatus { whitelistOperationStatus { wlInfo=0 } }
+      const okParsed = parsePairingResponse(buildOkKeycardResponse())
       expect(okParsed.status).toBe('ok')
       expect(okParsed.success).toBe(true)
     })
 
-    test('parsePairingResponse returns ok for immediate OK, but doPair() skips it without prior tap', () => {
-      // Parser returns 'ok' for this wire format (operationStatus=0 in commandStatus field 4).
-      // At the flow level, doPair() rejects it because sawTapRequired=false and no signer.
+    test('commandStatus operationStatus=OK without whitelistOperationStatus returns pending', () => {
+      // Per Tesla SDK: not terminal without whitelistOperationStatus — doPair() keeps waiting
       const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
       expect(pairResult.success).toBe(true)
 
-      const okResponse = buildOkResponse()
-      const parsed = parsePairingResponse(okResponse)
-      expect(parsed.status).toBe('ok')
+      const parsed = parsePairingResponse(buildOkResponse())
+      expect(parsed.status).toBe('pending')
     })
   })
 
@@ -455,9 +462,8 @@ describe('Multiple Response Handling', () => {
     expect(parsed.status).toBe('wait')
   })
 
-  test('handles single OK response', () => {
-    const response = buildOkResponse()
-    const parsed = parsePairingResponse(response)
+  test('handles single OK response (with whitelistOperationStatus)', () => {
+    const parsed = parsePairingResponse(buildOkKeycardResponse())
     expect(parsed.status).toBe('ok')
   })
 
@@ -476,8 +482,8 @@ describe('Multiple Response Handling', () => {
       const wait = parsePairingResponse(buildWaitResponse())
       expect(wait.status).toBe('wait')
     }
-    // Final response after NFC tap + touchscreen confirm: OK
-    const ok = parsePairingResponse(buildOkResponse())
+    // Final response after NFC tap: commandStatus { whitelistOperationStatus { wlInfo=0 } }
+    const ok = parsePairingResponse(buildOkKeycardResponse())
     expect(ok.status).toBe('ok')
     expect(ok.success).toBe(true)
   })

@@ -21,10 +21,14 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noConsole": "off"
+        "noConsole": "off",
+        "noAccessorFieldMismatch": "off"
       },
       "correctness": {
         "noUnusedVariables": "warn"
+      },
+      "complexity": {
+        "useOptionalChain": "off"
       }
     }
   },

@@ -1,14 +1,11 @@
 // Minimal Protobuf encoder/decoder for Tesla BLE protocol
-// Only implements what's needed for VCSEC messages
 
-// Wire types
 const WIRE_VARINT = 0
 const WIRE_64BIT = 1
 const WIRE_LENGTH_DELIMITED = 2
 const WIRE_32BIT = 5
 
-// Encode varint
-function encodeVarint(value) {
+const encodeVarint = (value) => {
   const bytes = []
   while (value > 0x7f) {
     bytes.push((value & 0x7f) | 0x80)
@@ -18,8 +15,7 @@ function encodeVarint(value) {
   return new Uint8Array(bytes)
 }
 
-// Decode varint from buffer at offset
-function decodeVarint(buffer, offset) {
+const decodeVarint = (buffer, offset) => {
   let value = 0
   let shift = 0
   let pos = offset
@@ -27,37 +23,23 @@ function decodeVarint(buffer, offset) {
   while (pos < buffer.length) {
     const byte = buffer[pos++]
     value |= (byte & 0x7f) << shift
-
-    if ((byte & 0x80) === 0) {
-      return { value, bytesRead: pos - offset }
-    }
-
+    if ((byte & 0x80) === 0) return { value, bytesRead: pos - offset }
     shift += 7
-    if (shift > 35) {
-      throw new Error('Varint too long')
-    }
+    if (shift > 35) throw new Error('Varint too long')
   }
 
   throw new Error('Unexpected end of buffer')
 }
 
-// Encode field key (field number + wire type)
-function encodeFieldKey(fieldNumber, wireType) {
-  return encodeVarint((fieldNumber << 3) | wireType)
-}
+const encodeFieldKey = (fieldNumber, wireType) =>
+  encodeVarint((fieldNumber << 3) | wireType)
 
-// Decode field key
-function decodeFieldKey(buffer, offset) {
+const decodeFieldKey = (buffer, offset) => {
   const { value, bytesRead } = decodeVarint(buffer, offset)
-  return {
-    fieldNumber: value >>> 3,
-    wireType: value & 0x07,
-    bytesRead
-  }
+  return { fieldNumber: value >>> 3, wireType: value & 0x07, bytesRead }
 }
 
-// Encode length-delimited field (bytes/string/embedded message)
-function encodeBytes(fieldNumber, data) {
+const encodeBytes = (fieldNumber, data) => {
   const key = encodeFieldKey(fieldNumber, WIRE_LENGTH_DELIMITED)
   const length = encodeVarint(data.length)
   const result = new Uint8Array(key.length + length.length + data.length)
@@ -67,8 +49,7 @@ function encodeBytes(fieldNumber, data) {
   return result
 }
 
-// Encode varint field
-function encodeVarintField(fieldNumber, value) {
+const encodeVarintField = (fieldNumber, value) => {
   const key = encodeFieldKey(fieldNumber, WIRE_VARINT)
   const val = encodeVarint(value)
   const result = new Uint8Array(key.length + val.length)
@@ -77,13 +58,9 @@ function encodeVarintField(fieldNumber, value) {
   return result
 }
 
-// Encode enum field (same as varint)
-function encodeEnum(fieldNumber, value) {
-  return encodeVarintField(fieldNumber, value)
-}
+const encodeEnum = (fieldNumber, value) => encodeVarintField(fieldNumber, value)
 
-// Encode fixed32 field
-function encodeFixed32(fieldNumber, value) {
+const encodeFixed32 = (fieldNumber, value) => {
   const key = encodeFieldKey(fieldNumber, WIRE_32BIT)
   const result = new Uint8Array(key.length + 4)
   result.set(key)
@@ -94,8 +71,7 @@ function encodeFixed32(fieldNumber, value) {
   return result
 }
 
-// Concatenate multiple encoded fields
-function concat(...arrays) {
+const concat = (...arrays) => {
   const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0)
   const result = new Uint8Array(totalLength)
   let offset = 0
@@ -106,8 +82,7 @@ function concat(...arrays) {
   return result
 }
 
-// Decode message into field map
-function decodeMessage(buffer) {
+const decodeMessage = (buffer) => {
   const fields = {}
   let offset = 0
 
@@ -148,11 +123,8 @@ function decodeMessage(buffer) {
 
     offset += valueBytes
 
-    // Store field (handle repeated fields)
     if (fields[fieldNumber] !== undefined) {
-      if (!Array.isArray(fields[fieldNumber])) {
-        fields[fieldNumber] = [fields[fieldNumber]]
-      }
+      if (!Array.isArray(fields[fieldNumber])) fields[fieldNumber] = [fields[fieldNumber]]
       fields[fieldNumber].push(value)
     } else {
       fields[fieldNumber] = value
@@ -163,6 +135,10 @@ function decodeMessage(buffer) {
 }
 
 export {
+  WIRE_VARINT,
+  WIRE_64BIT,
+  WIRE_LENGTH_DELIMITED,
+  WIRE_32BIT,
   encodeVarint,
   decodeVarint,
   encodeFieldKey,
@@ -173,8 +149,4 @@ export {
   encodeFixed32,
   concat,
   decodeMessage,
-  WIRE_VARINT,
-  WIRE_LENGTH_DELIMITED,
-  WIRE_32BIT,
-  WIRE_64BIT
 }

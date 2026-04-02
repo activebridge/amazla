@@ -266,22 +266,21 @@ describe('VCSEC Protocol', () => {
       expect(parsed.status).toBe('error')
     })
 
-    test('f3B with signerOfOperation (field 2 bytes) is a valid success — signerOfOperation is per vcsec.proto', async () => {
+    test('f3B (outer field 3, no field 4) is never terminal — always pending per Tesla SDK', async () => {
       const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
-      // WhitelistOperation_status.signerOfOperation is field 2 (KeyIdentifier = bytes).
-      // Per vcsec.proto this is a real field. field 1 absent = NONE = success.
-      // This matches the actual response seen on device after auto-approval by an existing key.
+      // Per Tesla SDK: only commandStatus (outer field 4) is the terminal condition.
+      // Outer field 3 (keychainStatus / ambient push) is never a pairing result.
+      // signerOfOperation is preserved in dbg for debug visibility.
       const sha1 = new Uint8Array(20).fill(0xab)
       const keyIdentifier = encodeBytes(1, sha1)         // KeyIdentifier { publicKeySHA1 }
       const wlOpStatus = encodeBytes(2, keyIdentifier)   // WhitelistOperation_status { signerOfOperation }
-      const msg = encodeBytes(3, wlOpStatus)             // CommandStatus { whitelistOperationStatus }
+      const msg = encodeBytes(3, wlOpStatus)             // outer field 3 (no field 4)
 
       const parsed = parsePairingResponse(msg)
       expect(parsed.success).toBe(true)
-      expect(parsed.status).toBe('ok')
+      expect(parsed.status).toBe('pending')
       expect(parsed.dbg.path).toBe('f3B')
-      expect(parsed.dbg.wlFault).toBe(0)
       expect(parsed.dbg.signer).toBeInstanceOf(Uint8Array)
     })
 
@@ -447,16 +446,16 @@ describe('VCSEC Protocol', () => {
       expect(parsed.dbg.path).toBe('f1N')
     })
 
-    test('f3B-ambient without signer returns pending', async () => {
+    test('f3B with no inner fields returns pending', async () => {
       const { encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
-      // WhitelistOperation_status with no inner fields — pure ambient push
+      // All f3B (outer field 3, no field 4) responses are non-terminal per Tesla SDK
       const msg = encodeBytes(3, new Uint8Array(0))
 
       const parsed = parsePairingResponse(msg)
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('pending')
-      expect(parsed.dbg.path).toBe('f3B-ambient')
+      expect(parsed.dbg.path).toBe('f3B')
     })
 
     test('f1B path: field 1 as bytes = vehicleStatus push returns pending', async () => {
