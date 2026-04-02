@@ -6,10 +6,10 @@
 let _profile = null
 const _setProfile = (p) => { _profile = p }
 
-// wNAF width configuration (4 or 9)
+// wNAF width configuration (4, 5, or 9)
 let _WNAF_WIDTH = 4
 const _setWNAFWidth = (w) => {
-  if (w !== 4 && w !== 9) throw new Error('Only wNAF-4 and wNAF-9 supported')
+  if (w !== 4 && w !== 5 && w !== 9) throw new Error('Only wNAF-4, wNAF-5, and wNAF-9 supported')
   _WNAF_WIDTH = w
 }
 
