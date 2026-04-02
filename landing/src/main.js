@@ -186,18 +186,65 @@ function initTilt() {
   });
 }
 
-function initDevicesMore() {
-  const btn = document.getElementById('devices-more-btn');
-  const items = document.querySelectorAll('.devices-more-item');
-  if (!btn || !items.length) return;
+function initDevicesCarousel() {
+  const carousel = document.getElementById('devices-carousel');
+  const prevBtn = document.getElementById('devices-prev-btn');
+  const nextBtn = document.getElementById('devices-next-btn');
+  if (!carousel || !prevBtn || !nextBtn) return;
+  const track = carousel.firstElementChild;
+  if (!track) return;
 
-  let expanded = false;
-  btn.addEventListener('click', () => {
-    expanded = !expanded;
-    items.forEach((el) => el.classList.toggle('hidden', !expanded));
-    btn.textContent = expanded ? 'Show less' : '+ more';
-    btn.setAttribute('aria-expanded', String(expanded));
+  let ticking = false;
+  const applyCenterScale = () => {
+    const cards = track.querySelectorAll('.devices-card');
+    const centerX = carousel.getBoundingClientRect().left + carousel.clientWidth / 2;
+    const maxDistance = Math.max(carousel.clientWidth * 0.5, 1);
+
+    cards.forEach((card) => {
+      const imageWrap = card.querySelector('.devices-card-image');
+      const rect = card.getBoundingClientRect();
+      const cardCenter = rect.left + rect.width / 2;
+      const distance = Math.abs(centerX - cardCenter);
+      const ratio = Math.min(distance / maxDistance, 1);
+      const scale = 1.12 - ratio * 0.2;
+      const opacity = 1 - ratio * 0.25;
+      if (imageWrap) {
+        imageWrap.style.transform = `scale(${scale.toFixed(3)})`;
+      }
+      card.style.opacity = `${opacity.toFixed(3)}`;
+      card.style.zIndex = String(Math.round((1 - ratio) * 100));
+    });
+  };
+
+  const onScroll = () => {
+    if (!ticking) {
+      requestAnimationFrame(() => {
+        applyCenterScale();
+        ticking = false;
+      });
+      ticking = true;
+    }
+  };
+
+  carousel.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', applyCenterScale);
+
+  const step = () => Math.max(carousel.clientWidth * 0.42, 240);
+  prevBtn.addEventListener('click', () => {
+    if (carousel.scrollLeft <= 8) {
+      carousel.scrollLeft = carousel.scrollWidth - carousel.clientWidth - 8;
+    }
+    carousel.scrollBy({ left: -step(), behavior: 'smooth' });
   });
+  nextBtn.addEventListener('click', () => {
+    const atEnd = carousel.scrollLeft + carousel.clientWidth >= carousel.scrollWidth - 8;
+    if (atEnd) {
+      carousel.scrollLeft = 8;
+    }
+    carousel.scrollBy({ left: step(), behavior: 'smooth' });
+  });
+
+  applyCenterScale();
 }
 
 /**
@@ -240,6 +287,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initScrollAnimations();
   initParallax();
   initTilt();
-  initDevicesMore();
+  initDevicesCarousel();
   initHeroLogoAnimation();
 });

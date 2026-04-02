@@ -89,3 +89,31 @@ main > section {
     transform: translateY(0);
   }
 }
+
+.devices-carousel {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  cursor: grab;
+}
+
+.devices-carousel::-webkit-scrollbar {
+  display: none;
+}
+
+.devices-carousel:active {
+  cursor: grabbing;
+}
+
+.devices-card {
+  transition: opacity 240ms ease;
+  will-change: opacity;
+}
+
+.devices-card-image {
+  transform-origin: center center;
+  transition: transform 240ms ease;
+  will-change: transform;
+}
