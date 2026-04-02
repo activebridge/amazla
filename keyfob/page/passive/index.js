@@ -98,6 +98,14 @@ var PERF_PUB  = hexToBytes(
 )
 
 function onPerfTest() {
+  onPerfTestWithWidth(4) // Default: wNAF-4
+}
+
+function onPerfTest5() {
+  onPerfTestWithWidth(5) // Test: wNAF-5
+}
+
+function onPerfTestWithWidth(width) {
   var N = 1  // Simulate single session establishment
   addLog('PERF: Profiling ECDH...', 0xffcc00)
   updateStatus('PERF TEST...', 0xffcc00)
@@ -106,9 +114,8 @@ function onPerfTest() {
   setTimeout(function() {
     console.log('[PERF] Starting detailed profiling...')
     
-    // Use wNAF-4 (default, optimal for one-time precomputation)
-    _setWNAFWidth(4)
-    console.log('[PERF] Using wNAF-4 encoding')
+    _setWNAFWidth(width)
+    console.log('[PERF] Using wNAF-' + width + ' encoding')
     
     // Setup profiling
     var profile = {}
@@ -411,6 +418,14 @@ Page(BasePage({
       text: 'PERF TEST', text_size: 20, color: 0xffffff,
       normal_color: 0x3a2060, press_color: 0x1a0e30, radius: 12,
       click_func: onPerfTest,
+    })
+
+    // PERF TEST wNAF-5 — test optimized scalar multiplication
+    hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: 35, y: 465, w: 200, h: 50,
+      text: 'PERF wNAF-5', text_size: 18, color: 0xffffff,
+      normal_color: 0x305a2a, press_color: 0x152a0a, radius: 12,
+      click_func: onPerfTest5,
     })
 
     // GENERATE POOL button — manual key pool generation
