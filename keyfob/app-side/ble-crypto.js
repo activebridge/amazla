@@ -1,6 +1,61 @@
 // Tesla BLE Crypto Handler for App-Side
 // Builds VCSEC protobuf messages for pairing (key enrollment) only.
-// No session, no commands — those go via REST API.
+// Also generates ephemeral P-256 keypair pools for watch-side passive entry.
+
+// ============================================
+// P-256 keypair generation (BigInt, phone-side only)
+// ============================================
+
+const P256_P  = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
+const P256_A  = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
+const P256_N  = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
+const P256_GX = BigInt('0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296')
+const P256_GY = BigInt('0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5')
+
+function p256mod(a, m) { return ((a % m) + m) % m }
+
+function p256modInv(a, m) {
+  if (a < 0n) a = p256mod(a, m)
+  let [old_r, r] = [a, m], [old_s, s] = [1n, 0n]
+  while (r !== 0n) {
+    const q = old_r / r
+    ;[old_r, r] = [r, old_r - q * r]
+    ;[old_s, s] = [s, old_s - q * s]
+  }
+  if (old_s < 0n) old_s += m
+  return old_s
+}
+
+function p256PointAdd([x1, y1], [x2, y2]) {
+  if (x1 === 0n && y1 === 0n) return [x2, y2]
+  if (x2 === 0n && y2 === 0n) return [x1, y1]
+  if (x1 === x2) {
+    if (y1 !== y2) return [0n, 0n]
+    const lam = ((3n * x1 * x1 + P256_A) * p256modInv(2n * y1, P256_P)) % P256_P
+    const x3 = p256mod(lam * lam - 2n * x1, P256_P)
+    return [x3, p256mod(lam * (x1 - x3) - y1, P256_P)]
+  }
+  const lam = ((y2 - y1) * p256modInv(x2 - x1, P256_P)) % P256_P
+  const x3 = p256mod(lam * lam - x1 - x2, P256_P)
+  return [p256mod(x3, P256_P), p256mod(lam * (x1 - x3) - y1, P256_P)]
+}
+
+function p256ScalarMul(k, point) {
+  let result = [0n, 0n], addend = [...point]
+  while (k > 0n) {
+    if (k & 1n) result = p256PointAdd(result, addend)
+    addend = p256PointAdd(addend, addend)
+    k >>= 1n
+  }
+  return result
+}
+
+function bigIntToBytes32(n) {
+  const hex = n.toString(16).padStart(64, '0')
+  const b = new Uint8Array(32)
+  for (let i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16)
+  return b
+}
 
 // ============================================
 // Protobuf encoding helpers
@@ -145,6 +200,35 @@ class BLECryptoSession {
       success: true,
       messageHex: bytesToHex(buildToVCSECMessage(signedMsg))
     }
+  }
+
+  // Generate N ephemeral P-256 keypairs for watch key pool.
+  // Returns flat binary: N * 97 bytes (32 priv + 65 pub), base64-encoded.
+  // Watch stores this directly in LocalStorage('key_pool') and pops one per session.
+  generateKeyPool(count) {
+    const n = count || 5
+    const buf = new Uint8Array(n * 97)
+
+    for (let i = 0; i < n; i++) {
+      // Generate random 32-byte scalar in [1, n-1]
+      const privRaw = new Uint8Array(32)
+      for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
+      let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
+      if (k === 0n) k = 1n
+      const privBytes = bigIntToBytes32(k)
+
+      // Compute public key: k * G → uncompressed 04 || x || y (65 bytes)
+      const pt = p256ScalarMul(k, [P256_GX, P256_GY])
+      const pubBytes = new Uint8Array(65)
+      pubBytes[0] = 0x04
+      pubBytes.set(bigIntToBytes32(pt[0]), 1)
+      pubBytes.set(bigIntToBytes32(pt[1]), 33)
+
+      buf.set(privBytes, i * 97)
+      buf.set(pubBytes,  i * 97 + 32)
+    }
+
+    return { success: true, pool: btoa(String.fromCharCode.apply(null, buf)) }
   }
 
   // Build whitelist query: asks car if our public key is enrolled.

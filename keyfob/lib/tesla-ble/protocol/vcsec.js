@@ -2,13 +2,20 @@
 // Based on tesla-motors/vehicle-command protobuf definitions
 // Scope: pairing (key enrollment) only. BLE commands are sent via REST API.
 
-import { encodeBytes, encodeEnum, concat, decodeMessage } from './protobuf.js'
+import { encodeBytes, encodeEnum, encodeVarintField, concat, decodeMessage } from './protobuf.js'
 
 // Domain types (universal_message.proto)
 const DOMAIN_VEHICLE_SECURITY = 2
 
 // Signature types (vcsec.proto SignatureType enum — DO NOT CHANGE)
 const SIGNATURE_TYPE_PRESENT_KEY = 2  // Used for pairing (no HMAC needed)
+const SIGNATURE_TYPE_HMAC = 5         // Used for session commands
+
+// RKE actions (vcsec.proto RKEAction_E enum — DO NOT CHANGE)
+const RKE_ACTION_UNLOCK = 0
+const RKE_ACTION_LOCK = 1
+const RKE_ACTION_OPEN_TRUNK = 2
+const RKE_ACTION_OPEN_FRUNK = 3
 
 // Information request types (vcsec.proto InformationRequestType enum — DO NOT CHANGE)
 const INFO_REQUEST_GET_STATUS = 0
@@ -34,10 +41,12 @@ const wlErrorMessage = (code) => WL_ERRORS[code] ?? `WL info:${code}`
 
 // UnsignedMessage fields (vcsec.proto):
 //   1: InformationRequest
+//   2: RKEAction_E (enum) — DO NOT use field 1 for RKE
 //   16: WhitelistOperation
-const buildUnsignedMessage = ({ informationRequest }) => {
+const buildUnsignedMessage = ({ informationRequest, rkeAction }) => {
   const parts = []
   if (informationRequest) parts.push(encodeBytes(1, informationRequest))
+  if (rkeAction !== undefined) parts.push(encodeEnum(2, rkeAction))
   return concat(...parts)
 }
 
@@ -78,10 +87,18 @@ const parseVehicleStatus = (data) => {
 // SignedMessage fields (vcsec.proto — verified from Tesla Go SDK):
 //   2: protobuf_message_as_bytes
 //   3: signature_type
-const buildSignedMessage = ({ payload, signatureType }) => {
+//   4: counter (varint)
+//   5: signature (bytes, HMAC tag)
+//   6: epoch (bytes, 16 bytes from SessionInfo)
+//   7: expires_at (varint, clockTime + 60)
+const buildSignedMessage = ({ payload, signatureType, counter, signature, epoch, expiresAt }) => {
   const parts = []
   if (payload) parts.push(encodeBytes(2, payload))
   if (signatureType !== undefined) parts.push(encodeEnum(3, signatureType))
+  if (counter !== undefined) parts.push(encodeVarintField(4, counter))
+  if (signature) parts.push(encodeBytes(5, signature))
+  if (epoch) parts.push(encodeBytes(6, epoch))
+  if (expiresAt !== undefined) parts.push(encodeVarintField(7, expiresAt))
   return concat(...parts)
 }
 
@@ -123,6 +140,70 @@ const parseCommandStatus = (data) => {
     operationStatus: fields[1] ?? null,
     signedMessageFault: fields[2] ?? null,
     whitelistOperationFault: fields[3] ?? null,
+  }
+}
+
+// RoutableMessage fields (universal_message.proto):
+//   6:  to_destination   { 1: domain (enum) }
+//   7:  from_destination { 2: routing_address (bytes) }
+//   10: protobuf_message_as_bytes (payload)
+//   14: session_info_request
+//   50: request_uuid
+const buildRoutableMessage = ({ toDomain, routingAddress, payload, sessionInfoRequest, uuid }) => {
+  const parts = []
+  if (toDomain !== undefined) {
+    const dest = encodeEnum(1, toDomain)
+    parts.push(encodeBytes(6, dest))
+  }
+  if (routingAddress) {
+    const dest = encodeBytes(2, routingAddress)
+    parts.push(encodeBytes(7, dest))
+  }
+  if (payload) parts.push(encodeBytes(10, payload))
+  if (sessionInfoRequest) parts.push(encodeBytes(14, sessionInfoRequest))
+  if (uuid) parts.push(encodeBytes(50, uuid))
+  return concat(...parts)
+}
+
+// SessionInfoRequest { public_key (field 1), challenge (field 2) }
+const buildSessionInfoRequest = (publicKey, challenge) => {
+  const parts = []
+  if (publicKey) parts.push(encodeBytes(1, publicKey))
+  if (challenge) parts.push(encodeBytes(2, challenge))
+  return concat(...parts)
+}
+
+const generateRoutingAddress = () => {
+  const addr = new Uint8Array(16)
+  for (let i = 0; i < 16; i++) addr[i] = Math.floor(Math.random() * 256)
+  return addr
+}
+
+// Parse SessionInfo (field 15 of RoutableMessage response):
+//   1: publicKey (bytes, 65 bytes vehicle ephemeral key)
+//   2: epoch (bytes, 16 bytes)
+//   3: clockTime (varint)
+//   4: counter (varint)
+const parseSessionInfo = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    publicKey:  fields[1] ?? null,
+    epoch:      fields[2] ?? null,
+    clockTime:  fields[3] ?? 0,
+    counter:    fields[4] ?? 0,
+  }
+}
+
+// Parse RoutableMessage response from car
+//   10: protobuf_message_as_bytes (FromVCSECMessage / payload)
+//   12: signedMessageStatus (error indicator)
+//   15: session_info (SessionInfo)
+const parseRoutableMessage = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    payload:             fields[10] ?? null,
+    signedMessageStatus: fields[12] ?? null,
+    sessionInfo:         fields[15] ? parseSessionInfo(fields[15]) : null,
   }
 }
 
@@ -282,6 +363,13 @@ export {
   OPERATIONSTATUS_OK,
   OPERATIONSTATUS_WAIT,
   OPERATIONSTATUS_ERROR,
+  SIGNATURE_TYPE_HMAC,
+  RKE_ACTION_UNLOCK,
+  RKE_ACTION_LOCK,
+  RKE_ACTION_OPEN_TRUNK,
+  RKE_ACTION_OPEN_FRUNK,
+  buildRoutableMessage,
+  buildSessionInfoRequest,
   buildUnsignedMessage,
   buildInformationRequest,
   buildSignedMessage,
@@ -289,7 +377,10 @@ export {
   buildKeyMetadata,
   buildWhitelistOperation,
   buildUnsignedMessageWithWhitelist,
+  parseSessionInfo,
+  parseRoutableMessage,
   parseCommandStatus,
   parsePairingResponse,
   generateUUID,
+  generateRoutingAddress,
 }

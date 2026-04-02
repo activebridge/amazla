@@ -217,8 +217,11 @@ const render = (attrs) => {
   button({ x: -50, y: -120, src: `horn` }, slide4)
   button({ src: `homelink`, y: -20, x: -50 }, slide4)
   button({ x: 50, y: -120, src: `boombox` }, slide4)
-  button({ x: 0, y: 160, w: 200, h: 50, text: 'BLE DEBUG', text_size: 20,
+  button({ x: -100, y: 160, w: 90, h: 50, text: 'BLE DEBUG', text_size: 16,
     click_func: function() { push({ url: 'page/ble/index' }) }
+  }, slide4)
+  button({ x: 100, y: 160, w: 90, h: 50, text: 'PASSIVE', text_size: 16,
+    click_func: function() { push({ url: 'page/passive/index' }) }
   }, slide4)
   // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
   // text({ text: "", text_size: 30 }, slide4)

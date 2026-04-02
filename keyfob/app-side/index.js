@@ -38,6 +38,15 @@ const actions = {
     return bleCrypto.buildPairMessage(params.publicKeyHex)
   },
 
+  // Generate ephemeral P-256 keypair pool for watch passive entry.
+  // Returns { success, pool } where pool is base64 flat binary (97 bytes/key).
+  BLE_GENERATE_SESSION_KEYS: async ({ count = 5 }) => {
+    console.log('[App] Generating key pool, count:', count)
+    const result = bleCrypto.generateKeyPool(count)
+    console.log('[App] Key pool generated, success:', result.success, 'pool length:', result.pool?.length)
+    return result
+  },
+
   // Verify pairing: query car's VCSEC whitelist for our public key.
   // Car responds: FromVCSECMessage { whitelistEntryInfo } if enrolled,
   //              FromVCSECMessage { commandStatus { ERROR } } if not.

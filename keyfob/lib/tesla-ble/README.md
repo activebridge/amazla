@@ -5,17 +5,25 @@ Pure JavaScript implementation of Tesla BLE protocol for ZeppOS smartwatches.
 ## Performance
 
 Current ECDH performance on ZeppOS watch:
-- **getPublicKey**: ~4s
-- **ECDH**: ~4.6s
-- **Total**: ~12s
+- **ECDH (arbitrary point, dynamic precomputation)**: ~7.7s (with wNAF-4, 8 precomputed points)
 
 Optimizations applied:
-- wNAF-9 scalar multiplication with 128 precomputed G points (~42KB table)
+- wNAF-4 scalar multiplication with 8 dynamically precomputed points (~1.5KB)
+- Batch inversion for precomputed points (single modular inverse)
 - Specialized squaring (36 vs 64 multiplications)
 - NIST P-256 fast reduction without BigInt
 - Reciprocal multiplication for carry propagation (avoids slow division)
 - Unrolled carry propagation loops
 - No Math.floor/modulo in hot paths
+- Float64 intermediate arithmetic for 32-bit carry propagation
+
+### Historical context
+
+Previous versions had separate optimizations for different operations:
+- `getPublicKey()` used static wNAF-8 table for generator G (~4s) - no longer used on watch
+- `ECDH` used dynamic wNAF-4 for arbitrary points (~7.7s) - current approach
+
+Note: Vehicle's public key is ephemeral (changes per session), so static precomputation won't help.
 
 ## Structure
 
