@@ -310,9 +310,14 @@ class TeslaBLE {
 
   // Reassembles chunked BLE indications framed with a 2-byte big-endian length prefix.
   _handleResponse(data, _len) {
-    if (!this.responseCallback) return
-
     const chunk = new Uint8Array(data)
+    const chunkHex = Array.from(chunk.slice(0, Math.min(20, chunk.length)), x => x.toString(16).padStart(2, '0')).join('')
+    console.log('[BLE] RX notification: ' + chunk.length + ' bytes, hex=' + chunkHex + (chunk.length > 20 ? '...' : ''))
+    
+    if (!this.responseCallback) {
+      console.log('[BLE] No response callback, ignoring')
+      return
+    }
 
     if (this._rxBuf === null) {
       // Dedup: charaValueArrived and charaNotification both fire for the same packet.
@@ -327,6 +332,7 @@ class TeslaBLE {
       this._lastResponseTime = now
 
       if (chunk.length < 2) {
+        console.log('[BLE] First chunk too short: ' + chunk.length + ' bytes')
         const cb = this.responseCallback
         this.responseCallback = null
         cb({ success: false, error: 'Response too short' })
@@ -335,6 +341,7 @@ class TeslaBLE {
       this._rxExpected = (chunk[0] << 8) | chunk[1]
       this._rxBuf = chunk.slice(2)
       this._rxLastChunkTime = Date.now()
+      console.log('[BLE] Starting reassembly: expect ' + this._rxExpected + ' bytes, first chunk has ' + this._rxBuf.length)
     } else {
       // Reset stale buffer if >1s since last chunk (mirrors Go SDK rxTimeout)
       if (Date.now() - this._rxLastChunkTime > 1000) {
@@ -348,9 +355,8 @@ class TeslaBLE {
       combined.set(this._rxBuf)
       combined.set(chunk, this._rxBuf.length)
       this._rxBuf = combined
+      console.log('[BLE] Continuing reassembly: got ' + combined.length + ' / ' + this._rxExpected + ' bytes')
     }
-
-    console.log('[BLE] RX buf', this._rxBuf.length, '/', this._rxExpected, 'bytes')
 
     if (this._rxBuf.length < this._rxExpected) return
 

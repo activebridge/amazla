@@ -234,6 +234,61 @@ class TeslaSession {
         if (rawFields[3]) {
           const field3Hex = Array.from(rawFields[3].slice(0, Math.min(32, rawFields[3].length)), x => x.toString(16).padStart(2, '0')).join('')
           console.log('[SESSION] field[3] raw bytes: ' + field3Hex + ' (len=' + rawFields[3].length + ')')
+          
+          // Detailed decode of field 3 structure
+          console.log('[SESSION] === Detailed decode of field 3 ===')
+          const field3Fields = decodeMessage(rawFields[3])
+          const field3Keys = Object.keys(field3Fields).sort((a,b) => a-b).join(',')
+          console.log('[SESSION] field[3] contains fields: [' + field3Keys + ']')
+          
+          for (const fieldNum in field3Fields) {
+            const fieldData = field3Fields[fieldNum]
+            if (fieldData.length === 0) {
+              console.log('[SESSION]   field[3][' + fieldNum + ']: (empty)')
+            } else {
+              const dataHex = Array.from(fieldData.slice(0, Math.min(32, fieldData.length)), x => x.toString(16).padStart(2, '0')).join('')
+              console.log('[SESSION]   field[3][' + fieldNum + ']: ' + dataHex + ' (len=' + fieldData.length + ')')
+              
+              // If this field looks like protobuf, decode it too
+              if (fieldData[0] === 0x0a || fieldData[0] === 0x12 || fieldData[0] === 0x1a) {
+                try {
+                  const subFields = decodeMessage(fieldData)
+                  const subKeys = Object.keys(subFields).sort((a,b) => a-b).join(',')
+                  console.log('[SESSION]     -> nested fields: [' + subKeys + ']')
+                  for (const subFieldNum in subFields) {
+                    const subData = subFields[subFieldNum]
+                    if (subData.length <= 32) {
+                      const subDataHex = Array.from(subData, x => x.toString(16).padStart(2, '0')).join('')
+                      console.log('[SESSION]        field[' + subFieldNum + ']: ' + subDataHex + ' (len=' + subData.length + ')')
+                    } else {
+                      const subDataHex = Array.from(subData.slice(0, 32), x => x.toString(16).padStart(2, '0')).join('')
+                      console.log('[SESSION]        field[' + subFieldNum + ']: ' + subDataHex + '... (len=' + subData.length + ')')
+                    }
+                  }
+                } catch (e) {
+                  console.log('[SESSION]     -> failed to decode as protobuf: ' + e.message)
+                }
+              }
+              
+              // Attempt to identify what the 20-byte value might be
+              if (fieldData.length === 20) {
+                console.log('[SESSION]   ⚠️ 20-byte field detected - this is SHA1 size, not EC key size (65 bytes needed)')
+              }
+            }
+          }
+          
+          // Log interpretation
+          console.log('[SESSION] === SessionInfo Structure Analysis ===')
+          console.log('[SESSION] Expected (per Tesla SDK Signatures.SessionInfo):')
+          console.log('[SESSION]   field 1: counter (varint)')
+          console.log('[SESSION]   field 2: publicKey (bytes, 65 for P-256)')
+          console.log('[SESSION]   field 3: epoch (bytes, 16 bytes)')
+          console.log('[SESSION]   field 4: clock_time (fixed32, 4 bytes)')
+          console.log('[SESSION] Received (actual fields):')
+          console.log('[SESSION]   field 1: ' + (field3Fields[1] ? field3Fields[1].length + ' bytes' : 'MISSING'))
+          console.log('[SESSION]   field 2: ' + (field3Fields[2] ? field3Fields[2].length + ' bytes (nested protobuf!)' : 'MISSING'))
+          console.log('[SESSION]   field 3: ' + (field3Fields[3] ? field3Fields[3].length + ' bytes' : 'MISSING'))
+          console.log('[SESSION]   field 4: ' + (field3Fields[4] ? field3Fields[4].length + ' bytes' : 'MISSING'))
         }
 
         if (response.sessionInfo) {
