@@ -218,6 +218,10 @@ class TeslaSession {
 
       // Parse response
       try {
+        // Debug: dump raw message bytes as hex
+        const dataHex = Array.from(result.data.slice(0, 31), x => x.toString(16).padStart(2, '0')).join('')
+        console.log('[SESSION] Raw response hex: ' + dataHex)
+        
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
@@ -226,6 +230,11 @@ class TeslaSession {
         const rawFields = decodeMessage(result.data)
         const fieldKeys = Object.keys(rawFields).sort((a,b) => a-b).join(',')
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
+        
+        if (rawFields[3]) {
+          const field3Hex = Array.from(rawFields[3].slice(0, Math.min(32, rawFields[3].length)), x => x.toString(16).padStart(2, '0')).join('')
+          console.log('[SESSION] field[3] raw bytes: ' + field3Hex + ' (len=' + rawFields[3].length + ')')
+        }
 
         if (response.sessionInfo) {
           this.vehiclePublicKey = response.sessionInfo.publicKey
