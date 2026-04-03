@@ -313,6 +313,16 @@ class TeslaSession {
             console.log('[SESSION] ERROR: publicKey is null/undefined')
           }
 
+          // Validate public key before ECDH
+          if (!this.vehiclePublicKey || this.vehiclePublicKey.length !== 65) {
+            const actualLength = this.vehiclePublicKey ? this.vehiclePublicKey.length : 0
+            console.log('[SESSION] ❌ INVALID PUBLIC KEY: received ' + actualLength + ' bytes, need 65 bytes')
+            console.log('[SESSION] Cannot perform ECDH with ' + actualLength + '-byte key')
+            console.log('[SESSION] This indicates non-standard SessionInfo format from vehicle')
+            callback({ success: false, error: 'Invalid public key format: ' + actualLength + ' bytes instead of 65' })
+            return
+          }
+
           // Derive session key: K = SHA1(ECDH_x)[:16]
           // Note: ecdh() returns only x coordinate bytes
           const sharedSecret = ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
