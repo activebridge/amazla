@@ -258,7 +258,7 @@ function doPair() {
                   console.log('[BLE]   Key exists but wrong size: ' + p2.vehiclePublicKey.length + ' bytes (expected 65)')
                 }
                 addLog('⚠ EC key missing (will fetch from car later)', 0xff8844)
-                // Continue with pairing even without EC key - will extract from first SessionInfo
+                // Continue with pairing - will request EC key via GetWhitelistEntryInfo when connected
               }
 
               state = 'DONE'

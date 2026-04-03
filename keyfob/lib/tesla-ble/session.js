@@ -17,6 +17,8 @@ import {
   parseRoutableMessage,
   generateUUID,
   generateRoutingAddress,
+  buildInformationRequest,
+  INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_OPEN_TRUNK,
@@ -302,6 +304,60 @@ class TeslaSession {
       console.log('[SESSION] loadDoublingsTable error: ' + e.message)
       return null
     }
+  }
+
+  // Request the vehicle's public key via GetWhitelistEntryInfo
+  // This is the proper way to get the long-term EC key after pairing
+  // Returns true if key was obtained, false otherwise
+  requestVehiclePublicKey(callback) {
+    console.log('[SESSION] Requesting vehicle public key via GetWhitelistEntryInfo...')
+    
+    // Build InformationRequest with GET_WHITELIST_ENTRY_INFO
+    // Parameter: our public key (to identify ourselves)
+    const infoRequest = buildInformationRequest(
+      INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
+      null,
+      this.enrolledPublicKey
+    )
+    const unsignedMsg = buildUnsignedMessage({ informationRequest: infoRequest })
+    const signedMsg = buildSignedMessage(unsignedMsg)
+    const toMsg = buildToVCSECMessage(signedMsg)
+    const routableMsg = buildRoutableMessage(toMsg, DOMAIN_VEHICLE_SECURITY)
+    
+    teslaBLE.send(routableMsg, (r) => {
+      if (!r.success) {
+        console.log('[SESSION] GetWhitelistEntryInfo request failed:', r.error)
+        callback({ success: false, error: 'Failed to get whitelist entry info' })
+        return
+      }
+      
+      const parsed = parseRoutableMessage(r.data)
+      if (!parsed || !parsed.message) {
+        console.log('[SESSION] Failed to parse whitelist entry info response')
+        callback({ success: false, error: 'Invalid whitelist entry info response' })
+        return
+      }
+      
+      const msg = parsed.message
+      if (msg.whitelistEntryInfo) {
+        const entryInfo = msg.whitelistEntryInfo
+        if (entryInfo.publicKey && entryInfo.publicKey.length === 65) {
+          this.vehiclePublicKey = entryInfo.publicKey
+          
+          // Save to storage for future use
+          const keyHex = Array.from(this.vehiclePublicKey, x => x.toString(16).padStart(2, '0')).join('')
+          this.storage.setItem('vehicle_ec_public_key', keyHex)
+          
+          const keyStart = keyHex.slice(0, 16)
+          console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo: ' + keyStart + '...')
+          callback({ success: true, vehiclePublicKey: this.vehiclePublicKey })
+          return
+        }
+      }
+      
+      console.log('[SESSION] WhitelistEntryInfo response missing public key')
+      callback({ success: false, error: 'No public key in whitelist entry info' })
+    })
   }
 
   // Initiate session handshake

@@ -272,7 +272,8 @@ const parsePairingResponse = (data) => {
     }
 
     // Check for vehicle's EC public key in field 17 (WhitelistEntryInfo)
-    // This is sent during successful pairing completion
+    // Note: Field 17 is typically obtained via GetWhitelistEntryInfo request, not sent automatically during pairing.
+    // Some vehicles may send it as part of the pairing completion, but it's not guaranteed.
     let vehiclePublicKey = null
     if (fields[17] instanceof Uint8Array) {
       const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
@@ -289,7 +290,7 @@ const parsePairingResponse = (data) => {
         }
       }
     } else {
-      console.log('[VCSEC] Field 17 (WhitelistEntryInfo) NOT found in response')
+      console.log('[VCSEC] Field 17 (WhitelistEntryInfo) NOT found in response - will request via GetWhitelistEntryInfo')
       dbg.field17Present = false
     }
 
