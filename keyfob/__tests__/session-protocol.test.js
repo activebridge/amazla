@@ -144,47 +144,48 @@ describe('buildRoutableMessage', () => {
 })
 
 describe('parseSessionInfo', () => {
-  test('parses publicKey, epoch, clockTime, counter from encoded bytes', () => {
+  test('parses counter, publicKey, epoch, clockTime from encoded bytes', () => {
+    const counter = 7
     const pub    = new Uint8Array(65).fill(0x04)
     const epoch  = new Uint8Array(16).fill(0xab)
     const encoded = [
-      encodeBytes(1, pub),
-      encodeBytes(2, epoch),
-      encodeVarintField(3, 9999),
-      encodeVarintField(4, 7),
+      encodeVarintField(1, counter),
+      encodeBytes(2, pub),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, 9999),
     ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
 
     const info = parseSessionInfo(encoded)
+    expect(info.counter).toBe(counter)
     expect(info.publicKey.length).toBe(65)
     expect(info.epoch.length).toBe(16)
     expect(info.clockTime).toBe(9999)
-    expect(info.counter).toBe(7)
   })
 })
 
 describe('parseRoutableMessage', () => {
-  test('extracts payload (field 10) and sessionInfo (field 15)', () => {
+  test('extracts payload (field 10) and sessionInfo (field 3)', () => {
     const innerPayload = new Uint8Array([0x01, 0x02, 0x03])
     const sessionInfoBytes = [
-      encodeBytes(1, new Uint8Array(65).fill(0x04)),
-      encodeBytes(2, new Uint8Array(16).fill(0xee)),
-      encodeVarintField(3, 1234),
-      encodeVarintField(4, 5),
+      encodeVarintField(1, 5),
+      encodeBytes(2, new Uint8Array(65).fill(0x04)),
+      encodeBytes(3, new Uint8Array(16).fill(0xee)),
+      encodeVarintField(4, 1234),
     ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
 
     const encoded = [
+      encodeBytes(3, sessionInfoBytes),
       encodeBytes(10, innerPayload),
-      encodeBytes(15, sessionInfoBytes),
     ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
 
     const parsed = parseRoutableMessage(encoded)
     expect(Array.from(parsed.payload)).toEqual([0x01, 0x02, 0x03])
     expect(parsed.sessionInfo).not.toBeNull()
-    expect(parsed.sessionInfo.clockTime).toBe(1234)
     expect(parsed.sessionInfo.counter).toBe(5)
+    expect(parsed.sessionInfo.clockTime).toBe(1234)
   })
 
-  test('returns null sessionInfo when field 15 absent', () => {
+  test('returns null sessionInfo when field 3 absent', () => {
     const msg = encodeBytes(10, new Uint8Array([0xaa]))
     const parsed = parseRoutableMessage(msg)
     expect(parsed.sessionInfo).toBeNull()

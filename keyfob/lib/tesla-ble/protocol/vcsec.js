@@ -179,33 +179,41 @@ const generateRoutingAddress = () => {
   return addr
 }
 
-// Parse SessionInfo (field 15 of RoutableMessage response):
-//   1: publicKey (bytes, 65 bytes vehicle ephemeral key)
-//   2: epoch (bytes, 16 bytes)
-//   3: clockTime (varint)
-//   4: counter (varint)
+// Parse SessionInfo (Signatures.SessionInfo from car_server.proto Response.field3):
+//   1: counter (varint)
+//   2: publicKey (bytes, 65 bytes vehicle ephemeral key)
+//   3: epoch (bytes, 16 bytes)
+//   4: clock_time (fixed32)
+//   5: status (enum)
+//   6: handle (varint)
 const parseSessionInfo = (data) => {
   const fields = decodeMessage(data)
   return {
-    publicKey:  fields[1] ?? null,
-    epoch:      fields[2] ?? null,
-    clockTime:  fields[3] ?? 0,
-    counter:    fields[4] ?? 0,
+    counter:    fields[1] ?? 0,
+    publicKey:  fields[2] ?? null,
+    epoch:      fields[3] ?? null,
+    clockTime:  fields[4] ?? 0,
+    status:     fields[5] ?? 0,
+    handle:     fields[6] ?? 0,
   }
 }
 
-// Parse RoutableMessage response from car
-//   3: unknown (returned by car sometimes)
-//   10: protobuf_message_as_bytes (FromVCSECMessage / payload)
+// Parse RoutableMessage / Response from car
+// Car sends Response (car_server.proto) where:
+//   1: ActionStatus
+//   3: SessionInfo (Signatures.SessionInfo in oneof response_msg)
+//   10: protobuf_message_as_bytes (FromVCSECMessage / payload) — for VCSEC responses
 //   12: signedMessageStatus (error indicator)
-//   15: session_info (SessionInfo)
+// 
+// SessionInfo in field 3 is direct (not wrapped in field 15)
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
+  const sessionInfo = fields[3] ? parseSessionInfo(fields[3]) : null
   return {
-    field3:              fields[3] ?? null,
+    actionStatus:        fields[1] ?? null,
+    sessionInfo:         sessionInfo,
     payload:             fields[10] ?? null,
     signedMessageStatus: fields[12] ?? null,
-    sessionInfo:         fields[15] ? parseSessionInfo(fields[15]) : null,
   }
 }
 
