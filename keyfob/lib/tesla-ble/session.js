@@ -219,13 +219,22 @@ class TeslaSession {
       // Parse response
       try {
         const response = parseRoutableMessage(result.data)
-        console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
+        console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus) + ', field3=' + (!!response.field3))
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
         
         // Debug: check what fields are actually in the raw message
         const rawFields = decodeMessage(result.data)
         const fieldKeys = Object.keys(rawFields).sort((a,b) => a-b).join(',')
         console.log('[SESSION] Raw fields: [' + fieldKeys + ']')
+        
+        // Log field3 content if present
+        if (response.field3) {
+          if (response.field3 instanceof Uint8Array) {
+            console.log('[SESSION] field3 is bytes (' + response.field3.length + ' bytes)')
+          } else {
+            console.log('[SESSION] field3 = ' + JSON.stringify(response.field3))
+          }
+        }
 
         if (response.sessionInfo) {
           this.vehiclePublicKey = response.sessionInfo.publicKey

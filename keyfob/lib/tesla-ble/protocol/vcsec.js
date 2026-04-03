@@ -195,12 +195,14 @@ const parseSessionInfo = (data) => {
 }
 
 // Parse RoutableMessage response from car
+//   3: unknown (returned by car sometimes)
 //   10: protobuf_message_as_bytes (FromVCSECMessage / payload)
 //   12: signedMessageStatus (error indicator)
 //   15: session_info (SessionInfo)
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
   return {
+    field3:              fields[3] ?? null,
     payload:             fields[10] ?? null,
     signedMessageStatus: fields[12] ?? null,
     sessionInfo:         fields[15] ? parseSessionInfo(fields[15]) : null,
