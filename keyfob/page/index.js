@@ -45,7 +45,19 @@ const { height } = getDeviceInfo()
 let isRunning = false
 let currentPage, actions = []
 
+// TODO: Temporarily disable HTTP fetch to focus on BLE pairing flow
+// This index page is now just a menu - enable this when we want HTTP features
+const DISABLE_HTTP_FETCH = true
+
 const fetch = (method, onSuccess, onError) => {
+  // TEMPORARILY DISABLED: Skip HTTP requests while fixing BLE pairing
+  // Remove DISABLE_HTTP_FETCH flag when ready to re-enable HTTP features
+  if (DISABLE_HTTP_FETCH) {
+    console.log('[INDEX] HTTP fetch disabled:', method)
+    hmUI.showToast({ text: 'HTTP disabled (BLE mode)' })
+    return
+  }
+
   currentPage.request({ method }).then(({ error, ...props }) => {
     isRunning = false
     if (error) return onError(error)
