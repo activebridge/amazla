@@ -29,9 +29,9 @@
       "module": {
         "page": {
           "pages": [
+            "page/passive/index",
             "page/index",
-            "page/ble/index",
-            "page/passive/index"
+            "page/ble/index"
           ]
         },
         "app-side": { "path": "app-side/index" },
