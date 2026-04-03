@@ -231,6 +231,14 @@ class TeslaSession {
         if (response.field3) {
           if (response.field3 instanceof Uint8Array) {
             console.log('[SESSION] field3 is bytes (' + response.field3.length + ' bytes)')
+            // Decode field3 as a nested message
+            const field3Decoded = decodeMessage(response.field3)
+            const field3Keys = Object.keys(field3Decoded).sort((a,b) => a-b).join(',')
+            console.log('[SESSION] field3 contains: [' + field3Keys + ']')
+            // Check for sessionInfo pattern (field 1=pubkey, 2=epoch, 3=clockTime, 4=counter)
+            if (field3Decoded[1] || field3Decoded[2] || field3Decoded[4]) {
+              console.log('[SESSION] field3 looks like SessionInfo!')
+            }
           } else {
             console.log('[SESSION] field3 = ' + JSON.stringify(response.field3))
           }
