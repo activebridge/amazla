@@ -3,7 +3,7 @@
 
 import { sha1 } from './crypto/sha256.js'
 import { hmacSha256, concatBytes, hexToBytes, bytesToHex } from './crypto/hmac.js'
-import { ecdh } from './crypto/p256.js'
+import { ecdh, ecdhFixed, bytesToBigInt } from './crypto/p256.js'
 import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -257,6 +257,48 @@ class TeslaSession {
     }
   }
 
+  // Load precomputed doublings table built by phone during pairing.
+  // Returns Array[256] of [Uint32Array(8), Uint32Array(8)] pairs, or null if unavailable.
+  loadDoublingsTable() {
+    try {
+      const b64 = this.storage.getItem('vehicle_doublings_table')
+      if (!b64) return null
+
+      let decoded
+      if (typeof atob !== 'undefined') {
+        decoded = atob(b64)
+      } else {
+        decoded = this._base64Decode(b64)
+      }
+
+      const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
+      if (raw.length !== 256 * 64) {
+        console.log('[SESSION] Doublings table wrong size: ' + raw.length)
+        return null
+      }
+
+      // table[0] = Q (the vehicle's public key); validate it matches vehiclePublicKey
+      if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
+        for (let i = 0; i < 32; i++) {
+          if (raw[i] !== this.vehiclePublicKey[1 + i] || raw[32 + i] !== this.vehiclePublicKey[33 + i]) {
+            console.log('[SESSION] Doublings table is for a different vehicle key — discarding')
+            return null
+          }
+        }
+      }
+
+      const table = []
+      for (let i = 0; i < 256; i++) {
+        table.push([bytesToBigInt(raw.slice(i * 64, i * 64 + 32)),
+                    bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64))])
+      }
+      return table
+    } catch (e) {
+      console.log('[SESSION] loadDoublingsTable error: ' + e.message)
+      return null
+    }
+  }
+
   // Initiate session handshake
   requestSessionInfo(callback) {
     // Try to load vehicle's EC public key from storage (obtained during pairing)
@@ -422,8 +464,11 @@ class TeslaSession {
           }
 
           // Derive session key: K = SHA1(ECDH_x)[:16]
-          // Note: ecdh() returns only x coordinate bytes
-          const sharedSecret = ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
+          // Fast path: use precomputed doublings table if available (eliminates all doublings)
+          const _ecdhTable = this.loadDoublingsTable()
+          const sharedSecret = _ecdhTable
+            ? ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
+            : ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
           const keyMaterial = sha1(sharedSecret)
           this.sessionKey = keyMaterial.slice(0, 16)
 

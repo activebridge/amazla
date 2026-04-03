@@ -47,6 +47,13 @@ const actions = {
     return result
   },
 
+  // Precompute doublings table for watch-side fixed-base ECDH.
+  // Called once after pairing; result stored on watch for fast cold-start ECDH.
+  BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyHex }) => {
+    console.log('[App] Building ECDH doublings table for vehicle key')
+    return bleCrypto.buildDoublingsTable(vehiclePublicKeyHex)
+  },
+
   // Verify pairing: query car's VCSEC whitelist for our public key.
   // Car responds: FromVCSECMessage { whitelistEntryInfo } if enrolled,
   //              FromVCSECMessage { commandStatus { ERROR } } if not.

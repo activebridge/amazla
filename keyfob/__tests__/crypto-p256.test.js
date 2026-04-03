@@ -2,7 +2,7 @@
 // Adapted from test-p256.js (which was a standalone script) into Jest format.
 // Public keys computed from known private keys using BigInt P-256 (phone-side).
 
-import { ecdh } from '../lib/tesla-ble/crypto/p256.js'
+import { ecdh, ecdhFixed, bytesToBigInt } from '../lib/tesla-ble/crypto/p256.js'
 import { sha1 } from '../lib/tesla-ble/crypto/sha256.js'
 
 function hexToBytes(hex) {
@@ -58,6 +58,80 @@ describe('P-256 ECDH', () => {
     const shared1 = ecdh(hexToBytes(ALICE_PRIV), hexToBytes(BOB_PUB))
     const shared2 = ecdh(hexToBytes(ALICE_PRIV), pub3)
     expect(bytesToHex(shared1)).not.toBe(bytesToHex(shared2))
+  })
+})
+
+// Build doublings table for a point given as hex (65-byte uncompressed, big-endian)
+// This mirrors what the phone does in buildDoublingsTable()
+function buildDoublingsTableJS(pubKeyHex) {
+  // Use BigInt P-256 to compute 2^i * Q for i = 0..255
+  const P = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
+  const A = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
+  function modInvBig(a, m) {
+    let [r, old_r] = [m, ((a % m) + m) % m], [s, old_s] = [0n, 1n]
+    while (old_r !== 0n) {
+      const q = r / old_r;
+      [r, old_r] = [old_r, r - q * old_r];
+      [s, old_s] = [old_s, s - q * old_s]
+    }
+    return ((s % m) + m) % m
+  }
+  function pointAdd([x1, y1], [x2, y2]) {
+    if (x1 === 0n && y1 === 0n) return [x2, y2]
+    if (x2 === 0n && y2 === 0n) return [x1, y1]
+    if (x1 === x2) {
+      if (y1 !== y2) return [0n, 0n]
+      const lam = ((3n * x1 * x1 + A) * modInvBig(2n * y1, P)) % P
+      const x3 = ((lam * lam - 2n * x1) % P + P) % P
+      return [x3, ((lam * (x1 - x3) - y1) % P + P) % P]
+    }
+    const lam = ((y2 - y1) * modInvBig(x2 - x1, P)) % P
+    const x3 = ((lam * lam - x1 - x2) % P + P) % P
+    return [x3, ((lam * (x1 - x3) - y1) % P + P) % P]
+  }
+  function bigToBytes(n) {
+    const hex = n.toString(16).padStart(64, '0')
+    const b = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16)
+    return b
+  }
+  const xHex = pubKeyHex.slice(2, 66), yHex = pubKeyHex.slice(66, 130)
+  let cur = [BigInt('0x' + xHex), BigInt('0x' + yHex)]
+  const table = []
+  for (let i = 0; i < 256; i++) {
+    table.push([bytesToBigInt(bigToBytes(cur[0])), bytesToBigInt(bigToBytes(cur[1]))])
+    if (i < 255) cur = pointAdd(cur, cur)
+  }
+  return table
+}
+
+describe('ecdhFixed (fixed-base ECDH with doublings table)', () => {
+  test('ecdhFixed matches ecdh for alice_priv × bob_pub', () => {
+    const table = buildDoublingsTableJS(BOB_PUB)
+    const fast = ecdhFixed(hexToBytes(ALICE_PRIV), table)
+    const slow = ecdh(hexToBytes(ALICE_PRIV), hexToBytes(BOB_PUB))
+    expect(bytesToHex(fast)).toBe(bytesToHex(slow))
+  })
+
+  test('ecdhFixed produces known shared secret', () => {
+    const table = buildDoublingsTableJS(BOB_PUB)
+    const shared = ecdhFixed(hexToBytes(ALICE_PRIV), table)
+    expect(bytesToHex(shared)).toBe(SHARED_SECRET_HEX)
+  })
+
+  test('ecdhFixed symmetry: bob_priv × alice_pub table matches alice_priv × bob_pub', () => {
+    const tableAlice = buildDoublingsTableJS(ALICE_PUB)
+    const tableBob   = buildDoublingsTableJS(BOB_PUB)
+    const r1 = ecdhFixed(hexToBytes(BOB_PRIV), tableAlice)
+    const r2 = ecdhFixed(hexToBytes(ALICE_PRIV), tableBob)
+    expect(bytesToHex(r1)).toBe(bytesToHex(r2))
+  })
+
+  test('ecdhFixed returns 32 bytes', () => {
+    const table = buildDoublingsTableJS(BOB_PUB)
+    const shared = ecdhFixed(hexToBytes(ALICE_PRIV), table)
+    expect(shared).toBeInstanceOf(Uint8Array)
+    expect(shared.length).toBe(32)
   })
 })
 

@@ -231,6 +231,34 @@ class BLECryptoSession {
     return { success: true, pool: btoa(String.fromCharCode.apply(null, buf)) }
   }
 
+  // Precompute doublings table for vehicle's fixed public key.
+  // Returns base64-encoded binary: 256 entries × 64 bytes (32x + 32y) = 16384 bytes.
+  // Phone does this once during pairing; watch stores it for fast fixed-base ECDH.
+  buildDoublingsTable(vehiclePubKeyHex) {
+    try {
+      if (vehiclePubKeyHex.length !== 130) {
+        return { success: false, error: 'Expected 65-byte pubkey (130 hex chars)' }
+      }
+      const xHex = vehiclePubKeyHex.slice(2, 66)
+      const yHex = vehiclePubKeyHex.slice(66, 130)
+      let current = [BigInt('0x' + xHex), BigInt('0x' + yHex)]
+
+      // table[i] = 2^i * Q: Q, 2Q, 4Q, ..., 2^255*Q
+      const tableBytes = new Uint8Array(256 * 64)
+      for (let i = 0; i < 256; i++) {
+        tableBytes.set(bigIntToBytes32(current[0]), i * 64)
+        tableBytes.set(bigIntToBytes32(current[1]), i * 64 + 32)
+        if (i < 255) current = p256PointAdd(current, current)
+      }
+
+      let str = ''
+      for (let i = 0; i < tableBytes.length; i++) str += String.fromCharCode(tableBytes[i])
+      return { success: true, table: btoa(str) }
+    } catch (e) {
+      return { success: false, error: e.message }
+    }
+  }
+
   // Build whitelist query: asks car if our public key is enrolled.
   // Wire format: ToVCSECMessage > SignedMessage(PRESENT_KEY) > UnsignedMessage(InformationRequest)
   // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,

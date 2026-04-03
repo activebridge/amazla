@@ -524,6 +524,23 @@ const scalarMul = (rx, ry, k, Px, Py) => {
   return true
 }
 
+// Fixed-base scalar multiplication using precomputed doublings table.
+// table[i] must be affine coords of 2^i * basePoint as [Uint32Array(8), Uint32Array(8)].
+// Eliminates all point doublings — only ~128 mixed additions on average.
+const scalarMulFixed = (rx, ry, k, table) => {
+  for (let i = 0; i < 8; i++) { _RX[i]=0; _RY[i]=0; _RZ[i]=0 }
+  for (let i = 0; i < 256; i++) {
+    if ((k[i >> 5] >>> (i & 31)) & 1) {
+      jacAddAffine(_TX, _TY, _TZ, _RX, _RY, _RZ, table[i][0], table[i][1])
+      copy(_RX, _TX); copy(_RY, _TY); copy(_RZ, _TZ)
+    }
+  }
+  if (isZero(_RZ)) { for (let i = 0; i < 8; i++) { rx[i]=0; ry[i]=0 }; return false }
+  modInv(_zi, _RZ); modSqr(_zi2, _zi); modMul(_zi3, _zi2, _zi)
+  modMul(rx, _RX, _zi2); modMul(ry, _RY, _zi3)
+  return true
+}
+
 // Byte conversions
 const bytesToU256 = (bytes) => {
   const r = new Uint32Array(8)
@@ -585,8 +602,17 @@ function ecdh(privateKeyBytes, publicKeyBytes) {
   return u256ToBytes(_pub_x)
 }
 
+// Fast ECDH using precomputed doublings table (built once by phone during pairing).
+// table: Array[256] of [Uint32Array(8), Uint32Array(8)] from loadDoublingsTable()
+function ecdhFixed(privateKeyBytes, table) {
+  const k = bytesToU256(privateKeyBytes)
+  if (!scalarMulFixed(_pub_x, _pub_y, k, table)) throw new Error('ECDH failed')
+  return u256ToBytes(_pub_x)
+}
+
 export {
   ecdh,
+  ecdhFixed,
   bytesToU256 as bytesToBigInt,
   u256ToBytes as bigIntToBytes,
   _setProfile,

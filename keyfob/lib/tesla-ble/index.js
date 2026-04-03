@@ -2,7 +2,7 @@
 // Main entry point for Tesla vehicle control via Bluetooth
 // NOTE: Crypto operations delegated to phone app-side to save memory
 
-import teslaBLE from './ble.js'
+import teslaBLE, { CONNECTION_CONFIG } from './ble.js'
 
 let _privateKeyHex = null
 let _publicKeyHex = null
@@ -142,6 +142,7 @@ class TeslaBleApi {
     if (settingsStorage) {
       settingsStorage.removeItem('tesla_ble_mac')
       settingsStorage.removeItem('vehicle_ec_public_key')
+      settingsStorage.removeItem('vehicle_doublings_table')
     }
 
     _privateKeyHex = null
@@ -154,4 +155,4 @@ class TeslaBleApi {
 const teslaBleApi = new TeslaBleApi()
 
 export default teslaBleApi
-export { teslaBLE }
+export { teslaBLE, CONNECTION_CONFIG }

@@ -145,8 +145,14 @@ function doPair() {
               storage.setItem('vehicle_ec_public_key', pubKeyHex)
               addLog('Saved vehicle EC key', 0x44ff44)
               console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+              // Precompute ECDH doublings table on phone while still connected
+              currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
+                .then(function(r) {
+                  if (r.success && r.table) { storage.setItem('vehicle_doublings_table', r.table); console.log('[BLE] ECDH table stored') }
+                })
+                .catch(function() {})
             }
-            
+
             state = 'DONE'
             updateStatus('PAIRED!', 0x00cc44)
             addLog('Key enrolled!', 0x00cc44)
@@ -197,8 +203,14 @@ function doPair() {
                 storage.setItem('vehicle_ec_public_key', pubKeyHex)
                 addLog('Saved vehicle EC key', 0x44ff44)
                 console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+                // Precompute ECDH doublings table on phone while still connected
+                currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
+                  .then(function(r) {
+                    if (r.success && r.table) { storage.setItem('vehicle_doublings_table', r.table); console.log('[BLE] ECDH table stored') }
+                  })
+                  .catch(function() {})
               }
-              
+
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
               addLog('Key enrolled!', 0x00cc44)
