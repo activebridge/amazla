@@ -218,6 +218,8 @@ class TeslaSession {
       // Parse response
       try {
         const response = parseRoutableMessage(result.data)
+        console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
+        console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
 
         if (response.sessionInfo) {
           this.vehiclePublicKey = response.sessionInfo.publicKey
@@ -233,15 +235,18 @@ class TeslaSession {
 
           this.established = true
 
+          console.log('[SESSION] Established: counter=' + this.counter + ', epoch=' + bytesToHex(this.epoch).slice(0, 8))
           callback({
             success: true,
             counter: this.counter,
             epoch: bytesToHex(this.epoch)
           })
         } else {
+          console.log('[SESSION] ERROR: Response missing sessionInfo. payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
           callback({ success: false, error: 'No session info in response' })
         }
       } catch (e) {
+        console.log('[SESSION] Exception: ' + e.message)
         callback({ success: false, error: e.message })
       }
     }.bind(this))
