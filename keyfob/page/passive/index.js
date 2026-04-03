@@ -246,24 +246,27 @@ function onConnect() {
 }
 
 function doConnect(mac, attempt) {
+  addLog('BLE: connect attempt ' + (attempt + 1), 0x666666)
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
+      var errMsg = result.error || 'unknown'
+      addLog('BLE: conn failed - ' + errMsg, 0xff4444)
       if (attempt < 1) {
-        addLog('Retry ' + (attempt + 2) + '...', 0xff8800)
+        addLog('BLE: retrying...', 0xff8800)
         setTimeout(function() { doConnect(mac, attempt + 1) }, 2000)
         return
       }
       state = 'IDLE'
       updateStatus('CONN FAIL', 0xff4444)
-      addLog('Conn err: ' + (result.error || '?'), 0xff4444)
+      addLog('BLE: gave up after 2 attempts', 0xff4444)
       return
     }
 
-    addLog('Connected!', 0x00cc44)
+    addLog('BLE: connected to ' + mac.slice(-5), 0x00cc44)
     state = 'SESSION'
     updateStatus('ECDH...', 0x4488ff)
-    addLog('Requesting session...', 0xcccccc)
-    addLog('(ECDH ~5s)', 0x666666)
+    addLog('CRYPTO: starting session...', 0xcccccc)
+    addLog('CRYPTO: ECDH ~8s', 0x666666)
 
     var t0 = Date.now()
     teslaSession.requestSessionInfo(function(r) {
@@ -271,13 +274,19 @@ function doConnect(mac, attempt) {
       if (!r.success) {
         state = 'IDLE'
         updateStatus('SESSION FAIL', 0xff4444)
-        addLog('Session err: ' + (r.error || '?'), 0xff4444)
+        var sessErr = r.error || 'unknown'
+        addLog('CRYPTO: session failed - ' + sessErr, 0xff4444)
+        if (sessErr.indexOf('HMAC') >= 0) {
+          addLog('ERR: Invalid session key', 0xff6666)
+        } else if (sessErr.indexOf('timeout') >= 0) {
+          addLog('ERR: BLE timeout', 0xff6666)
+        }
         return
       }
       state = 'READY'
       updateStatus('READY', 0x00cc44)
-      addLog('Session OK ' + ms + 'ms', 0x00cc44)
-      addLog('ctr:' + r.counter + ' epoch:' + r.epoch.slice(0, 8), 0x666666)
+      addLog('CRYPTO: session OK ' + ms + 'ms', 0x00cc44)
+      addLog('CRYPTO: counter=' + r.counter + ' epoch=' + r.epoch.slice(0, 8), 0x666666)
       updateDeviceInfo()
     })
   }, storage)
@@ -286,21 +295,28 @@ function doConnect(mac, attempt) {
 // ── command handlers ──────────────────────────────────────────────────────────
 function onUnlock() {
   if (state !== 'READY') {
-    addLog('Not ready (state:' + state + ')', 0xff8800)
+    addLog('CMD: not ready (' + state + ')', 0xff8800)
     return
   }
   state = 'UNLOCKING'
   updateStatus('UNLOCKING...', 0xff8800)
+  addLog('CMD: unlock starting...', 0xcccccc)
   var t0 = Date.now()
   teslaSession.unlock(function(result) {
     lastCmdMs = Date.now() - t0
     state = 'READY'
     if (!result.success) {
       updateStatus('READY', 0x00cc44)
-      addLog('Unlock err: ' + (result.error || '?'), 0xff4444)
+      var unlErr = result.error || 'unknown'
+      addLog('CMD: unlock failed - ' + unlErr, 0xff4444)
+      if (unlErr.indexOf('counter') >= 0) {
+        addLog('ERR: counter mismatch', 0xff6666)
+      } else if (unlErr.indexOf('HMAC') >= 0) {
+        addLog('ERR: authentication failed', 0xff6666)
+      }
     } else {
       updateStatus('UNLOCKED', 0x00cc44)
-      addLog('Unlocked! ' + lastCmdMs + 'ms', 0x00cc44)
+      addLog('CMD: unlock OK ' + lastCmdMs + 'ms', 0x00cc44)
     }
     updateDeviceInfo()
   })
@@ -308,21 +324,23 @@ function onUnlock() {
 
 function onLock() {
   if (state !== 'READY') {
-    addLog('Not ready (state:' + state + ')', 0xff8800)
+    addLog('CMD: not ready (' + state + ')', 0xff8800)
     return
   }
   state = 'LOCKING'
   updateStatus('LOCKING...', 0xff8800)
+  addLog('CMD: lock starting...', 0xcccccc)
   var t0 = Date.now()
   teslaSession.lock(function(result) {
     lastCmdMs = Date.now() - t0
     state = 'READY'
     if (!result.success) {
       updateStatus('READY', 0x00cc44)
-      addLog('Lock err: ' + (result.error || '?'), 0xff4444)
+      var lockErr = result.error || 'unknown'
+      addLog('CMD: lock failed - ' + lockErr, 0xff4444)
     } else {
       updateStatus('LOCKED', 0x44aaff)
-      addLog('Locked! ' + lastCmdMs + 'ms', 0x44aaff)
+      addLog('CMD: lock OK ' + lastCmdMs + 'ms', 0x44aaff)
     }
     updateDeviceInfo()
   })
@@ -412,26 +430,19 @@ Page(BasePage({
       click_func: onLock,
     })
 
-    // PERF TEST — offline ECDH benchmark, no car needed
-    hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 35, y: 410, w: 200, h: 50,
-      text: 'PERF TEST', text_size: 20, color: 0xffffff,
-      normal_color: 0x3a2060, press_color: 0x1a0e30, radius: 12,
-      click_func: onPerfTest,
-    })
+    // Hidden debug buttons (temporary, can be removed)
+    // PERF TEST button (commented out for production)
+    // hmUI.createWidget(hmUI.widget.BUTTON, {
+    //   x: 35, y: 410, w: 200, h: 50,
+    //   text: 'PERF TEST', text_size: 20, color: 0xffffff,
+    //   normal_color: 0x3a2060, press_color: 0x1a0e30, radius: 12,
+    //   click_func: onPerfTest,
+    // })
 
-    // PERF TEST wNAF-5 — test optimized scalar multiplication
+    // GENERATE POOL button (keep for debugging key pool issues)
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 35, y: 465, w: 200, h: 50,
-      text: 'PERF wNAF-5', text_size: 18, color: 0xffffff,
-      normal_color: 0x305a2a, press_color: 0x152a0a, radius: 12,
-      click_func: onPerfTest5,
-    })
-
-    // GENERATE POOL button — manual key pool generation
-    hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 245, y: 410, w: 200, h: 50,
-      text: 'GEN POOL', text_size: 20, color: 0xffffff,
+      x: 35, y: 410, w: 410, h: 50,
+      text: 'GEN POOL (DEBUG)', text_size: 18, color: 0xffffff,
       normal_color: 0x006080, press_color: 0x003040, radius: 12,
       click_func: requestKeyPool,
     })
@@ -452,7 +463,11 @@ Page(BasePage({
       requestKeyPool()
     } else {
       addLog('Pool: ' + poolSize + ' keys ready', 0x00cc44)
-      addLog('Press CONNECT to start', 0x666666)
+      // Auto-connect to Tesla when page opens
+      addLog('Auto-connecting...', 0x666666)
+      setTimeout(function() {
+        onConnect()
+      }, 500)
     }
 
     keepScreenOn(true, 600000)
