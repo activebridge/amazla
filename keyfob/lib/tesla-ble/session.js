@@ -5,6 +5,7 @@ import { sha1 } from './crypto/sha256.js'
 import { hmacSha256, concatBytes, hexToBytes, bytesToHex } from './crypto/hmac.js'
 import { ecdh } from './crypto/p256.js'
 import { LocalStorage } from '@zos/storage'
+import { decodeMessage } from './protocol/protobuf.js'
 import {
   DOMAIN_VEHICLE_SECURITY,
   SIGNATURE_TYPE_HMAC,
@@ -220,6 +221,11 @@ class TeslaSession {
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
+        
+        // Debug: check what fields are actually in the raw message
+        const rawFields = decodeMessage(result.data)
+        const fieldKeys = Object.keys(rawFields).sort((a,b) => a-b).join(',')
+        console.log('[SESSION] Raw fields: [' + fieldKeys + ']')
 
         if (response.sessionInfo) {
           this.vehiclePublicKey = response.sessionInfo.publicKey
