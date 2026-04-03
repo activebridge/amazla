@@ -227,6 +227,15 @@ class TeslaSession {
           this.epoch = response.sessionInfo.epoch
           this.counter = response.sessionInfo.counter
           this.clockTime = response.sessionInfo.clockTime
+          
+          // Debug: log public key details
+          if (this.vehiclePublicKey) {
+            console.log('[SESSION] Vehicle public key length: ' + this.vehiclePublicKey.length + ' bytes')
+            const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
+            console.log('[SESSION] Vehicle public key starts with: ' + keyHex)
+          } else {
+            console.log('[SESSION] ERROR: publicKey is null/undefined')
+          }
 
           // Derive session key: K = SHA1(ECDH_x)[:16]
           // Note: ecdh() returns only x coordinate bytes
