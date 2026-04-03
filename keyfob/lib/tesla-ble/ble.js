@@ -8,6 +8,28 @@ const TESLA_READ_UUID = "00000213-b2d1-43f0-9b88-960cebf8b91e"
 const BLE_CHUNK_SIZE = 20
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 
+// Optimized connection timing per BLE specification best practices
+// Reduces connection timeout from 15s to 5-8s for faster feedback
+// while maintaining reliability with multiple retry attempts
+const CONNECTION_CONFIG = {
+  // Adaptive timeout per attempt (in milliseconds)
+  // Attempt 0: 5s (fast feedback if car off/BLE off)
+  // Attempt 1: 8s (allow BLE stack recovery time)
+  // Attempt 2: 10s (full recovery and stabilization)
+  timeouts: [5000, 8000, 10000],
+  
+  // Max connection attempts before giving up
+  maxAttempts: 3,
+  
+  // BLE stack stabilization wait after connection
+  // Keep this high to ensure GATT profile is ready
+  stackStabilizeWait: 5000,
+  
+  // Retry delay between attempts (fixed, not exponential)
+  // 2-3 seconds is sufficient for BLE stack recovery
+  retryDelayMs: 2000,
+}
+
 // Add Tesla's 2-byte big-endian length prefix
 const _frame = (data) => {
   const msg = new Uint8Array(2 + data.length)
@@ -109,20 +131,26 @@ class TeslaBLE {
     return this._ensureBLE().stopScan()
   }
 
-  connect(mac, callback) {
+  // Connect to Tesla vehicle with adaptive timeout
+  // attemptNumber: 0 (5s), 1 (8s), 2 (10s) - allows faster feedback on failure
+  connect(mac, callback, attemptNumber = 0) {
     let done = false
     let setupStarted = false
 
-    console.log('[BLE] Connecting to:', mac)
+    // Get adaptive timeout based on attempt number
+    const timeoutMs = CONNECTION_CONFIG.timeouts[attemptNumber] || CONNECTION_CONFIG.timeouts[CONNECTION_CONFIG.timeouts.length - 1]
+    const attemptLabel = `${attemptNumber + 1}/${CONNECTION_CONFIG.maxAttempts}`
+    
+    console.log('[BLE] Connecting to: ' + mac + ' (attempt ' + attemptLabel + ', ' + timeoutMs + 'ms timeout)')
 
     const timeout = setTimeout(() => {
       if (done) return
       done = true
       this.connected = false
-      console.log('[BLE] Connection timeout')
+      console.log('[BLE] Connection timeout (' + timeoutMs + 'ms)')
       this._cleanup()
-      callback({ success: false, error: 'Connection timeout' })
-    }, 15000)
+      callback({ success: false, error: 'Connection timeout', attemptNumber })
+    }, timeoutMs)
 
     const settle = (result) => {
       if (done) return
@@ -150,7 +178,7 @@ class TeslaBLE {
         }
         console.log('[BLE] Connect failed:', result.status)
         this._cleanup()
-        settle({ success: false, error: result.status || 'Connection failed' })
+        settle({ success: false, error: result.status || 'Connection failed', attemptNumber })
         return
       }
 
@@ -163,11 +191,12 @@ class TeslaBLE {
       this.mac = mac
 
       // Delay for BLE stack to stabilize — without this, generateProfileObject can fail
-      console.log('[BLE] Connected, waiting for BLE stack to stabilize...')
+      // Use configured stabilization wait (typically 5 seconds)
+      console.log('[BLE] Connected, waiting for BLE stack to stabilize (' + CONNECTION_CONFIG.stackStabilizeWait + 'ms)...')
       setTimeout(() => {
         if (!this.connected) {
           this._cleanup()
-          settle({ success: false, error: 'Connection lost during setup' })
+          settle({ success: false, error: 'Connection lost during setup', attemptNumber })
           return
         }
 
@@ -186,7 +215,7 @@ class TeslaBLE {
             this.connected = false
             console.log('[BLE] Listener failed:', response.message)
             this._cleanup()
-            settle({ success: false, error: response.message || 'Listener failed' })
+            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
             return
           }
 
@@ -384,4 +413,4 @@ class TeslaBLE {
 const teslaBLE = new TeslaBLE()
 
 export default teslaBLE
-export { TESLA_SERVICE_UUID, TESLA_WRITE_UUID, TESLA_READ_UUID }
+export { TESLA_SERVICE_UUID, TESLA_WRITE_UUID, TESLA_READ_UUID, CONNECTION_CONFIG }

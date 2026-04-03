@@ -1,7 +1,7 @@
 import * as hmUI from '@zos/ui'
 import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../../zeppify/index.js'
-import teslaBleApi from '../../lib/tesla-ble/index.js'
+import teslaBleApi, { CONNECTION_CONFIG } from '../../lib/tesla-ble/index.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import { ecdh, _setProfile, _setWNAFWidth } from '../../lib/tesla-ble/crypto/p256.js'
 import { sha1 } from '../../lib/tesla-ble/crypto/sha256.js'
@@ -246,19 +246,26 @@ function onConnect() {
 }
 
 function doConnect(mac, attempt) {
-  addLog('BLE: connect attempt ' + (attempt + 1), 0x666666)
+  var timeoutMs = CONNECTION_CONFIG.timeouts[attempt] || CONNECTION_CONFIG.timeouts[CONNECTION_CONFIG.timeouts.length - 1]
+  var attemptLabel = (attempt + 1) + '/' + CONNECTION_CONFIG.maxAttempts
+  addLog('BLE: attempt ' + attemptLabel + ' (' + (timeoutMs / 1000).toFixed(1) + 's timeout)', 0x666666)
+  
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
       var errMsg = result.error || 'unknown'
       addLog('BLE: conn failed - ' + errMsg, 0xff4444)
-      if (attempt < 1) {
-        addLog('BLE: retrying...', 0xff8800)
-        setTimeout(function() { doConnect(mac, attempt + 1) }, 2000)
+      
+      // Retry if we haven't exceeded max attempts
+      if (attempt < CONNECTION_CONFIG.maxAttempts - 1) {
+        addLog('BLE: retrying in ' + (CONNECTION_CONFIG.retryDelayMs / 1000) + 's...', 0xff8800)
+        setTimeout(function() { doConnect(mac, attempt + 1) }, CONNECTION_CONFIG.retryDelayMs)
         return
       }
+      
+      // All attempts exhausted
       state = 'IDLE'
       updateStatus('CONN FAIL', 0xff4444)
-      addLog('BLE: gave up after 2 attempts', 0xff4444)
+      addLog('BLE: gave up after ' + CONNECTION_CONFIG.maxAttempts + ' attempts', 0xff4444)
       return
     }
 
