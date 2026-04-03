@@ -214,7 +214,16 @@ const parseRoutableMessage = (data) => {
   
   // Try field 3 first (direct SessionInfo at top level)
   if (fields[3]) {
-    sessionInfo = parseSessionInfo(fields[3])
+    try {
+      sessionInfo = parseSessionInfo(fields[3])
+      if (sessionInfo && sessionInfo.publicKey && sessionInfo.publicKey.length === 65) {
+        // Valid SessionInfo
+      } else {
+        sessionInfo = null // Invalid public key
+      }
+    } catch (e) {
+      // Not valid SessionInfo
+    }
   }
   
   // If not found at field 3, check field 10 (payload) which contains FromVCSECMessage
@@ -226,8 +235,11 @@ const parseRoutableMessage = (data) => {
       // Look for field 3 inside the payload (most common location for SessionInfo)
       if (fromVcsecFields[3]) {
         try {
-          sessionInfo = parseSessionInfo(fromVcsecFields[3])
-          console.log('[SESSION] Found SessionInfo in field 10.field[3]')
+          const candidate = parseSessionInfo(fromVcsecFields[3])
+          if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+            sessionInfo = candidate
+            console.log('[SESSION] Found SessionInfo in field 10.field[3]')
+          }
         } catch (e) {
           // Not valid SessionInfo, try other fields
         }
@@ -256,11 +268,14 @@ const parseRoutableMessage = (data) => {
     }
   }
   
-  // If still not found, try field 15 (alternative location)
+  // If still not found, try field 15 (alternative location) - but validate public key
   if (!sessionInfo && fields[15]) {
     try {
-      sessionInfo = parseSessionInfo(fields[15])
-      console.log('[SESSION] Found SessionInfo in field 15')
+      const candidate = parseSessionInfo(fields[15])
+      if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+        sessionInfo = candidate
+        console.log('[SESSION] Found SessionInfo in field 15')
+      }
     } catch (e) {
       // Not valid
     }
