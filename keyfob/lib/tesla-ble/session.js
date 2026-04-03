@@ -55,6 +55,60 @@ class TeslaSession {
 
     // State
     this.established = false
+    
+    // Session preservation for reconnects (preserves ECDH result)
+    this.preserved = null
+  }
+
+  // Preserve session state for brief reconnections (e.g., within 5 minutes)
+  // Allows reuse of ECDH result instead of recomputing
+  preserveForReconnect(timeoutMs) {
+    this.preserved = {
+      ephemeralPrivateKey: this.ephemeralPrivateKey,
+      ephemeralPublicKey: this.ephemeralPublicKey,
+      vehiclePublicKey: this.vehiclePublicKey,
+      epoch: this.epoch,
+      counter: this.counter,
+      clockTime: this.clockTime,
+      sessionKey: this.sessionKey,
+      routingAddress: this.routingAddress,
+      timestamp: Date.now(),
+      timeout: timeoutMs,
+    }
+    console.log('[Session] Session preserved for reconnect (timeout: ' + (timeoutMs / 1000).toFixed(1) + 's)')
+  }
+
+  // Check if a preserved session exists and is still valid
+  isPreserved() {
+    if (!this.preserved) return false
+    var age = Date.now() - this.preserved.timestamp
+    var isValid = age < this.preserved.timeout
+    if (!isValid && this.preserved) {
+      console.log('[Session] Preserved session expired (' + (age / 1000).toFixed(1) + 's old)')
+      this.preserved = null
+    }
+    return isValid
+  }
+
+  // Restore session from preserved state (clears preserved state after restore)
+  restorePreservedSession() {
+    if (!this.isPreserved()) return false
+    
+    var session = this.preserved
+    this.ephemeralPrivateKey = session.ephemeralPrivateKey
+    this.ephemeralPublicKey = session.ephemeralPublicKey
+    this.vehiclePublicKey = session.vehiclePublicKey
+    this.epoch = session.epoch
+    this.counter = session.counter
+    this.clockTime = session.clockTime
+    this.sessionKey = session.sessionKey
+    this.routingAddress = session.routingAddress
+    this.established = true
+    this.preserved = null
+    
+    var age = Date.now() - session.timestamp
+    console.log('[Session] Session restored from preserved state (age: ' + (age / 1000).toFixed(1) + 's)')
+    return true
   }
 
   // Pop one keypair from the binary key pool stored in LocalStorage

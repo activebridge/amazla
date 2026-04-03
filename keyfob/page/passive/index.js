@@ -33,6 +33,12 @@ var lastCmdMs = 0
 var logLines  = ['', '', '', '', '', '', '', '']
 var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
 
+// Connection persistence: keep BLE alive for 60 seconds between commands
+// Reduces time for subsequent commands from 18s to 1-2s
+const SESSION_IDLE_TIMEOUT = 60000  // 60 seconds
+var lastCommandTime = 0
+var idleDisconnectTimer = null
+
 var statusDotWidget  = null
 var statusTextWidget = null
 var deviceInfoWidget = null
@@ -207,6 +213,29 @@ function requestKeyPool() {
     })
 }
 
+// ── session persistence & idle disconnect ─────────────────────────────────────
+
+function resetIdleDisconnectTimer() {
+  // Clear any pending idle disconnect
+  if (idleDisconnectTimer) {
+    clearTimeout(idleDisconnectTimer)
+  }
+  
+  // Set up new timer: disconnect if idle for 60 seconds
+  lastCommandTime = Date.now()
+  idleDisconnectTimer = setTimeout(function() {
+    if (teslaBleApi.isConnected()) {
+      addLog('Session idle timeout (60s)', 0xff8800)
+      teslaBleApi.disconnect()
+    }
+  }, SESSION_IDLE_TIMEOUT)
+}
+
+function onCommandStarted() {
+  // Called when user starts a command - extends session timeout
+  resetIdleDisconnectTimer()
+}
+
 // ── connect + session flow ────────────────────────────────────────────────────
 function onConnect() {
   if (state === 'CONNECTING' || state === 'SESSION') {
@@ -224,6 +253,7 @@ function onConnect() {
 
   if (teslaBleApi.isConnected() && state === 'READY') {
     addLog('Already ready', 0xcccccc)
+    resetIdleDisconnectTimer()
     return
   }
 
@@ -239,8 +269,10 @@ function onConnect() {
   addLog('Connecting...', 0xcccccc)
   addLog(mac.slice(-17), 0xaaaaaa)
 
-  // Reset any previous session
-  teslaSession.reset()
+  // Reset any previous session if reconnecting after session expired
+  if (!teslaSession.isPreserved()) {
+    teslaSession.reset()
+  }
 
   // Connect immediately - UI is already rendered from page.build()
   doConnect(mac, 0)
@@ -274,6 +306,19 @@ function doConnect(mac, attempt) {
     state = 'SESSION'
     updateStatus('ECDH...', 0x4488ff)
     addLog('CRYPTO: starting session...', 0xcccccc)
+
+    // Check if we have a preserved session from a previous connection (within 5 min)
+    if (teslaSession.restorePreservedSession()) {
+      // Session was successfully restored - skip ECDH!
+      state = 'READY'
+      updateStatus('READY (cached)', 0x00cc44)
+      addLog('CRYPTO: session restored from cache', 0x44ff44)
+      addLog('CRYPTO: counter=' + teslaSession.counter + ' epoch=' + teslaSession.epoch.slice(0, 8), 0x666666)
+      updateDeviceInfo()
+      return
+    }
+
+    // No preserved session - run full ECDH
     addLog('CRYPTO: ECDH ~8s', 0x666666)
 
     var t0 = Date.now()
@@ -306,6 +351,7 @@ function onUnlock() {
     addLog('CMD: not ready (' + state + ')', 0xff8800)
     return
   }
+  onCommandStarted()  // Extend session timeout
   state = 'UNLOCKING'
   updateStatus('UNLOCKING...', 0xff8800)
   addLog('CMD: unlock starting...', 0xcccccc)
@@ -335,6 +381,7 @@ function onLock() {
     addLog('CMD: not ready (' + state + ')', 0xff8800)
     return
   }
+  onCommandStarted()  // Extend session timeout
   state = 'LOCKING'
   updateStatus('LOCKING...', 0xff8800)
   addLog('CMD: lock starting...', 0xcccccc)
@@ -457,9 +504,11 @@ Page(BasePage({
 
     teslaBleApi.onDisconnect = function() {
       state = 'IDLE'
-      teslaSession.reset()
+      // Preserve session for 5 minutes in case of brief disconnection
+      // This allows reconnect to reuse ECDH result instead of recomputing
+      teslaSession.preserveForReconnect(300000)  // 5 minutes
       updateStatus('DISCONNECTED', 0xff4444)
-      addLog('Disconnected', 0xff4444)
+      addLog('Disconnected (session preserved for 5 min)', 0xff8800)
     }
 
     updateDeviceInfo()
