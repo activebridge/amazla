@@ -133,9 +133,12 @@ function doPair() {
         var keysStr = dbg.outerKeys ? ' k:' + dbg.outerKeys : ''
         addLog('PRX:' + parsed.status + wlStr + pathStr, 0x4488ff)
         addLog(keysStr || 'no keys', 0x666666)
+        console.log('[BLE] Pairing response status: ' + parsed.status + ', fields: ' + keysStr)
 
         if (parsed.status === 'ok') {
+          console.log('[BLE] ✓ Pairing complete, checking for vehicle EC key...')
           if (sawTapRequired || dbg.hasSigner) {
+            console.log('[BLE] Got tap/signer signal')
             // Save vehicle's EC public key if provided
             if (parsed.vehiclePublicKey && parsed.vehiclePublicKey.length === 65) {
               var pubKeyHex = ''
@@ -144,7 +147,7 @@ function doPair() {
               }
               storage.setItem('vehicle_ec_public_key', pubKeyHex)
               addLog('✓ Saved vehicle EC key', 0x44ff44)
-              console.log('[BLE] Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
+              console.log('[BLE] ✓ Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
               // Precompute ECDH doublings table on phone while still connected
               addLog('Requesting ECDH table...', 0x666666)
               currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
@@ -152,16 +155,22 @@ function doPair() {
                   if (r.success && r.table) {
                     storage.setItem('vehicle_doublings_table', r.table)
                     addLog('✓ Saved ECDH table', 0x44ff44)
-                    console.log('[BLE] ECDH doublings table stored (16 KB, base64 encoded)')
+                    console.log('[BLE] ✓ ECDH doublings table stored (16 KB, base64 encoded)')
                   } else {
                     addLog('Table generation failed', 0xffaa44)
-                    console.log('[BLE] ECDH table generation failed:', r.error)
+                    console.log('[BLE] ✗ ECDH table generation failed:', r.error)
                   }
                 })
                 .catch(function(e) {
                   addLog('Table request error', 0xff8844)
-                  console.log('[BLE] ECDH table request error:', e)
+                  console.log('[BLE] ✗ ECDH table request error:', e)
                 })
+            } else {
+              console.log('[BLE] ✗ NO vehicle public key in pairing response!')
+              if (parsed.vehiclePublicKey) {
+                console.log('[BLE]   Key exists but wrong size: ' + parsed.vehiclePublicKey.length + ' bytes (expected 65)')
+              }
+              addLog('⚠ Missing EC key in response', 0xff8844)
             }
 
             state = 'DONE'
@@ -197,6 +206,17 @@ function doPair() {
           var d2 = p2.dbg || {}
           var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
           addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
+          
+          // Capture EC key from field 17 in ANY message (might come in separate notification)
+          if (p2.vehiclePublicKey && p2.vehiclePublicKey.length === 65 && !storage.getItem('vehicle_ec_public_key')) {
+            var pkHex = ''
+            for (var i = 0; i < p2.vehiclePublicKey.length; i++) {
+              pkHex += ('0' + p2.vehiclePublicKey[i].toString(16)).slice(-2)
+            }
+            storage.setItem('vehicle_ec_public_key', pkHex)
+            addLog('✓ Captured EC key from message', 0x44ff44)
+            console.log('[BLE] ✓ Vehicle EC key captured from separate message: ' + pkHex.slice(0, 16) + '...')
+          }
 
           if (p2.status === 'wait') {
             sawTapRequired = true
@@ -205,6 +225,7 @@ function doPair() {
             waitForResult()
           } else if (p2.status === 'ok') {
             if (sawTapRequired || d2.hasSigner) {
+              console.log('[BLE] Got status=ok with tap/signer. Vehicle EC key present: ' + (p2.vehiclePublicKey ? 'YES' : 'NO'))
               // Save vehicle's EC public key if provided
               if (p2.vehiclePublicKey && p2.vehiclePublicKey.length === 65) {
                 var pubKeyHex = ''
@@ -213,7 +234,7 @@ function doPair() {
                 }
                 storage.setItem('vehicle_ec_public_key', pubKeyHex)
                 addLog('✓ Saved vehicle EC key', 0x44ff44)
-                console.log('[BLE] Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
+                console.log('[BLE] ✓ Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
                 // Precompute ECDH doublings table on phone while still connected
                 addLog('Requesting ECDH table...', 0x666666)
                 currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
@@ -221,16 +242,23 @@ function doPair() {
                     if (r.success && r.table) {
                       storage.setItem('vehicle_doublings_table', r.table)
                       addLog('✓ Saved ECDH table', 0x44ff44)
-                      console.log('[BLE] ECDH doublings table stored (16 KB, base64 encoded)')
+                      console.log('[BLE] ✓ ECDH doublings table stored (16 KB, base64 encoded)')
                     } else {
                       addLog('Table generation failed', 0xffaa44)
-                      console.log('[BLE] ECDH table generation failed:', r.error)
+                      console.log('[BLE] ✗ ECDH table generation failed:', r.error)
                     }
                   })
                   .catch(function(e) {
                     addLog('Table request error', 0xff8844)
-                    console.log('[BLE] ECDH table request error:', e)
+                    console.log('[BLE] ✗ ECDH table request error:', e)
                   })
+              } else {
+                console.log('[BLE] ✗ EC key missing from pairing response! Cannot generate precomputed table.')
+                if (p2.vehiclePublicKey) {
+                  console.log('[BLE]   Key exists but wrong size: ' + p2.vehiclePublicKey.length + ' bytes (expected 65)')
+                }
+                addLog('⚠ EC key missing (will fetch from car later)', 0xff8844)
+                // Continue with pairing even without EC key - will extract from first SessionInfo
               }
 
               state = 'DONE'

@@ -81,15 +81,15 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              SYSTEM ARCHITECTURE                              │
+│                              SYSTEM ARCHITECTURE                             │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   ┌─────────────┐         ┌─────────────┐         ┌─────────────────────┐   │
-│   │             │   BLE   │             │   BLE   │                     │   │
-│   │    Watch    │◄───────►│    Phone    │         │       Tesla         │   │
-│   │  (ZeppOS)   │  Sync   │  (Android)  │         │     (Vehicle)       │   │
-│   │             │         │             │         │                     │   │
-│   └──────┬──────┘         └─────────────┘         └──────────┬──────────┘   │
+│   ┌─────────────┐         ┌─────────────┐         ┌─────────────────────┐    │
+│   │             │   BLE   │             │   BLE   │                     │    │
+│   │    Watch    │◄───────►│    Phone    │         │       Tesla         │    │
+│   │  (ZeppOS)   │  Sync   │  (Android)  │         │     (Vehicle)       │    │
+│   │             │         │             │         │                     │    │
+│   └──────┬──────┘         └─────────────┘         └──────────┬──────────┘    │
 │          │                                                    │              │
 │          │              Direct BLE Connection                 │              │
 │          └────────────────────────────────────────────────────┘              │
@@ -109,19 +109,19 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              KEY MANAGEMENT                                   │
+│                              KEY MANAGEMENT                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  1. ENROLLED KEY (Long-term identity)                                        │
 │  ════════════════════════════════════                                        │
 │                                                                              │
-│     ┌─────────────────────────────────────────────────────────────────┐     │
-│     │  secrets.js                                                      │     │
-│     │  ┌─────────────────────────────────────────────────────────────┐│     │
-│     │  │ TESLA_PRIVATE_KEY = "abc123..." (32 bytes / 64 hex chars)   ││     │
-│     │  │ TESLA_PUBLIC_KEY  = "04def..." (65 bytes / 130 hex chars)   ││     │
-│     │  └─────────────────────────────────────────────────────────────┘│     │
-│     └─────────────────────────────────────────────────────────────────┘     │
+│     ┌─────────────────────────────────────────────────────────────────┐      │
+│     │  secrets.js                                                     │      │
+│     │  ┌─────────────────────────────────────────────────────────────┐│      │
+│     │  │ TESLA_PRIVATE_KEY = "abc123..." (32 bytes / 64 hex chars)   ││      │
+│     │  │ TESLA_PUBLIC_KEY  = "04def..." (65 bytes / 130 hex chars)   ││      │
+│     │  └─────────────────────────────────────────────────────────────┘│      │
+│     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
 │     • Generated once, stored permanently                                     │
 │     • Public key added to car's whitelist during pairing                     │
@@ -130,17 +130,17 @@ from the one used at session initialization. This makes a persistent precomputed
 │  2. SESSION KEYS (Ephemeral, for ECDH)                                       │
 │  ═════════════════════════════════════                                       │
 │                                                                              │
-│     ┌─────────────────────────────────────────────────────────────────┐     │
-│     │  session_keys.txt (Pool of pre-generated keypairs)              │     │
-│     │  ┌─────────────────────────────────────────────────────────────┐│     │
-│     │  │ [                                                           ││     │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││     │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││     │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││     │
-│     │  │   ...                                                       ││     │
-│     │  │ ]                                                           ││     │
-│     │  └─────────────────────────────────────────────────────────────┘│     │
-│     └─────────────────────────────────────────────────────────────────┘     │
+│     ┌─────────────────────────────────────────────────────────────────┐      │
+│     │  session_keys.txt (Pool of pre-generated keypairs)              │      │
+│     │  ┌─────────────────────────────────────────────────────────────┐│      │
+│     │  │ [                                                           ││      │
+│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
+│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
+│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
+│     │  │   ...                                                       ││      │
+│     │  │ ]                                                           ││      │
+│     │  └─────────────────────────────────────────────────────────────┘│      │
+│     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
 │     • Generated on phone (P-256 key gen is slow)                             │
 │     • Synced to watch via "GEN POOL" button (BLE DEBUG page)                 │
@@ -154,7 +154,7 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                           SESSION KEY SYNC FLOW                               │
+│                           SESSION KEY SYNC FLOW                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                                    Phone                          │
@@ -189,8 +189,8 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              PAIRING FLOW                                     │
-│                    (One-time setup to add watch as key)                       │
+│                              PAIRING FLOW                                    │
+│                    (One-time setup to add watch as key)                      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                         Tesla                        User         │
@@ -214,11 +214,11 @@ from the one used at session initialization. This makes a persistent precomputed
 │        │  ◄── OPERATIONSTATUS_WAIT ─ │                            │          │
 │        │      "Waiting for keycard"  │                            │          │
 │        │                             │                            │          │
-│   ┌────┴────┐                        │                       ┌────┴────┐    │
-│   │ Display │                        │                       │ Tap key │    │
-│   │ "Tap    │                        │  ◄── NFC Tap ──────   │ card on │    │
-│   │ keycard"│                        │                       │ console │    │
-│   └────┬────┘                        │                       └────┬────┘    │
+│   ┌────┴────┐                        │                       ┌────┴────┐     │
+│   │ Display │                        │                       │ Tap key │     │
+│   │ "Tap    │                        │  ◄── NFC Tap ──────   │ card on │     │
+│   │ keycard"│                        │                       │ console │     │
+│   └────┬────┘                        │                       └────┬────┘     │
 │        │                             │                            │          │
 │        │  ◄── OPERATIONSTATUS_OK ──  │                            │          │
 │        │      "Key added"            │                            │          │
@@ -239,8 +239,8 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                        SESSION ESTABLISHMENT FLOW                             │
-│              (Required before sending commands / passive entry)               │
+│                        SESSION ESTABLISHMENT FLOW                            │
+│              (Required before sending commands / passive entry)              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                                              Tesla                │
@@ -286,8 +286,8 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              COMMAND FLOW                                     │
-│                      (Lock, Unlock, Trunk, Frunk)                             │
+│                              COMMAND FLOW                                    │
+│                      (Lock, Unlock, Trunk, Frunk)                            │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                                              Tesla                │
@@ -320,7 +320,7 @@ from the one used at session initialization. This makes a persistent precomputed
 │        │                                    │ Execute action            │    │
 │        │                                    └─────────────┬─────────────┘    │
 │        │                                                  │                  │
-│        │  ◄── CommandStatus(OK) ─────────────────────────  │                  │
+│        │  ◄── CommandStatus(OK) ───────────────────────── │                  │
 │        │                                                  │                  │
 │        ▼                                                  ▼                  │
 │   Command executed!                                                          │
@@ -332,8 +332,8 @@ from the one used at session initialization. This makes a persistent precomputed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                           PASSIVE ENTRY FLOW                                  │
-│              (Auto-unlock when approaching car with app open)                 │
+│                           PASSIVE ENTRY FLOW                                 │
+│              (Auto-unlock when approaching car with app open)                │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                                              Tesla                │

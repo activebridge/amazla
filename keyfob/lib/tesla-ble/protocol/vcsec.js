@@ -281,7 +281,16 @@ const parsePairingResponse = (data) => {
         dbg.vehiclePublicKeyFound = true
         const pubKeyHex = Array.from(vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
         dbg.vehiclePublicKeyStart = pubKeyHex
+        console.log('[VCSEC] ✓ Extracted vehicle EC key from field 17: ' + pubKeyHex + '... (65 bytes)')
+      } else {
+        dbg.vehiclePublicKeyFound = false
+        if (fields[17]) {
+          console.log('[VCSEC] Field 17 present but invalid: length=' + (wlEntryInfo.publicKey ? wlEntryInfo.publicKey.length : 'undefined'))
+        }
       }
+    } else {
+      console.log('[VCSEC] Field 17 (WhitelistEntryInfo) NOT found in response')
+      dbg.field17Present = false
     }
 
     if (fields[1] !== undefined) {
@@ -361,11 +370,15 @@ const parsePairingResponse = (data) => {
         if (dbg.signer) {
           dbg.wlFault = 0
           dbg.hasSigner = true
+          console.log('[VCSEC] Pairing completed (auto-approved), vehiclePublicKey=' + (vehiclePublicKey ? 'yes' : 'NO'))
           return { success: true, status: 'ok', message: 'Key added (auto-approved)', vehiclePublicKey, dbg }
         }
         return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
-      if (wlInfo === 0) return { success: true, status: 'ok', message: 'Key added successfully', vehiclePublicKey, dbg }
+      if (wlInfo === 0) {
+        console.log('[VCSEC] Pairing completed (manual), vehiclePublicKey=' + (vehiclePublicKey ? 'yes' : 'NO'))
+        return { success: true, status: 'ok', message: 'Key added successfully', vehiclePublicKey, dbg }
+      }
       if (wlInfo === 14) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
     } else if (operationStatus === OPERATIONSTATUS_OK) {
