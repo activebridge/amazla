@@ -99,7 +99,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │     └─────────────────────────────────────────────────────────────────┘     │
 │                                                                              │
 │     • Generated on phone (P-256 key gen is slow)                             │
-│     • Synced to watch via "Sync" button                                      │
+│     • Synced to watch via "GEN POOL" button (BLE DEBUG page)                 │
 │     • One keypair consumed per session establishment                         │
 │     • Used for ECDH key exchange with Tesla                                  │
 │                                                                              │
@@ -364,7 +364,7 @@ keyfob/
 | File | Contents | Managed By |
 |------|----------|------------|
 | `secrets.js` | Enrolled private/public keypair | Developer (manual) |
-| `session_keys.txt` | Pool of pre-generated session keypairs | Sync button (from phone) |
+| `session_keys.txt` | Pool of pre-generated session keypairs | GEN POOL button (BLE DEBUG page) |
 | `ble_settings.txt` | Saved Tesla MAC address | Auto-saved on connect |
 | `vehicle.txt` | Cached vehicle data | Auto-saved on API fetch |
 
