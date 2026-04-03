@@ -183,17 +183,39 @@ const generateRoutingAddress = () => {
 
 // Parse SessionInfo (Signatures.SessionInfo from car_server.proto Response.field3):
 //   1: counter (varint)
-//   2: publicKey (bytes, 65 bytes vehicle ephemeral key)
-//   3: epoch (bytes, 16 bytes)
+//   2: publicKey (bytes, 65 bytes vehicle ephemeral key) OR epoch (16 bytes) - varies by vehicle
+//   3: epoch (bytes, 16 bytes) OR empty
 //   4: clock_time (fixed32)
 //   5: status (enum)
 //   6: handle (varint)
+// Note: Some vehicles send epoch in field 2 instead of field 3
 const parseSessionInfo = (data) => {
   const fields = decodeMessage(data)
+  
+  // Determine if field 2 is publicKey (65 bytes) or epoch (16 bytes)
+  let publicKey = null
+  let epoch = null
+  
+  if (fields[2]) {
+    if (fields[2].length === 65) {
+      publicKey = fields[2]
+      epoch = fields[3] ?? null
+    } else if (fields[2].length === 16) {
+      // Vehicle sent epoch in field 2 instead
+      epoch = fields[2]
+      publicKey = null
+    } else {
+      publicKey = fields[2]
+      epoch = fields[3] ?? null
+    }
+  } else {
+    epoch = fields[3] ?? null
+  }
+  
   return {
     counter:    fields[1] ?? 0,
-    publicKey:  fields[2] ?? null,
-    epoch:      fields[3] ?? null,
+    publicKey:  publicKey,
+    epoch:      epoch,
     clockTime:  fields[4] ?? 0,
     status:     fields[5] ?? 0,
     handle:     fields[6] ?? 0,
@@ -216,17 +238,31 @@ const parseRoutableMessage = (data) => {
   if (fields[3]) {
     try {
       sessionInfo = parseSessionInfo(fields[3])
-      if (sessionInfo && sessionInfo.publicKey && sessionInfo.publicKey.length === 65) {
-        // Valid SessionInfo
+      if (sessionInfo && sessionInfo.epoch) {
+        console.log('[SESSION] Found SessionInfo in field 3')
       } else {
-        sessionInfo = null // Invalid public key
+        sessionInfo = null // Invalid - no epoch
       }
     } catch (e) {
       // Not valid SessionInfo
     }
   }
   
-  // If not found at field 3, check field 10 (payload) which contains FromVCSECMessage
+  // Try field 6 (some vehicles send SessionInfo here)
+  if (!sessionInfo && fields[6]) {
+    try {
+      sessionInfo = parseSessionInfo(fields[6])
+      if (sessionInfo && sessionInfo.epoch) {
+        console.log('[SESSION] Found SessionInfo in field 6')
+      } else {
+        sessionInfo = null
+      }
+    } catch (e) {
+      // Not valid SessionInfo
+    }
+  }
+  
+  // If not found at field 3/6, check field 10 (payload) which contains FromVCSECMessage
   // The FromVCSECMessage often has SessionInfo at field 3 within it
   if (!sessionInfo && fields[10]) {
     try {
@@ -236,7 +272,7 @@ const parseRoutableMessage = (data) => {
       if (fromVcsecFields[3]) {
         try {
           const candidate = parseSessionInfo(fromVcsecFields[3])
-          if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+          if (candidate && candidate.epoch) {
             sessionInfo = candidate
             console.log('[SESSION] Found SessionInfo in field 10.field[3]')
           }
@@ -249,11 +285,11 @@ const parseRoutableMessage = (data) => {
       if (!sessionInfo) {
         for (const fieldNum in fromVcsecFields) {
           const fieldData = fromVcsecFields[fieldNum]
-          if (!fieldData || fieldData.length < 20) continue
+          if (!fieldData || fieldData.length < 10) continue
           
           try {
             const candidate = parseSessionInfo(fieldData)
-            if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+            if (candidate && candidate.epoch) {
               sessionInfo = candidate
               console.log('[SESSION] Found SessionInfo in field 10.field[' + fieldNum + ']')
               break
@@ -268,11 +304,11 @@ const parseRoutableMessage = (data) => {
     }
   }
   
-  // If still not found, try field 15 (alternative location) - but validate public key
+  // If still not found, try field 15 (alternative location)
   if (!sessionInfo && fields[15]) {
     try {
       const candidate = parseSessionInfo(fields[15])
-      if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+      if (candidate && candidate.epoch) {
         sessionInfo = candidate
         console.log('[SESSION] Found SessionInfo in field 15')
       }
