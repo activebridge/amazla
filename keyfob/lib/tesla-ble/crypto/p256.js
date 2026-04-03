@@ -178,6 +178,94 @@ const reduce = (r, t) => {
 const modMul = (r, a, b) => { mul256(_m, a, b); reduce(r, _m) }
 const modSqr = (r, a) => { sqr256(_m, a); reduce(r, _m) }
 
+// Inline versions for hot paths (jacDbl, jacAddAffine) to reduce function call overhead
+// These avoid wrapper function calls but reuse _m, _t global buffers
+const _modMulInline = (r, a, b) => { 
+  for (let i = 0; i < 16; i++) _t[i] = 0
+  for (let i = 0; i < 8; i++) {
+    const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
+    for (let j = 0; j < 8; j++) {
+      const bj = b[j], bl = bj & 0xFFFF, bh = bj >>> 16
+      const ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh
+      const lhL = lh & 0xFFFF, lhH = lh >>> 16
+      const hlL = hl & 0xFFFF, hlH = hl >>> 16
+      let mL = lhL + hlL
+      const mH = lhH + hlH + (mL >>> 16)
+      mL &= 0xFFFF
+      _t[i + j] += ll + mL * 65536
+      _t[i + j + 1] += hh + mH
+    }
+  }
+  // Carry & reduce in one step
+  const c8=_t[8], c9=_t[9], c10=_t[10], c11=_t[11], c12=_t[12], c13=_t[13], c14=_t[14], c15=_t[15]
+  const a0 = _t[0] + c8 + c9 - c11 - c12 - c13 - c14
+  const a1 = _t[1] + c9 + c10 - c12 - c13 - c14 - c15
+  const a2 = _t[2] + c10 + c11 - c13 - c14 - c15
+  const a3 = _t[3] + 2*(c11 + c12) + c13 - c8 - c9 - c15
+  const a4 = _t[4] + 2*(c12 + c13) + c14 - c9 - c10
+  const a5 = _t[5] + 2*(c13 + c14) + c15 - c10 - c11
+  const a6 = _t[6] + 3*c14 + 2*c15 + c13 - c8 - c9
+  const a7 = _t[7] + 3*c15 + c8 - c10 - c11 - c12 - c13
+  const M = 2.3283064365386963e-10
+  let c, v
+  v = a0; c = (v * M) | 0; if (v < 0) c--; r[0] = (v - c * 0x100000000) >>> 0
+  v = a1 + c; c = (v * M) | 0; if (v < 0) c--; r[1] = (v - c * 0x100000000) >>> 0
+  v = a2 + c; c = (v * M) | 0; if (v < 0) c--; r[2] = (v - c * 0x100000000) >>> 0
+  v = a3 + c; c = (v * M) | 0; if (v < 0) c--; r[3] = (v - c * 0x100000000) >>> 0
+  v = a4 + c; c = (v * M) | 0; if (v < 0) c--; r[4] = (v - c * 0x100000000) >>> 0
+  v = a5 + c; c = (v * M) | 0; if (v < 0) c--; r[5] = (v - c * 0x100000000) >>> 0
+  v = a6 + c; c = (v * M) | 0; if (v < 0) c--; r[6] = (v - c * 0x100000000) >>> 0
+  v = a7 + c; c = (v * M) | 0; if (v < 0) c--; r[7] = (v - c * 0x100000000) >>> 0
+  while (c > 0) { c -= sub(r, r, P) }
+  while (c < 0) { c += add(r, r, P) }
+  if (cmp(r, P) >= 0) sub(r, r, P)
+}
+
+const _modSqrInline = (r, a) => {
+  for (let i = 0; i < 16; i++) _t[i] = 0
+  for (let i = 0; i < 8; i++) {
+    const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
+    const ll = al * al, lh = al * ah, hh = ah * ah
+    const mL = (lh & 0xFFFF) * 2, mH = (lh >>> 16) * 2 + (mL >>> 16)
+    _t[i * 2] += ll + (mL & 0xFFFF) * 65536
+    _t[i * 2 + 1] += hh + mH
+    for (let j = i + 1; j < 8; j++) {
+      const bj = a[j], bl = bj & 0xFFFF, bh = bj >>> 16
+      const ll2 = al * bl, lh2 = al * bh, hl2 = ah * bl, hh2 = ah * bh
+      const lhL = lh2 & 0xFFFF, lhH = lh2 >>> 16
+      const hlL = hl2 & 0xFFFF, hlH = hl2 >>> 16
+      let mL2 = lhL + hlL
+      const mH2 = lhH + hlH + (mL2 >>> 16)
+      mL2 &= 0xFFFF
+      _t[i + j] += (ll2 + mL2 * 65536) * 2
+      _t[i + j + 1] += (hh2 + mH2) * 2
+    }
+  }
+  // Carry & reduce in one step
+  const c8=_t[8], c9=_t[9], c10=_t[10], c11=_t[11], c12=_t[12], c13=_t[13], c14=_t[14], c15=_t[15]
+  const a0 = _t[0] + c8 + c9 - c11 - c12 - c13 - c14
+  const a1 = _t[1] + c9 + c10 - c12 - c13 - c14 - c15
+  const a2 = _t[2] + c10 + c11 - c13 - c14 - c15
+  const a3 = _t[3] + 2*(c11 + c12) + c13 - c8 - c9 - c15
+  const a4 = _t[4] + 2*(c12 + c13) + c14 - c9 - c10
+  const a5 = _t[5] + 2*(c13 + c14) + c15 - c10 - c11
+  const a6 = _t[6] + 3*c14 + 2*c15 + c13 - c8 - c9
+  const a7 = _t[7] + 3*c15 + c8 - c10 - c11 - c12 - c13
+  const M = 2.3283064365386963e-10
+  let c, v
+  v = a0; c = (v * M) | 0; if (v < 0) c--; r[0] = (v - c * 0x100000000) >>> 0
+  v = a1 + c; c = (v * M) | 0; if (v < 0) c--; r[1] = (v - c * 0x100000000) >>> 0
+  v = a2 + c; c = (v * M) | 0; if (v < 0) c--; r[2] = (v - c * 0x100000000) >>> 0
+  v = a3 + c; c = (v * M) | 0; if (v < 0) c--; r[3] = (v - c * 0x100000000) >>> 0
+  v = a4 + c; c = (v * M) | 0; if (v < 0) c--; r[4] = (v - c * 0x100000000) >>> 0
+  v = a5 + c; c = (v * M) | 0; if (v < 0) c--; r[5] = (v - c * 0x100000000) >>> 0
+  v = a6 + c; c = (v * M) | 0; if (v < 0) c--; r[6] = (v - c * 0x100000000) >>> 0
+  v = a7 + c; c = (v * M) | 0; if (v < 0) c--; r[7] = (v - c * 0x100000000) >>> 0
+  while (c > 0) { c -= sub(r, r, P) }
+  while (c < 0) { c += add(r, r, P) }
+  if (cmp(r, P) >= 0) sub(r, r, P)
+}
+
 // Right shift by 1 (unrolled)
 const shr1 = (a) => {
   a[0]=(a[0]>>>1)|((a[1]&1)<<31);a[1]=(a[1]>>>1)|((a[2]&1)<<31)
@@ -229,28 +317,28 @@ const jacDbl = (RX, RY, RZ, X, Y, Z) => {
   if (isZero(Z)) { for (let i = 0; i < 8; i++) RZ[i] = 0; return }
   // A = Y^2, B = 4*X*Y^2, C = 8*Y^4
   const t0 = _profile ? Date.now() : 0
-  modSqr(_dbl_A, Y)
+  _modSqrInline(_dbl_A, Y)
   if (_profile) _profile.dbl_sqr_A_ms = (_profile.dbl_sqr_A_ms || 0) + (Date.now() - t0)
   
   const t1 = _profile ? Date.now() : 0
-  modMul(_dbl_B, X, _dbl_A); modAdd(_dbl_B, _dbl_B, _dbl_B); modAdd(_dbl_B, _dbl_B, _dbl_B)
+  _modMulInline(_dbl_B, X, _dbl_A); modAdd(_dbl_B, _dbl_B, _dbl_B); modAdd(_dbl_B, _dbl_B, _dbl_B)
   if (_profile) _profile.dbl_mul_B_ms = (_profile.dbl_mul_B_ms || 0) + (Date.now() - t1)
   
   const t2 = _profile ? Date.now() : 0
-  modSqr(_dbl_C, _dbl_A); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C)
+  _modSqrInline(_dbl_C, _dbl_A); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C)
   if (_profile) _profile.dbl_sqr_C_ms = (_profile.dbl_sqr_C_ms || 0) + (Date.now() - t2)
   
   // D = 3*(X-Z^2)*(X+Z^2) for a=-3
   const t3 = _profile ? Date.now() : 0
-  modSqr(_dbl_t, Z); modSub(_dbl_D, X, _dbl_t); modAdd(_dbl_t, X, _dbl_t)
-  modMul(_dbl_D, _dbl_D, _dbl_t); modAdd(_dbl_t, _dbl_D, _dbl_D); modAdd(_dbl_D, _dbl_t, _dbl_D)
+  _modSqrInline(_dbl_t, Z); modSub(_dbl_D, X, _dbl_t); modAdd(_dbl_t, X, _dbl_t)
+  _modMulInline(_dbl_D, _dbl_D, _dbl_t); modAdd(_dbl_t, _dbl_D, _dbl_D); modAdd(_dbl_D, _dbl_t, _dbl_D)
   if (_profile) _profile.dbl_mul_D_ms = (_profile.dbl_mul_D_ms || 0) + (Date.now() - t3)
   
   // X' = D^2 - 2*B, Y' = D*(B-X') - C, Z' = 2*Y*Z
   const t4 = _profile ? Date.now() : 0
-  modSqr(RX, _dbl_D); modSub(RX, RX, _dbl_B); modSub(RX, RX, _dbl_B)
-  modSub(_dbl_t, _dbl_B, RX); modMul(RY, _dbl_D, _dbl_t); modSub(RY, RY, _dbl_C)
-  modMul(RZ, Y, Z); modAdd(RZ, RZ, RZ)
+  _modSqrInline(RX, _dbl_D); modSub(RX, RX, _dbl_B); modSub(RX, RX, _dbl_B)
+  modSub(_dbl_t, _dbl_B, RX); _modMulInline(RY, _dbl_D, _dbl_t); modSub(RY, RY, _dbl_C)
+  _modMulInline(RZ, Y, Z); modAdd(RZ, RZ, RZ)
   if (_profile) _profile.dbl_final_ms = (_profile.dbl_final_ms || 0) + (Date.now() - t4)
 }
 
@@ -262,21 +350,21 @@ const jacAddAffine = (RX, RY, RZ, X1, Y1, Z1, X2, Y2) => {
   if (isZero(Z1)) { copy(RX, X2); copy(RY, Y2); RZ[0] = 1; for (let i = 1; i < 8; i++) RZ[i] = 0; return }
   
   const t0 = _profile ? Date.now() : 0
-  modSqr(_madd_t, Z1); modMul(_madd_t2, X2, _madd_t)
+  _modSqrInline(_madd_t, Z1); _modMulInline(_madd_t2, X2, _madd_t)
   modSub(_madd_H, _madd_t2, X1)
-  modMul(_madd_t, _madd_t, Z1); modMul(_madd_t2, Y2, _madd_t)
+  _modMulInline(_madd_t, _madd_t, Z1); _modMulInline(_madd_t2, Y2, _madd_t)
   modSub(_madd_R, _madd_t2, Y1)
   if (_profile) _profile.add_setup_ms = (_profile.add_setup_ms || 0) + (Date.now() - t0)
   
   if (isZero(_madd_H)) { if (isZero(_madd_R)) { jacDbl(RX, RY, RZ, X1, Y1, Z1) } else { for (let i = 0; i < 8; i++) RZ[i] = 0 } return }
   
   const t1 = _profile ? Date.now() : 0
-  modSqr(_madd_t, _madd_H)
-  modMul(_madd_V, X1, _madd_t)
-  modMul(_madd_t2, _madd_t, _madd_H)
-  modSqr(RX, _madd_R); modSub(RX, RX, _madd_t2); modSub(RX, RX, _madd_V); modSub(RX, RX, _madd_V)
-  modSub(_madd_t, _madd_V, RX); modMul(RY, _madd_R, _madd_t); modMul(_madd_t, Y1, _madd_t2); modSub(RY, RY, _madd_t)
-  modMul(RZ, Z1, _madd_H)
+  _modSqrInline(_madd_t, _madd_H)
+  _modMulInline(_madd_V, X1, _madd_t)
+  _modMulInline(_madd_t2, _madd_t, _madd_H)
+  _modSqrInline(RX, _madd_R); modSub(RX, RX, _madd_t2); modSub(RX, RX, _madd_V); modSub(RX, RX, _madd_V)
+  modSub(_madd_t, _madd_V, RX); _modMulInline(RY, _madd_R, _madd_t); _modMulInline(_madd_t, Y1, _madd_t2); modSub(RY, RY, _madd_t)
+  _modMulInline(RZ, Z1, _madd_H)
   if (_profile) _profile.add_compute_ms = (_profile.add_compute_ms || 0) + (Date.now() - t1)
 }
 
@@ -358,30 +446,30 @@ const precompute4 = (Px, Py) => {
   copy(_pre.x[0], Px); copy(_pre.y[0], Py); sub(_pre.ny[0], P, Py)
   _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
   jacDbl(_pre_2x, _pre_2y, _pre_2z, Px, Py, _pre_tz)
-  modInv(_pre9_zi, _pre_2z); modSqr(_pre9_zi2, _pre9_zi)
-  modMul(_pre_tx, _pre_2x, _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi)
-  modMul(_pre_ty, _pre_2y, _pre9_zi)
+  modInv(_pre9_zi, _pre_2z); _modSqrInline(_pre9_zi2, _pre9_zi)
+  _modMulInline(_pre_tx, _pre_2x, _pre9_zi2)
+  _modMulInline(_pre9_zi, _pre9_zi2, _pre9_zi)
+  _modMulInline(_pre_ty, _pre_2y, _pre9_zi)
   _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
   jacAddAffine(_batch_x[0], _batch_y[0], _batch_z[0], Px, Py, _pre_tz, _pre_tx, _pre_ty)
   jacAddAffine(_batch_x[1], _batch_y[1], _batch_z[1], _batch_x[0], _batch_y[0], _batch_z[0], _pre_tx, _pre_ty)
   jacAddAffine(_batch_x[2], _batch_y[2], _batch_z[2], _batch_x[1], _batch_y[1], _batch_z[1], _pre_tx, _pre_ty)
   copy(_batch_prod[0], _batch_z[0])
-  modMul(_batch_prod[1], _batch_prod[0], _batch_z[1])
-  modMul(_batch_prod[2], _batch_prod[1], _batch_z[2])
+  _modMulInline(_batch_prod[1], _batch_prod[0], _batch_z[1])
+  _modMulInline(_batch_prod[2], _batch_prod[1], _batch_z[2])
   modInv(_batch_inv, _batch_prod[2])
-  modMul(_pre9_zi, _batch_prod[1], _batch_inv)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[3], _batch_x[2], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[3], _batch_y[2], _pre9_zi)
+  _modMulInline(_pre9_zi, _batch_prod[1], _batch_inv)
+  _modSqrInline(_pre9_zi2, _pre9_zi); _modMulInline(_pre.x[3], _batch_x[2], _pre9_zi2)
+  _modMulInline(_pre9_zi, _pre9_zi2, _pre9_zi); _modMulInline(_pre.y[3], _batch_y[2], _pre9_zi)
   sub(_pre.ny[3], P, _pre.y[3])
-  modMul(_batch_t, _batch_z[2], _batch_inv)
-  modMul(_pre9_zi, _batch_prod[0], _batch_t)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[2], _batch_x[1], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[2], _batch_y[1], _pre9_zi)
+  _modMulInline(_batch_t, _batch_z[2], _batch_inv)
+  _modMulInline(_pre9_zi, _batch_prod[0], _batch_t)
+  _modSqrInline(_pre9_zi2, _pre9_zi); _modMulInline(_pre.x[2], _batch_x[1], _pre9_zi2)
+  _modMulInline(_pre9_zi, _pre9_zi2, _pre9_zi); _modMulInline(_pre.y[2], _batch_y[1], _pre9_zi)
   sub(_pre.ny[2], P, _pre.y[2])
-  modMul(_pre9_zi, _batch_z[1], _batch_t)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[1], _batch_x[0], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[1], _batch_y[0], _pre9_zi)
+  _modMulInline(_pre9_zi, _batch_z[1], _batch_t)
+  _modSqrInline(_pre9_zi2, _pre9_zi); _modMulInline(_pre.x[1], _batch_x[0], _pre9_zi2)
+  _modMulInline(_pre9_zi, _pre9_zi2, _pre9_zi); _modMulInline(_pre.y[1], _batch_y[0], _pre9_zi)
   sub(_pre.ny[1], P, _pre.y[1])
 }
 
@@ -407,10 +495,10 @@ const precompute8 = (Px, Py) => {
   jacDbl(_pre5_2x, _pre5_2y, _pre5_2z, Px, Py, _pre_tz)
   
   // Step 2: Convert 2P to affine
-  modInv(_pre5_t, _pre5_2z); modSqr(_pre5_inv, _pre5_t)
-  modMul(_pre_tx, _pre5_2x, _pre5_inv)
-  modMul(_pre5_t, _pre5_inv, _pre5_t)
-  modMul(_pre_ty, _pre5_2y, _pre5_t)
+  modInv(_pre5_t, _pre5_2z); _modSqrInline(_pre5_inv, _pre5_t)
+  _modMulInline(_pre_tx, _pre5_2x, _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_inv, _pre5_t)
+  _modMulInline(_pre_ty, _pre5_2y, _pre5_t)
   
   // Step 3: Compute odd multiples: 3P, 5P, 7P, 9P, 11P, 13P, 15P
   _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
@@ -424,70 +512,70 @@ const precompute8 = (Px, Py) => {
   
   // Step 4: Batch invert all 7 Z coordinates with 1 modInv + 6 modMul
   copy(_pre5_prod[0], _pre5_buf_z[0])
-  modMul(_pre5_prod[1], _pre5_prod[0], _pre5_buf_z[1])
-  modMul(_pre5_prod[2], _pre5_prod[1], _pre5_buf_z[2])
-  modMul(_pre5_prod[3], _pre5_prod[2], _pre5_buf_z[3])
-  modMul(_pre5_prod[4], _pre5_prod[3], _pre5_buf_z[4])
-  modMul(_pre5_prod[5], _pre5_prod[4], _pre5_buf_z[5])
-  modMul(_pre5_prod[6], _pre5_prod[5], _pre5_buf_z[6])
+  _modMulInline(_pre5_prod[1], _pre5_prod[0], _pre5_buf_z[1])
+  _modMulInline(_pre5_prod[2], _pre5_prod[1], _pre5_buf_z[2])
+  _modMulInline(_pre5_prod[3], _pre5_prod[2], _pre5_buf_z[3])
+  _modMulInline(_pre5_prod[4], _pre5_prod[3], _pre5_buf_z[4])
+  _modMulInline(_pre5_prod[5], _pre5_prod[4], _pre5_buf_z[5])
+  _modMulInline(_pre5_prod[6], _pre5_prod[5], _pre5_buf_z[6])
   modInv(_pre5_inv, _pre5_prod[6])
   
   // Back-substitute to get individual inversions
-  modMul(_pre5_t, _pre5_prod[5], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_buf_z[6])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[7], _pre5_buf_x[6], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[7], _pre5_buf_y[6], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[5], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_buf_z[6])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[7], _pre5_buf_x[6], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[7], _pre5_buf_y[6], _pre5_t)
   sub(_pre.ny[7], P, _pre.y[7])
   
-  modMul(_pre5_t, _pre5_prod[4], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[6], _pre5_buf_x[5], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[6], _pre5_buf_y[5], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[4], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[6], _pre5_buf_x[5], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[6], _pre5_buf_y[5], _pre5_t)
   sub(_pre.ny[6], P, _pre.y[6])
   
-  modMul(_pre5_t, _pre5_prod[3], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[5], _pre5_buf_x[4], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[5], _pre5_buf_y[4], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[3], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[4])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[5], _pre5_buf_x[4], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[5], _pre5_buf_y[4], _pre5_t)
   sub(_pre.ny[5], P, _pre.y[5])
   
-  modMul(_pre5_t, _pre5_prod[2], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[4], _pre5_buf_x[3], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[4], _pre5_buf_y[3], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[2], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[3])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[4])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[4], _pre5_buf_x[3], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[4], _pre5_buf_y[3], _pre5_t)
   sub(_pre.ny[4], P, _pre.y[4])
   
-  modMul(_pre5_t, _pre5_prod[1], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[3], _pre5_buf_x[2], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[3], _pre5_buf_y[2], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[1], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[2])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[3])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[4])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[3], _pre5_buf_x[2], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[3], _pre5_buf_y[2], _pre5_t)
   sub(_pre.ny[3], P, _pre.y[3])
   
-  modMul(_pre5_t, _pre5_prod[0], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[2], _pre5_buf_x[1], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[2], _pre5_buf_y[1], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_prod[0], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[1])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[2])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[3])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[4])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[2], _pre5_buf_x[1], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[2], _pre5_buf_y[1], _pre5_t)
   sub(_pre.ny[2], P, _pre.y[2])
   
-  modMul(_pre5_t, _pre5_buf_z[0], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[0])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[1], _pre5_buf_x[0], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[1], _pre5_buf_y[0], _pre5_t)
+  _modMulInline(_pre5_t, _pre5_buf_z[0], _pre5_inv)
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[0])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[1])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[2])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[3])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[4])
+  _modMulInline(_pre5_t, _pre5_t, _pre5_prod[5])
+  _modSqrInline(_pre9_zi2, _pre5_t); _modMulInline(_pre.x[1], _pre5_buf_x[0], _pre9_zi2)
+  _modMulInline(_pre5_t, _pre9_zi2, _pre5_t); _modMulInline(_pre.y[1], _pre5_buf_y[0], _pre5_t)
   sub(_pre.ny[1], P, _pre.y[1])
 }
 // wNAF-9: disabled due to implementation bugs
