@@ -212,49 +212,57 @@ const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
   let sessionInfo = null
   
-  // Try field 3 first (direct SessionInfo - normal path)
+  // Try field 3 first (direct SessionInfo at top level)
   if (fields[3]) {
     sessionInfo = parseSessionInfo(fields[3])
   }
   
-  // If not found at field 3, try other common locations
-  if (!sessionInfo) {
-    // Check field 15 (sometimes SessionInfo is there)
-    if (fields[15]) {
-      try {
-        sessionInfo = parseSessionInfo(fields[15])
-      } catch (e) {
-        // Not there
-      }
-    }
-  }
-  
-  // If still not found, check if field 10 (payload/FromVCSECMessage) contains it
+  // If not found at field 3, check field 10 (payload) which contains FromVCSECMessage
+  // The FromVCSECMessage often has SessionInfo at field 3 within it
   if (!sessionInfo && fields[10]) {
     try {
       const fromVcsecFields = decodeMessage(fields[10])
       
-      // FromVCSECMessage might have SessionInfo in different fields
-      // Check each field in the FromVCSECMessage
-      for (const fieldNum in fromVcsecFields) {
-        const fieldData = fromVcsecFields[fieldNum]
-        if (!fieldData || fieldData.length < 20) continue
-        
+      // Look for field 3 inside the payload (most common location for SessionInfo)
+      if (fromVcsecFields[3]) {
         try {
-          // Try to parse as SessionInfo - it should have at least a publicKey field (65 bytes)
-          const candidate = parseSessionInfo(fieldData)
-          if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
-            sessionInfo = candidate
-            console.log('[SESSION] Found SessionInfo in field 10 subfield ' + fieldNum)
-            break
-          }
+          sessionInfo = parseSessionInfo(fromVcsecFields[3])
+          console.log('[SESSION] Found SessionInfo in field 10.field[3]')
         } catch (e) {
-          // Not SessionInfo, try next field
+          // Not valid SessionInfo, try other fields
+        }
+      }
+      
+      // If still not found, search all fields in the payload
+      if (!sessionInfo) {
+        for (const fieldNum in fromVcsecFields) {
+          const fieldData = fromVcsecFields[fieldNum]
+          if (!fieldData || fieldData.length < 20) continue
+          
+          try {
+            const candidate = parseSessionInfo(fieldData)
+            if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+              sessionInfo = candidate
+              console.log('[SESSION] Found SessionInfo in field 10.field[' + fieldNum + ']')
+              break
+            }
+          } catch (e) {
+            // Not SessionInfo, try next field
+          }
         }
       }
     } catch (e) {
-      // Can't parse field 10, skip
       console.log('[SESSION] Could not parse field 10 as FromVCSECMessage: ' + e.message)
+    }
+  }
+  
+  // If still not found, try field 15 (alternative location)
+  if (!sessionInfo && fields[15]) {
+    try {
+      sessionInfo = parseSessionInfo(fields[15])
+      console.log('[SESSION] Found SessionInfo in field 15')
+    } catch (e) {
+      // Not valid
     }
   }
   
