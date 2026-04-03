@@ -136,6 +136,17 @@ function doPair() {
 
         if (parsed.status === 'ok') {
           if (sawTapRequired || dbg.hasSigner) {
+            // Save vehicle's EC public key if provided
+            if (parsed.vehiclePublicKey && parsed.vehiclePublicKey.length === 65) {
+              var pubKeyHex = ''
+              for (var pk = 0; pk < parsed.vehiclePublicKey.length; pk++) {
+                pubKeyHex += ('0' + parsed.vehiclePublicKey[pk].toString(16)).slice(-2)
+              }
+              storage.setItem('vehicle_ec_public_key', pubKeyHex)
+              addLog('Saved vehicle EC key', 0x44ff44)
+              console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+            }
+            
             state = 'DONE'
             updateStatus('PAIRED!', 0x00cc44)
             addLog('Key enrolled!', 0x00cc44)
@@ -177,6 +188,17 @@ function doPair() {
             waitForResult()
           } else if (p2.status === 'ok') {
             if (sawTapRequired || d2.hasSigner) {
+              // Save vehicle's EC public key if provided
+              if (p2.vehiclePublicKey && p2.vehiclePublicKey.length === 65) {
+                var pubKeyHex = ''
+                for (var pk = 0; pk < p2.vehiclePublicKey.length; pk++) {
+                  pubKeyHex += ('0' + p2.vehiclePublicKey[pk].toString(16)).slice(-2)
+                }
+                storage.setItem('vehicle_ec_public_key', pubKeyHex)
+                addLog('Saved vehicle EC key', 0x44ff44)
+                console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+              }
+              
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
               addLog('Key enrolled!', 0x00cc44)

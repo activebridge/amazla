@@ -229,9 +229,20 @@ const generateUUID = () => {
 // FromVCSECMessage { 
 //   vehicleStatus (field 1): VehicleStatus,
 //   commandStatus (field 4): CommandStatus,
-//   whitelistEntryInfo (field 17): WhitelistEntryInfo
+//   whitelistEntryInfo (field 17): WhitelistEntryInfo containing vehicle EC public key
 // }
 //
+// WhitelistEntryInfo contains:
+//   field 1: publicKey (65 bytes, vehicle EC public key for this session)
+//   field 2+: other metadata
+const parseWhitelistEntryInfo = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    publicKey: fields[1] ?? null,  // 65-byte P-256 EC public key
+    // Other fields (2+) contain metadata we don't use yet
+  }
+}
+
 const parsePairingResponse = (data) => {
   const dbg = {
     rxLen: data ? data.length : 0,
@@ -258,6 +269,19 @@ const parsePairingResponse = (data) => {
       dbg.wrapped = true
       fields = decodeMessage(outerFields[10])
       dbg.innerKeys = Object.keys(fields).join(',')
+    }
+
+    // Check for vehicle's EC public key in field 17 (WhitelistEntryInfo)
+    // This is sent during successful pairing completion
+    let vehiclePublicKey = null
+    if (fields[17] instanceof Uint8Array) {
+      const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
+      if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
+        vehiclePublicKey = wlEntryInfo.publicKey
+        dbg.vehiclePublicKeyFound = true
+        const pubKeyHex = Array.from(vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
+        dbg.vehiclePublicKeyStart = pubKeyHex
+      }
     }
 
     if (fields[1] !== undefined) {
@@ -337,11 +361,11 @@ const parsePairingResponse = (data) => {
         if (dbg.signer) {
           dbg.wlFault = 0
           dbg.hasSigner = true
-          return { success: true, status: 'ok', message: 'Key added (auto-approved)', dbg }
+          return { success: true, status: 'ok', message: 'Key added (auto-approved)', vehiclePublicKey, dbg }
         }
         return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
-      if (wlInfo === 0) return { success: true, status: 'ok', message: 'Key added successfully', dbg }
+      if (wlInfo === 0) return { success: true, status: 'ok', message: 'Key added successfully', vehiclePublicKey, dbg }
       if (wlInfo === 14) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
     } else if (operationStatus === OPERATIONSTATUS_OK) {
@@ -391,6 +415,7 @@ export {
   parseRoutableMessage,
   parseCommandStatus,
   parsePairingResponse,
+  parseWhitelistEntryInfo,
   generateUUID,
   generateRoutingAddress,
 }
