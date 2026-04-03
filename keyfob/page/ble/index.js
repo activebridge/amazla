@@ -143,14 +143,25 @@ function doPair() {
                 pubKeyHex += ('0' + parsed.vehiclePublicKey[pk].toString(16)).slice(-2)
               }
               storage.setItem('vehicle_ec_public_key', pubKeyHex)
-              addLog('Saved vehicle EC key', 0x44ff44)
-              console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+              addLog('✓ Saved vehicle EC key', 0x44ff44)
+              console.log('[BLE] Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
               // Precompute ECDH doublings table on phone while still connected
+              addLog('Requesting ECDH table...', 0x666666)
               currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
                 .then(function(r) {
-                  if (r.success && r.table) { storage.setItem('vehicle_doublings_table', r.table); console.log('[BLE] ECDH table stored') }
+                  if (r.success && r.table) {
+                    storage.setItem('vehicle_doublings_table', r.table)
+                    addLog('✓ Saved ECDH table', 0x44ff44)
+                    console.log('[BLE] ECDH doublings table stored (16 KB, base64 encoded)')
+                  } else {
+                    addLog('Table generation failed', 0xffaa44)
+                    console.log('[BLE] ECDH table generation failed:', r.error)
+                  }
                 })
-                .catch(function() {})
+                .catch(function(e) {
+                  addLog('Table request error', 0xff8844)
+                  console.log('[BLE] ECDH table request error:', e)
+                })
             }
 
             state = 'DONE'
@@ -201,14 +212,25 @@ function doPair() {
                   pubKeyHex += ('0' + p2.vehiclePublicKey[pk].toString(16)).slice(-2)
                 }
                 storage.setItem('vehicle_ec_public_key', pubKeyHex)
-                addLog('Saved vehicle EC key', 0x44ff44)
-                console.log('[BLE] Vehicle public key saved:', pubKeyHex.slice(0, 16) + '...')
+                addLog('✓ Saved vehicle EC key', 0x44ff44)
+                console.log('[BLE] Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
                 // Precompute ECDH doublings table on phone while still connected
+                addLog('Requesting ECDH table...', 0x666666)
                 currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
                   .then(function(r) {
-                    if (r.success && r.table) { storage.setItem('vehicle_doublings_table', r.table); console.log('[BLE] ECDH table stored') }
+                    if (r.success && r.table) {
+                      storage.setItem('vehicle_doublings_table', r.table)
+                      addLog('✓ Saved ECDH table', 0x44ff44)
+                      console.log('[BLE] ECDH doublings table stored (16 KB, base64 encoded)')
+                    } else {
+                      addLog('Table generation failed', 0xffaa44)
+                      console.log('[BLE] ECDH table generation failed:', r.error)
+                    }
                   })
-                  .catch(function() {})
+                  .catch(function(e) {
+                    addLog('Table request error', 0xff8844)
+                    console.log('[BLE] ECDH table request error:', e)
+                  })
               }
 
               state = 'DONE'

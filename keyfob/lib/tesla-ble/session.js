@@ -262,7 +262,10 @@ class TeslaSession {
   loadDoublingsTable() {
     try {
       const b64 = this.storage.getItem('vehicle_doublings_table')
-      if (!b64) return null
+      if (!b64) {
+        console.log('[SESSION] Doublings table not found (will use standard ECDH)')
+        return null
+      }
 
       let decoded
       if (typeof atob !== 'undefined') {
@@ -273,7 +276,7 @@ class TeslaSession {
 
       const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
       if (raw.length !== 256 * 64) {
-        console.log('[SESSION] Doublings table wrong size: ' + raw.length)
+        console.log('[SESSION] Doublings table wrong size: ' + raw.length + ' bytes (need 16384)')
         return null
       }
 
@@ -292,6 +295,8 @@ class TeslaSession {
         table.push([bytesToBigInt(raw.slice(i * 64, i * 64 + 32)),
                     bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64))])
       }
+      console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries, 16 KB)')
+      console.log('[SESSION] ECDH will use fast path: ~128 additions, 0 doublings')
       return table
     } catch (e) {
       console.log('[SESSION] loadDoublingsTable error: ' + e.message)
@@ -466,9 +471,14 @@ class TeslaSession {
           // Derive session key: K = SHA1(ECDH_x)[:16]
           // Fast path: use precomputed doublings table if available (eliminates all doublings)
           const _ecdhTable = this.loadDoublingsTable()
-          const sharedSecret = _ecdhTable
-            ? ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
-            : ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
+          let sharedSecret
+          if (_ecdhTable) {
+            console.log('[SESSION] ECDH: Using FAST path (precomputed table, ~128 additions, 0 doublings)')
+            sharedSecret = ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
+          } else {
+            console.log('[SESSION] ECDH: Using standard path (256 doublings + 64 additions, ~8 seconds)')
+            sharedSecret = ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
+          }
           const keyMaterial = sha1(sharedSecret)
           this.sessionKey = keyMaterial.slice(0, 16)
 
