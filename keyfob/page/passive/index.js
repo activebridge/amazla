@@ -345,7 +345,44 @@ function doConnect(mac, attempt) {
     addLog('CRYPTO: ECDH ~8s', 0x666666)
 
     var t0 = Date.now()
-    teslaSession.requestSessionInfo(function(r) {
+    
+    // First, check if we need to fetch vehicle EC key via GetWhitelistEntryInfo
+    // (This happens if pairing didn't provide field 17)
+    var needsECKeyFetch = !teslaSession.vehiclePublicKey && !storage.getItem('vehicle_ec_public_key')
+    
+    if (needsECKeyFetch) {
+      addLog('Fetching vehicle EC key...', 0x666666)
+      console.log('[PASSIVE] Vehicle EC key missing, will request via GetWhitelistEntryInfo')
+      
+      teslaSession.requestVehiclePublicKey(function(keyResult) {
+        if (keyResult.success) {
+          addLog('✓ Got vehicle EC key', 0x44ff44)
+          console.log('[PASSIVE] Successfully obtained vehicle public key')
+          // Now request session with the obtained key
+          t0 = Date.now()
+          teslaSession.requestSessionInfo(function(r) {
+            handleSessionResponse(r, t0)
+          })
+        } else {
+          // Fall back to session request even without EC key
+          console.log('[PASSIVE] Failed to get EC key, continuing without it:', keyResult.error)
+          addLog('⚠ EC key fetch failed, continuing...', 0xff8844)
+          t0 = Date.now()
+          teslaSession.requestSessionInfo(function(r) {
+            handleSessionResponse(r, t0)
+          })
+        }
+      })
+    } else {
+      // We have EC key already (from pairing or storage), proceed with session
+      teslaSession.requestSessionInfo(function(r) {
+        handleSessionResponse(r, t0)
+      })
+    }
+  }, storage)
+}
+
+function handleSessionResponse(r, t0) {
       var ms = Date.now() - t0
       if (!r.success) {
         state = 'IDLE'
@@ -364,8 +401,7 @@ function doConnect(mac, attempt) {
       addLog('CRYPTO: session OK ' + ms + 'ms', 0x00cc44)
       addLog('CRYPTO: counter=' + r.counter + ' epoch=' + r.epoch.slice(0, 8), 0x666666)
       updateDeviceInfo()
-    })
-  }, storage)
+    }
 }
 
 // ── command handlers ──────────────────────────────────────────────────────────
