@@ -141,6 +141,7 @@ class TeslaBleApi {
 
     if (settingsStorage) {
       settingsStorage.removeItem('tesla_ble_mac')
+      settingsStorage.removeItem('vehicle_ec_public_key')
     }
 
     _privateKeyHex = null
