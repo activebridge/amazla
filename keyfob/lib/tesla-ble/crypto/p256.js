@@ -61,9 +61,7 @@ const modSub = (r, a, b) => { if (sub(r, a, b)) add(r, r, P) }
 const _m = new Uint32Array(16)
 const _t = new Float64Array(17)
 const M32 = 2.3283064365386963e-10  // 1/2^32
-
-// Original 8×8 multiplication (baseline)
-const mul256_orig = (r, a, b) => {
+const mul256 = (r, a, b) => {
   // Manual reset instead of fill (faster - avoid function call overhead)
   for (let i = 0; i < 16; i++) _t[i] = 0
   for (let i = 0; i < 8; i++) {
@@ -81,81 +79,6 @@ const mul256_orig = (r, a, b) => {
       _t[i + j + 1] += hh + mH
     }
   }
-  // Carry propagation (unrolled)
-  let c = 0, v
-  v = _t[0]; r[0] = v >>> 0; c = (v * M32) | 0
-  v = _t[1] + c; r[1] = v >>> 0; c = (v * M32) | 0
-  v = _t[2] + c; r[2] = v >>> 0; c = (v * M32) | 0
-  v = _t[3] + c; r[3] = v >>> 0; c = (v * M32) | 0
-  v = _t[4] + c; r[4] = v >>> 0; c = (v * M32) | 0
-  v = _t[5] + c; r[5] = v >>> 0; c = (v * M32) | 0
-  v = _t[6] + c; r[6] = v >>> 0; c = (v * M32) | 0
-  v = _t[7] + c; r[7] = v >>> 0; c = (v * M32) | 0
-  v = _t[8] + c; r[8] = v >>> 0; c = (v * M32) | 0
-  v = _t[9] + c; r[9] = v >>> 0; c = (v * M32) | 0
-  v = _t[10] + c; r[10] = v >>> 0; c = (v * M32) | 0
-  v = _t[11] + c; r[11] = v >>> 0; c = (v * M32) | 0
-  v = _t[12] + c; r[12] = v >>> 0; c = (v * M32) | 0
-  v = _t[13] + c; r[13] = v >>> 0; c = (v * M32) | 0
-  v = _t[14] + c; r[14] = v >>> 0; c = (v * M32) | 0
-  v = _t[15] + c; r[15] = v >>> 0
-}
-
-// Optimized 4×4 multiplication: reduce loop iterations from 64 to 16
-// Process word pairs as units: a = (a[0],a[1]), (a[2],a[3]), (a[4],a[5]), (a[6],a[7])
-const mul256 = (r, a, b) => {
-  for (let i = 0; i < 16; i++) _t[i] = 0
-  
-  // Process 4×4 pairs (i,j from 0-3, stepping through pairs of words)
-  for (let i = 0; i < 4; i++) {
-    // Process both a[2i] and a[2i+1] together with each b[j]
-    for (let j = 0; j < 4; j++) {
-      // Multiply a[2i] × b[2j]
-      const ai0 = a[i * 2], al0 = ai0 & 0xFFFF, ah0 = ai0 >>> 16
-      const bj0 = b[j * 2], bl0 = bj0 & 0xFFFF, bh0 = bj0 >>> 16
-      let ll = al0 * bl0, lh = al0 * bh0, hl = ah0 * bl0, hh = ah0 * bh0
-      let lhL = lh & 0xFFFF, lhH = lh >>> 16
-      let hlL = hl & 0xFFFF, hlH = hl >>> 16
-      let mL = lhL + hlL
-      let mH = lhH + hlH + (mL >>> 16)
-      mL &= 0xFFFF
-      _t[i * 2 + j * 2] += ll + mL * 65536
-      _t[i * 2 + j * 2 + 1] += hh + mH
-      
-      // Multiply a[2i] × b[2j+1]
-      const bj1 = b[j * 2 + 1], bl1 = bj1 & 0xFFFF, bh1 = bj1 >>> 16
-      ll = al0 * bl1; lh = al0 * bh1; hl = ah0 * bl1; hh = ah0 * bh1
-      lhL = lh & 0xFFFF; lhH = lh >>> 16
-      hlL = hl & 0xFFFF; hlH = hl >>> 16
-      mL = lhL + hlL
-      mH = lhH + hlH + (mL >>> 16)
-      mL &= 0xFFFF
-      _t[i * 2 + j * 2 + 1] += ll + mL * 65536
-      _t[i * 2 + j * 2 + 2] += hh + mH
-      
-      // Multiply a[2i+1] × b[2j]
-      const ai1 = a[i * 2 + 1], al1 = ai1 & 0xFFFF, ah1 = ai1 >>> 16
-      ll = al1 * bl0; lh = al1 * bh0; hl = ah1 * bl0; hh = ah1 * bh0
-      lhL = lh & 0xFFFF; lhH = lh >>> 16
-      hlL = hl & 0xFFFF; hlH = hl >>> 16
-      mL = lhL + hlL
-      mH = lhH + hlH + (mL >>> 16)
-      mL &= 0xFFFF
-      _t[i * 2 + j * 2 + 1] += ll + mL * 65536
-      _t[i * 2 + j * 2 + 2] += hh + mH
-      
-      // Multiply a[2i+1] × b[2j+1]
-      ll = al1 * bl1; lh = al1 * bh1; hl = ah1 * bl1; hh = ah1 * bh1
-      lhL = lh & 0xFFFF; lhH = lh >>> 16
-      hlL = hl & 0xFFFF; hlH = hl >>> 16
-      mL = lhL + hlL
-      mH = lhH + hlH + (mL >>> 16)
-      mL &= 0xFFFF
-      _t[i * 2 + j * 2 + 2] += ll + mL * 65536
-      _t[i * 2 + j * 2 + 3] += hh + mH
-    }
-  }
-  
   // Carry propagation (unrolled)
   let c = 0, v
   v = _t[0]; r[0] = v >>> 0; c = (v * M32) | 0
