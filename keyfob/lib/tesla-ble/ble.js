@@ -22,8 +22,8 @@ const CONNECTION_CONFIG = {
   maxAttempts: 3,
   
   // BLE stack stabilization wait after connection
-  // Keep this high to ensure GATT profile is ready
-  stackStabilizeWait: 5000,
+  // ZeppOS typically stabilizes in 1-2 seconds; 2 seconds is safe margin
+  stackStabilizeWait: 2000,
   
   // Retry delay between attempts (fixed, not exponential)
   // 2-3 seconds is sufficient for BLE stack recovery

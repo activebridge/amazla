@@ -242,7 +242,8 @@ function onConnect() {
   // Reset any previous session
   teslaSession.reset()
 
-  setTimeout(function() { doConnect(mac, 0) }, 1500)
+  // Connect immediately - UI is already rendered from page.build()
+  doConnect(mac, 0)
 }
 
 function doConnect(mac, attempt) {
