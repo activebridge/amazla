@@ -54,10 +54,12 @@ const buildUnsignedMessage = ({ informationRequest, rkeAction }) => {
 //   1: informationRequestType (enum)
 //   2: keyId (bytes)
 //   3: publicKey (bytes)
-const buildInformationRequest = (requestType, keyId, publicKey) => {
+const buildInformationRequest = (requestType, keyId, publicKey, slot) => {
   const parts = [encodeEnum(1, requestType)]
+  // oneof key: keyId (2), publicKey (3), or slot (4)
   if (keyId) parts.push(encodeBytes(2, keyId))
-  if (publicKey) parts.push(encodeBytes(3, publicKey))
+  else if (publicKey) parts.push(encodeBytes(3, publicKey))
+  else if (slot !== undefined && slot !== null) parts.push(encodeVarintField(4, slot))
   return concat(...parts)
 }
 

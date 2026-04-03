@@ -314,11 +314,12 @@ class TeslaSession {
     console.log('[SESSION] Requesting vehicle public key via GetWhitelistEntryInfo...')
     
     // Build InformationRequest with GET_WHITELIST_ENTRY_INFO
-    // Parameter: our public key (to identify ourselves)
+    // Per Tesla SDK: use slot=0 to request the enrolled key info (not keyId or publicKey)
     const infoRequest = buildInformationRequest(
       INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
       null,
-      this.enrolledPublicKey
+      null,
+      0  // slot 0 = first enrolled key
     )
     const unsignedMsg = buildUnsignedMessage({ informationRequest: infoRequest })
     const signedMsg = buildSignedMessage(unsignedMsg)

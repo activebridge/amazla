@@ -60,26 +60,36 @@ describe('VCSEC Protocol', () => {
       const publicKey = new Uint8Array(65).fill(0xab)
       publicKey[0] = 0x04
 
-      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, publicKey)
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, publicKey, null)
       const decoded = decodeMessage(req)
 
-      // vcsec.proto InformationRequest: informationRequestType=1, keyId=2, publicKey=3
+      // vcsec.proto InformationRequest: informationRequestType=1, keyId=2, publicKey=3, slot=4
       expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO) // type = 6
       expect(decoded[2]).toBeUndefined() // no keyId
-      expect(decoded[3].length).toBe(65) // publicKey at field 3
+      expect(decoded[3].length).toBe(65) // publicKey at field 3 (oneof key)
+      expect(decoded[4]).toBeUndefined() // no slot
     })
 
     test('builds request with keyId', () => {
       const keyId = new Uint8Array(20).fill(0x11)
-      const publicKey = new Uint8Array(65)
-      publicKey[0] = 0x04
 
-      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, keyId, publicKey)
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, keyId, null, null)
       const decoded = decodeMessage(req)
 
       expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
       expect(decoded[2].length).toBe(20) // keyId at field 2
-      expect(decoded[3].length).toBe(65) // publicKey at field 3
+      expect(decoded[3]).toBeUndefined() // publicKey should NOT be present (oneof constraint)
+      expect(decoded[4]).toBeUndefined() // slot should NOT be present
+    })
+
+    test('builds request with slot (Tesla SDK method)', () => {
+      const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, null, 0)
+      const decoded = decodeMessage(req)
+
+      expect(decoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
+      expect(decoded[2]).toBeUndefined() // no keyId
+      expect(decoded[3]).toBeUndefined() // no publicKey
+      expect(decoded[4]).toBe(0) // slot at field 4 (oneof key)
     })
   })
 
