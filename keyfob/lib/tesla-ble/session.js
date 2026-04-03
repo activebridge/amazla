@@ -433,6 +433,15 @@ class TeslaSession {
           if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
             this.vehiclePublicKey = response.sessionInfo.publicKey
             console.log('[SESSION] Got vehicle public key from SessionInfo response')
+            
+            // If we don't have vehicle EC key in storage yet, save this ephemeral key
+            // as a fallback. In production, this should be the long-term key from pairing.
+            // But if pairing doesn't provide field 17, we use ephemeral as proxy.
+            if (!this.storage.getItem('vehicle_ec_public_key')) {
+              const keyHex = Array.from(response.sessionInfo.publicKey, x => x.toString(16).padStart(2, '0')).join('')
+              this.storage.setItem('vehicle_ec_public_key', keyHex)
+              console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
+            }
           } else {
             // SessionInfo response doesn't have valid key - try loading from storage (pairing result)
             console.log('[SESSION] SessionInfo response has no valid public key')
