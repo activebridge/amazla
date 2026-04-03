@@ -418,9 +418,11 @@ class TeslaSession {
     const uuid = generateUUID()
 
     // Build session info request
+    // NOTE: Tesla SDK only sends publicKey, NOT challenge (even though proto defines it)
+    // Challenge field is optional and unused by vehicle
     const sessionInfoRequest = buildSessionInfoRequest(
       this.ephemeralPublicKey,
-      generateUUID() // challenge
+      null // NO challenge - matches Tesla SDK behavior
     )
 
     // Build routable message
