@@ -3,7 +3,7 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../../zeppify/index.js'
 import teslaBleApi from '../../lib/tesla-ble/index.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
-import { ecdh, _setProfile, _setWNAFWidth, mul256, mul256_orig, modMul, modSqr } from '../../lib/tesla-ble/crypto/p256.js'
+import { ecdh, _setProfile, _setWNAFWidth } from '../../lib/tesla-ble/crypto/p256.js'
 import { sha1 } from '../../lib/tesla-ble/crypto/sha256.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 
@@ -103,60 +103,6 @@ function onPerfTest() {
 
 function onPerfTest5() {
   onPerfTestWithWidth(5) // Test: wNAF-5
-}
-
-function onFloat64Test() {
-  addLog('F64: Testing Float64...', 0xffcc00)
-  updateStatus('F64 TEST...', 0xffcc00)
-  
-  setTimeout(function() {
-    console.log('[F64] Starting Float64 multiplication benchmark...')
-    
-    // Create test numbers
-    var a = new Uint32Array(8)
-    var b = new Uint32Array(8)
-    var result = new Uint32Array(16)
-    
-    // Copy test data
-    for (var i = 0; i < 8; i++) {
-      a[i] = (PERF_PRIV[i*4] | (PERF_PRIV[i*4+1]<<8) | (PERF_PRIV[i*4+2]<<16) | (PERF_PRIV[i*4+3]<<24)) >>> 0
-      b[i] = (PERF_PUB[i*4] | (PERF_PUB[i*4+1]<<8) | (PERF_PUB[i*4+2]<<16) | (PERF_PUB[i*4+3]<<24)) >>> 0
-    }
-    
-    var iterations = 1000
-    
-    // Time original mul256
-    var t_orig_start = Date.now()
-    for (var i = 0; i < iterations; i++) {
-      mul256_orig(result, a, b)
-    }
-    var t_orig_elapsed = Date.now() - t_orig_start
-    
-    // Time mul256 (optimized)
-    var t_f64_start = Date.now()
-    for (var i = 0; i < iterations; i++) {
-      mul256(result, a, b)
-    }
-    var t_f64_elapsed = Date.now() - t_f64_start
-    
-    var speedup = (t_orig_elapsed / t_f64_elapsed).toFixed(2)
-    
-    console.log('[F64] Original mul256:   ' + t_orig_elapsed + 'ms for ' + iterations + ' iterations')
-    console.log('[F64] Float64 mul256_64: ' + t_f64_elapsed + 'ms for ' + iterations + ' iterations')
-    console.log('[F64] Speedup: ' + speedup + 'x')
-    
-    addLog('32-bit: ' + t_orig_elapsed + 'ms', 0x666666)
-    addLog('64-bit: ' + t_f64_elapsed + 'ms', 0x666666)
-    addLog('Speed: ' + speedup + 'x', speedup < 1.0 ? 0xff6666 : 0x00cc44)
-    
-    if (speedup < 1.0) {
-      addLog('SLOWER - stick with 32-bit', 0xff6666)
-    } else {
-      addLog('FASTER - consider switch', 0x00cc44)
-    }
-    
-    updateStatus('F64 DONE', 0x00cc44)
-  }, 50)
 }
 
 function onPerfTestWithWidth(width) {
@@ -480,14 +426,6 @@ Page(BasePage({
       text: 'PERF wNAF-5', text_size: 18, color: 0xffffff,
       normal_color: 0x305a2a, press_color: 0x152a0a, radius: 12,
       click_func: onPerfTest5,
-    })
-
-    // F64 TEST — test 64-bit chunk multiplication
-    hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 245, y: 465, w: 200, h: 50,
-      text: 'F64 TEST', text_size: 18, color: 0xffffff,
-      normal_color: 0x4a4a6a, press_color: 0x2a2a4a, radius: 12,
-      click_func: onFloat64Test,
     })
 
     // GENERATE POOL button — manual key pool generation

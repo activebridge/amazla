@@ -590,9 +590,5 @@ export {
   bytesToU256 as bytesToBigInt,
   u256ToBytes as bigIntToBytes,
   _setProfile,
-  _setWNAFWidth,
-  mul256,
-  mul256_orig,
-  modMul,
-  modSqr
+  _setWNAFWidth
 }
