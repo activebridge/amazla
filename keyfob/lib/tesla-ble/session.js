@@ -26,6 +26,7 @@ import {
   RKE_ACTION_OPEN_FRUNK,
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
+import { TESLA_PUBLIC_KEY } from '../../secrets.js'
 
 class TeslaSession {
   constructor() {
@@ -240,20 +241,23 @@ class TeslaSession {
   loadVehiclePublicKey() {
     try {
       const pubKeyHex = this.storage.getItem('vehicle_ec_public_key')
-      if (!pubKeyHex) {
-        console.log('[SESSION] Vehicle public key not found in storage (pair first)')
-        return false
+      if (pubKeyHex && pubKeyHex.length === 130) {
+        this.vehiclePublicKey = hexToBytes(pubKeyHex)
+        const keyStart = pubKeyHex.slice(0, 16)
+        console.log('[SESSION] Loaded vehicle public key from storage: ' + keyStart + '...')
+        return true
       }
       
-      if (pubKeyHex.length !== 130) { // 65 bytes = 130 hex characters
-        console.log('[SESSION] Vehicle public key corrupt: ' + pubKeyHex.length + ' chars instead of 130')
-        return false
+      // Fallback: try to load from secrets.js (hardcoded vehicle key)
+      if (TESLA_PUBLIC_KEY && TESLA_PUBLIC_KEY.length === 130) {
+        this.vehiclePublicKey = hexToBytes(TESLA_PUBLIC_KEY)
+        const keyStart = TESLA_PUBLIC_KEY.slice(0, 16)
+        console.log('[SESSION] Loaded vehicle public key from secrets: ' + keyStart + '...')
+        return true
       }
       
-      this.vehiclePublicKey = hexToBytes(pubKeyHex)
-      const keyStart = pubKeyHex.slice(0, 16)
-      console.log('[SESSION] Loaded vehicle public key: ' + keyStart + '...')
-      return true
+      console.log('[SESSION] Vehicle public key not found in storage or secrets')
+      return false
     } catch (e) {
       console.log('[SESSION] Error loading vehicle public key:', e.message)
       return false
