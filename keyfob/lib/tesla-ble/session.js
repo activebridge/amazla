@@ -585,8 +585,22 @@ class TeslaSession {
             epoch: bytesToHex(this.epoch)
           })
         } else {
-          console.log('[SESSION] ERROR: Response missing sessionInfo. payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
-          callback({ success: false, error: 'No session info in response' })
+          // SessionInfo not found - provide detailed diagnostic info
+          const rawFields = decodeMessage(result.data)
+          const fieldList = Object.keys(rawFields).sort((a,b) => a-b).join(', ')
+          console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
+          console.log('[SESSION] Fields present: [' + fieldList + ']')
+          console.log('[SESSION] payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
+          
+          // Try to provide helpful debugging info
+          if (rawFields[10]) {
+            console.log('[SESSION] Field 10 (payload) present - SessionInfo might be nested, but couldn\'t extract')
+          }
+          if (rawFields[6]) {
+            console.log('[SESSION] Field 6 present (status?): ' + rawFields[6].length + ' bytes')
+          }
+          
+          callback({ success: false, error: 'No session info in response. Fields: [' + fieldList + ']' })
         }
       } catch (e) {
         console.log('[SESSION] Exception: ' + e.message)

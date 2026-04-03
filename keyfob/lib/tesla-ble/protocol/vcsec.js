@@ -210,7 +210,54 @@ const parseSessionInfo = (data) => {
 // SessionInfo in field 3 is direct (not wrapped in field 15)
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
-  const sessionInfo = fields[3] ? parseSessionInfo(fields[3]) : null
+  let sessionInfo = null
+  
+  // Try field 3 first (direct SessionInfo - normal path)
+  if (fields[3]) {
+    sessionInfo = parseSessionInfo(fields[3])
+  }
+  
+  // If not found at field 3, try other common locations
+  if (!sessionInfo) {
+    // Check field 15 (sometimes SessionInfo is there)
+    if (fields[15]) {
+      try {
+        sessionInfo = parseSessionInfo(fields[15])
+      } catch (e) {
+        // Not there
+      }
+    }
+  }
+  
+  // If still not found, check if field 10 (payload/FromVCSECMessage) contains it
+  if (!sessionInfo && fields[10]) {
+    try {
+      const fromVcsecFields = decodeMessage(fields[10])
+      
+      // FromVCSECMessage might have SessionInfo in different fields
+      // Check each field in the FromVCSECMessage
+      for (const fieldNum in fromVcsecFields) {
+        const fieldData = fromVcsecFields[fieldNum]
+        if (!fieldData || fieldData.length < 20) continue
+        
+        try {
+          // Try to parse as SessionInfo - it should have at least a publicKey field (65 bytes)
+          const candidate = parseSessionInfo(fieldData)
+          if (candidate && candidate.publicKey && candidate.publicKey.length === 65) {
+            sessionInfo = candidate
+            console.log('[SESSION] Found SessionInfo in field 10 subfield ' + fieldNum)
+            break
+          }
+        } catch (e) {
+          // Not SessionInfo, try next field
+        }
+      }
+    } catch (e) {
+      // Can't parse field 10, skip
+      console.log('[SESSION] Could not parse field 10 as FromVCSECMessage: ' + e.message)
+    }
+  }
+  
   return {
     actionStatus:        fields[1] ?? null,
     sessionInfo:         sessionInfo,
