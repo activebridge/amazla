@@ -231,6 +231,29 @@ function resetIdleDisconnectTimer() {
   }, SESSION_IDLE_TIMEOUT)
 }
 
+function updateDeviceStatus() {
+  // Update device info widget with storage status
+  if (!deviceInfoWidget) return
+  
+  const hasEC = !!storage.getItem('vehicle_ec_public_key')
+  const hasTable = !!storage.getItem('vehicle_doublings_table')
+  const mac = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
+  
+  var statusLine = ''
+  if (!mac) {
+    statusLine = 'Not paired - go to BLE DEBUG'
+  } else {
+    var flags = ''
+    if (hasEC) flags += 'EC '
+    if (hasTable) flags += 'TBL '
+    statusLine = mac.slice(-17) + ' [' + (flags || 'waiting') + ']'
+  }
+  
+  if (deviceInfoWidget) {
+    deviceInfoWidget.setProperty(hmUI.prop.TEXT, statusLine)
+  }
+}
+
 function onCommandStarted() {
   // Called when user starts a command - extends session timeout
   resetIdleDisconnectTimer()
@@ -411,6 +434,63 @@ Page(BasePage({
     // Set teslaSession to use the same file-based storage
     teslaSession.setStorage(storage)
 
+    // Check and log EC key and doublings table on page load
+    console.log('[PASSIVE] ════════════════════════════════════════════')
+    console.log('[PASSIVE] Page load - Checking stored keys and tables...')
+    
+    const ecKeyHex = storage.getItem('vehicle_ec_public_key')
+    const tableB64 = storage.getItem('vehicle_doublings_table')
+    
+    if (ecKeyHex) {
+      console.log('[PASSIVE] ✓ Vehicle EC key found: ' + ecKeyHex.slice(0, 16) + '... (130 chars)')
+    } else {
+      console.log('[PASSIVE] ✗ Vehicle EC key NOT found - pair first')
+    }
+    
+    if (tableB64) {
+      const tableSize = tableB64.length
+      const decodedSize = Math.round(tableSize * 3 / 4)  // base64 to binary ratio
+      console.log('[PASSIVE] ✓ ECDH doublings table found: ' + tableSize + ' chars (~' + decodedSize + ' bytes decoded)')
+    } else {
+      console.log('[PASSIVE] ✗ ECDH doublings table NOT found - will use standard ECDH')
+    }
+    
+    const macAddr = storage.getItem('vehicle_mac')
+    if (macAddr) {
+      console.log('[PASSIVE] ✓ Vehicle MAC address: ' + macAddr)
+    } else {
+      console.log('[PASSIVE] ✗ Vehicle MAC address NOT found - pair first')
+    }
+    
+    const keyPool = storage.getItem('key_pool')
+    if (keyPool) {
+      console.log('[PASSIVE] ✓ Session key pool present')
+    } else {
+      console.log('[PASSIVE] ✗ Session key pool NOT found - sync keys')
+    }
+    
+    // Summary
+    const hasEC = !!ecKeyHex
+    const hasTable = !!tableB64
+    const hasMAC = !!macAddr
+    
+    if (hasEC && hasTable && hasMAC) {
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+      console.log('[PASSIVE] ✓ READY: All keys present, fast ECDH available')
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+    } else if (hasMAC) {
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+      console.log('[PASSIVE] ⚠ PARTIAL: MAC found, EC key/table missing')
+      if (!hasTable) {
+        console.log('[PASSIVE]   Will use standard ECDH (~8 seconds)')
+      }
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+    } else {
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+      console.log('[PASSIVE] ✗ NOT READY: No pairing - go to BLE DEBUG page')
+      console.log('[PASSIVE] ════════════════════════════════════════════')
+    }
+
     // Title
     hmUI.createWidget(hmUI.widget.TEXT, {
       x: 0, y: 18, w: 480, h: 36,
@@ -441,6 +521,9 @@ Page(BasePage({
       text: '...', text_size: 18, color: 0x777777,
       align_h: hmUI.align.LEFT,
     })
+    
+    // Update device status to show what's available
+    updateDeviceStatus()
 
     // Second separator
     hmUI.createWidget(hmUI.widget.FILL_RECT, {
