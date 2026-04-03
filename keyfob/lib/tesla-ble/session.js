@@ -221,6 +221,11 @@ class TeslaSession {
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
+        
+        // Debug: dump raw response fields
+        const rawFields = decodeMessage(result.data)
+        const fieldKeys = Object.keys(rawFields).sort((a,b) => a-b).join(',')
+        console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
 
         if (response.sessionInfo) {
           this.vehiclePublicKey = response.sessionInfo.publicKey
@@ -233,6 +238,13 @@ class TeslaSession {
             console.log('[SESSION] Vehicle public key length: ' + this.vehiclePublicKey.length + ' bytes')
             const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
             console.log('[SESSION] Vehicle public key starts with: ' + keyHex)
+            // If it looks like protobuf (0a, 12, 1a pattern), decode it
+            if (this.vehiclePublicKey[0] <= 0x1a) {
+              console.log('[SESSION] Key looks like encoded protobuf, decoding...')
+              const decoded = decodeMessage(this.vehiclePublicKey)
+              const decodedKeys = Object.keys(decoded).sort((a,b) => a-b).join(',')
+              console.log('[SESSION] Decoded key fields: [' + decodedKeys + ']')
+            }
           } else {
             console.log('[SESSION] ERROR: publicKey is null/undefined')
           }
