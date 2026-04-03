@@ -27,6 +27,7 @@ import teslaBLE from './ble.js'
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
+    this.DEBUG_VEHICLE_PUBLIC_KEY = null // Set this to a Uint8Array[65] to test with hardcoded key
     this.reset()
   }
 
@@ -209,6 +210,10 @@ class TeslaSession {
       uuid: uuid
     })
 
+    // Debug: log the request being sent
+    const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => x.toString(16).padStart(2, '0')).join('')
+    console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
+
     // Send via BLE
     teslaBLE.send(message, function(result) {
       if (!result.success) {
@@ -318,9 +323,20 @@ class TeslaSession {
             const actualLength = this.vehiclePublicKey ? this.vehiclePublicKey.length : 0
             console.log('[SESSION] ❌ INVALID PUBLIC KEY: received ' + actualLength + ' bytes, need 65 bytes')
             console.log('[SESSION] Cannot perform ECDH with ' + actualLength + '-byte key')
-            console.log('[SESSION] This indicates non-standard SessionInfo format from vehicle')
-            callback({ success: false, error: 'Invalid public key format: ' + actualLength + ' bytes instead of 65' })
-            return
+            console.log('[SESSION] Possible causes:')
+            console.log('[SESSION]  1. SessionInfo response is malformed/not a real SessionInfo')
+            console.log('[SESSION]  2. Vehicle requires authentication before sending public key')
+            console.log('[SESSION]  3. BLE protocol variant differs from HTTP API')
+            
+            // DEBUG: Attempt to use a test vehicle public key if available
+            // (This is only for testing/development - production should get real key from response)
+            if (this.DEBUG_VEHICLE_PUBLIC_KEY) {
+              console.log('[SESSION] DEBUG: Using hardcoded test vehicle public key')
+              this.vehiclePublicKey = this.DEBUG_VEHICLE_PUBLIC_KEY
+            } else {
+              callback({ success: false, error: 'Invalid public key format: ' + actualLength + ' bytes instead of 65' })
+              return
+            }
           }
 
           // Derive session key: K = SHA1(ECDH_x)[:16]
