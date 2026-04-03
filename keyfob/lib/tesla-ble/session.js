@@ -15,6 +15,7 @@ import {
   buildToVCSECMessage,
   buildUnsignedMessage,
   parseRoutableMessage,
+  parseWhitelistEntryInfo,
   generateUUID,
   generateRoutingAddress,
   buildInformationRequest,
@@ -331,32 +332,39 @@ class TeslaSession {
         return
       }
       
-      const parsed = parseRoutableMessage(r.data)
-      if (!parsed || !parsed.message) {
-        console.log('[SESSION] Failed to parse whitelist entry info response')
-        callback({ success: false, error: 'Invalid whitelist entry info response' })
-        return
-      }
-      
-      const msg = parsed.message
-      if (msg.whitelistEntryInfo) {
-        const entryInfo = msg.whitelistEntryInfo
-        if (entryInfo.publicKey && entryInfo.publicKey.length === 65) {
-          this.vehiclePublicKey = entryInfo.publicKey
-          
-          // Save to storage for future use
-          const keyHex = Array.from(this.vehiclePublicKey, x => x.toString(16).padStart(2, '0')).join('')
-          this.storage.setItem('vehicle_ec_public_key', keyHex)
-          
-          const keyStart = keyHex.slice(0, 16)
-          console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo: ' + keyStart + '...')
-          callback({ success: true, vehiclePublicKey: this.vehiclePublicKey })
-          return
+      // Response is FromVCSECMessage (may be wrapped in RoutableMessage field 10)
+      // Parse to find field 17 (WhitelistEntryInfo)
+      try {
+        let fields = decodeMessage(r.data)
+        
+        // If wrapped in RoutableMessage, field 10 contains FromVCSECMessage
+        if (fields[10] instanceof Uint8Array) {
+          fields = decodeMessage(fields[10])
         }
+        
+        // Look for field 17 (WhitelistEntryInfo)
+        if (fields[17] instanceof Uint8Array) {
+          const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
+          if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
+            this.vehiclePublicKey = wlEntryInfo.publicKey
+            
+            // Save to storage for future use
+            const keyHex = Array.from(this.vehiclePublicKey, x => x.toString(16).padStart(2, '0')).join('')
+            this.storage.setItem('vehicle_ec_public_key', keyHex)
+            
+            const keyStart = keyHex.slice(0, 16)
+            console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo: ' + keyStart + '...')
+            callback({ success: true, vehiclePublicKey: this.vehiclePublicKey })
+            return
+          }
+        }
+        
+        console.log('[SESSION] WhitelistEntryInfo response missing field 17 with public key')
+        callback({ success: false, error: 'No public key in whitelist entry info' })
+      } catch (e) {
+        console.log('[SESSION] Error parsing whitelist entry info response:', e.message)
+        callback({ success: false, error: 'Failed to parse whitelist entry info: ' + e.message })
       }
-      
-      console.log('[SESSION] WhitelistEntryInfo response missing public key')
-      callback({ success: false, error: 'No public key in whitelist entry info' })
     })
   }
 
