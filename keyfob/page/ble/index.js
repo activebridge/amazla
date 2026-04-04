@@ -258,8 +258,15 @@ function doPair() {
                 if (p2.vehiclePublicKey) {
                   console.log('[BLE]   Key exists but wrong size: ' + p2.vehiclePublicKey.length + ' bytes (expected 65)')
                 }
-                addLog('⚠ EC key missing (will fetch from car later)', 0xff8844)
-                // Continue with pairing - will request EC key via GetWhitelistEntryInfo when connected
+                addLog('⚠ EC key missing - fetching...', 0xff8800)
+                // Request EC key via GetWhitelistEntryInfo
+                console.log('[BLE] Requesting vehicle EC key via GetWhitelistEntryInfo...')
+                var watchKey = getWatchPublicKey()
+                if (watchKey) {
+                  setTimeout(function() { doVerify() }, 500)
+                } else {
+                  console.log('[BLE] Cannot verify - no watch public key')
+                }
               }
 
               state = 'DONE'
