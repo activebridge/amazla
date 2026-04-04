@@ -456,7 +456,7 @@ class TeslaSession {
         
         // Debug: dump raw response fields
         const rawFields = decodeMessage(result.data)
-        const fieldKeys = Object.keys(rawFields).sort((a,b) => a-b).join(',')
+        const fieldKeys = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(',')
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
         
         if (rawFields[3]) {
@@ -466,7 +466,7 @@ class TeslaSession {
           // Detailed decode of field 3 structure
           console.log('[SESSION] === Detailed decode of field 3 ===')
           const field3Fields = decodeMessage(rawFields[3])
-          const field3Keys = Object.keys(field3Fields).sort((a,b) => a-b).join(',')
+          const field3Keys = Object.keys(field3Fields).sort(function(a,b) { return a-b }).join(',')
           console.log('[SESSION] field[3] contains fields: [' + field3Keys + ']')
           
           for (const fieldNum in field3Fields) {
@@ -481,7 +481,7 @@ class TeslaSession {
               if (fieldData[0] === 0x0a || fieldData[0] === 0x12 || fieldData[0] === 0x1a) {
                 try {
                   const subFields = decodeMessage(fieldData)
-                  const subKeys = Object.keys(subFields).sort((a,b) => a-b).join(',')
+                  const subKeys = Object.keys(subFields).sort(function(a,b) { return a-b }).join(',')
                   console.log('[SESSION]     -> nested fields: [' + subKeys + ']')
                   for (const subFieldNum in subFields) {
                     const subData = subFields[subFieldNum]
@@ -593,7 +593,7 @@ class TeslaSession {
         } else {
           // SessionInfo not found - provide detailed diagnostic info
           const rawFields = decodeMessage(result.data)
-          const fieldList = Object.keys(rawFields).sort((a,b) => a-b).join(', ')
+          const fieldList = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(', ')
           console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
           console.log('[SESSION] Fields present: [' + fieldList + ']')
           console.log('[SESSION] payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
