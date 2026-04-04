@@ -59,6 +59,7 @@ var currentPage      = null
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 function addLog(msg, color) {
+  console.log('[BLE]', msg)  // Also log to console
   var s = msg.length > 36 ? msg.slice(0, 36) : msg
   for (var i = 0; i < 7; i++) {
     logLines[i]  = logLines[i + 1]
