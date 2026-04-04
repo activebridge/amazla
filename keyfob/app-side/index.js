@@ -2,6 +2,7 @@ import { BaseSideService } from '@zeppos/zml/base-side';
 import Auth from '../../app-side/tesla/auth'
 import Api from '../../app-side/tesla/api'
 import { store } from '../../app-side/tesla/utils'
+import TeslaSession from '../../app-side/tesla/session'
 import bleCrypto from './ble-crypto.js'
 
 const camalize =  str => {
@@ -24,6 +25,34 @@ const dispatch = async (method, response, params = {}) => {
 }
 
 const actions = {
+  // Sync (or generate) watch's public key from phone storage to watch
+  // Called on app startup to ensure watch has the correct enrolled key
+  // If key doesn't exist, generate and store it first
+  BLE_SYNC_KEYS: async () => {
+    console.log('[App] Syncing BLE keys to watch')
+    try {
+      const pubKey = TeslaSession.getPublicKey()
+      const pubKeyHex = Array.from(pubKey, x => x.toString(16).padStart(2, '0')).join('')
+      console.log('[App] Sending watch public key to watch: ' + pubKeyHex.slice(0, 16) + '...')
+      return { success: true, publicKeyHex: pubKeyHex }
+    } catch (error) {
+      // No keys yet - generate and store them
+      console.log('[App] No keys found, generating new pair: ' + error.message)
+      const result = bleCrypto.generateEnrolledKeyPair()
+      if (result.success) {
+        try {
+          TeslaSession.setKeys(result.privateKeyHex, result.publicKeyHex)
+          console.log('[App] ✓ Stored new enrolled key pair')
+          return { success: true, publicKeyHex: result.publicKeyHex }
+        } catch (storeError) {
+          console.log('[App] Failed to store keys: ' + storeError.message)
+          return { success: false, message: 'Failed to store keys' }
+        }
+      }
+      return result
+    }
+  },
+
   VEHICLE_DATA: async() => {
     let { status } = await Api.vehicleData()
 
