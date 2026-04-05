@@ -187,7 +187,7 @@ class TeslaBLE {
       }
 
       if (setupStarted) {
-        console.log('[BLE] Ignoring duplicate connected callback')
+        console.log('[BLE] Ignoring duplicate connected callback (setupStarted already true)')
         return
       }
       setupStarted = true
@@ -195,9 +195,10 @@ class TeslaBLE {
       this.mac = mac
 
       // Proceed immediately - vehicle disconnects if we delay
-      console.log('[BLE] Connected, setting up profile immediately...')
+      console.log('[BLE] Connected, setting up profile immediately... (setupStarted=', setupStarted, ')')
       
       if (!this.connected) {
+        console.log('[BLE] Connection lost before profile setup')
         this._cleanup()
         settle({ success: false, error: 'Connection lost during setup', attemptNumber })
         return
