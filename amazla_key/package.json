@@ -1,7 +1,7 @@
 {
-  "name": "fetch",
+  "name": "amazla-key-ble",
   "version": "1.0.0",
-  "description": "",
+  "description": "Tesla digital key for ZeppOS watches via BLE",
   "main": "app.js",
   "type": "module",
   "scripts": {
