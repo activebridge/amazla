@@ -332,6 +332,7 @@ function doVerify() {
         if (fields[17]) {
           // whitelistEntryInfo (field 17) present — our key is in the whitelist
           console.log('[BLE] ✓ Got whitelistEntryInfo in response - key is enrolled!')
+          addLog('field17:' + fields[17].length, 0x4488ff)
           
           // Field 17 = WhitelistEntryInfo protobuf message (Tesla SDK vcsec.proto)
           // WhitelistEntryInfo structure:
@@ -350,20 +351,24 @@ function doVerify() {
           var ecKey = null
           
           if (f17bytes) {
+            console.log('[BLE] Decoding field 17 (' + f17bytes.length + ' bytes)...')
             // Parse the WhitelistEntryInfo message inside field 17
             var whitelistEntryInfo = decodeRawFields(f17bytes)
             var weiFields = Object.keys(whitelistEntryInfo).join(',')
             console.log('[BLE] WhitelistEntryInfo fields: ' + weiFields)
+            addLog('WEI:' + weiFields, 0x888888)
             
             // Field 2 of WhitelistEntryInfo is the PublicKey message
             if (whitelistEntryInfo[2]) {
               var publicKeyMsg = whitelistEntryInfo[2]
               console.log('[BLE] Field 2 (PublicKey message): ' + publicKeyMsg.length + ' bytes')
+              addLog('PKmsg:' + publicKeyMsg.length, 0x888888)
               
               // Decode the PublicKey message to extract field 1 (PublicKeyRaw)
               var publicKey = decodeRawFields(publicKeyMsg)
               var pkFields = Object.keys(publicKey).join(',')
               console.log('[BLE] PublicKey fields: ' + pkFields)
+              addLog('PK:' + pkFields, 0x888888)
               
               // Field 1 of PublicKey is the actual 65-byte EC key
               if (publicKey[1] && publicKey[1].length === 65) {
@@ -371,11 +376,14 @@ function doVerify() {
                 console.log('[BLE] ✓ Found EC key in WhitelistEntryInfo.field2.field1 (65 bytes)')
               } else if (publicKey[1]) {
                 console.log('[BLE] ⚠ PublicKey.field1 exists but is ' + publicKey[1].length + ' bytes (expected 65)')
+                addLog('PK[1]:' + publicKey[1].length, 0xff8800)
               } else {
                 console.log('[BLE] ⚠ No field 1 in PublicKey message')
+                addLog('PK no field1', 0xff8800)
               }
             } else {
               console.log('[BLE] ⚠ WhitelistEntryInfo missing field 2 (PublicKey)')
+              addLog('WEI no field2', 0xff8800)
             }
             
             if (!ecKey) {
