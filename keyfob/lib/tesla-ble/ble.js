@@ -253,17 +253,16 @@ class TeslaBLE {
         }
         this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
 
-        // Write CCCD with INDICATE (0x0002) — Tesla ignores NOTIFY (0x0001)
-        console.log('[BLE] Enabling indications (CCCD=0x0002)...')
-        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-
-        // Safety fallback if descWriteComplete never fires
-        setTimeout(() => {
-          if (!done) {
-            console.log('[BLE] CCCD timeout fallback, continuing')
-            settle({ success: true, mac })
-          }
-        }, 3000)
+        // CCCD is already configured in the profile (line 207: value: 0x20 = INDICATE).
+        // Manual write causes 7+ second delays on ZeppOS. Skip it and proceed immediately.
+        console.log('[BLE] Profile configured for INDICATE, skipping manual CCCD write')
+        
+        // Proceed immediately without waiting for CCCD ack
+        // (profile configuration should be sufficient)
+        if (!done) {
+          console.log('[BLE] CCCD skipped, ready')
+          settle({ success: true, mac })
+        }
       })
     })
   }
