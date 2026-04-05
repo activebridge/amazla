@@ -227,7 +227,6 @@ function doPair() {
               console.log('[BLE] Per Tesla SDK: EC key fetched via GetWhitelistEntryInfo, not pairing response')
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
-              addLog('Key enrolled!', 0x00cc44)
               
               // Fetch the EC key after pairing completes
               var watchKey3 = getWatchPublicKey()
