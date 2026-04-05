@@ -208,50 +208,50 @@ class TeslaBLE {
         [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
         [TESLA_READ_UUID]:  { value: 0x20 },  // INDICATE
       })
-      console.log('[BLE] Starting listener...')
+      
+      // Write CCCD descriptor BEFORE starting listener
+      // Vehicle requires this before accepting subscription/indication setup
+      console.log('[BLE] Writing CCCD descriptor (0x0002 = INDICATE)...')
+      this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200', () => {
+        console.log('[BLE] CCCD written, starting listener...')
+        
+        this._ensureBLE().startListener(this.profile, (response) => {
+          console.log('[BLE] Listener response:', JSON.stringify(response))
+          if (done) return
 
-      this._ensureBLE().startListener(this.profile, (response) => {
-        console.log('[BLE] Listener response:', JSON.stringify(response))
-        if (done) return
-
-        if (!response.success) {
-          this.connected = false
-          console.log('[BLE] Listener failed:', response.message)
-          this._cleanup()
-          settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
-          return
-        }
-
-        this.charaValueHandler = (uuid, data, len) => {
-          console.log('[BLE] charaValueArrived:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-        }
-        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-
-        this.charaNotificationHandler = (uuid, data, len) => {
-          console.log('[BLE] charaNotification:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-        }
-        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-
-        // Profile already specifies INDICATE mode (0x20) which configures CCCD automatically
-        // Do NOT manually write CCCD again as this causes the vehicle to disconnect
-        console.log('[BLE] Listener ready, settling connection')
-        setTimeout(() => {
-          if (!done) {
-            console.log('[BLE] MTU negotiation...')
-            try {
-              hmBle.mstSetMTU(247, (mtuResult) => {
-                const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-                this._mtu = Math.max(20, negotiated)
-                console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-              })
-            } catch (e) {
-              console.log('[BLE] mstSetMTU not available:', e.message || e)
-            }
-            settle({ success: true, mac })
+          if (!response.success) {
+            this.connected = false
+            console.log('[BLE] Listener failed:', response.message)
+            this._cleanup()
+            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
+            return
           }
-        }, 100)
+
+          this.charaValueHandler = (uuid, data, len) => {
+            console.log('[BLE] charaValueArrived:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+
+          this.charaNotificationHandler = (uuid, data, len) => {
+            console.log('[BLE] charaNotification:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+
+          console.log('[BLE] Listener ready, negotiating MTU...')
+          try {
+            hmBle.mstSetMTU(247, (mtuResult) => {
+              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+              this._mtu = Math.max(20, negotiated)
+              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+            })
+          } catch (e) {
+            console.log('[BLE] mstSetMTU not available:', e.message || e)
+          }
+          console.log('[BLE] Connection ready')
+          settle({ success: true, mac })
+        })
       })
     })
   }
