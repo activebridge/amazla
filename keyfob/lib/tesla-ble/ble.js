@@ -171,11 +171,13 @@ class TeslaBLE {
       }
 
       if (!result.connected) {
-        // Set connected=false first so the stabilization setTimeout catches it if in progress
-        console.log('[BLE] ⚠️ Vehicle disconnected during setup! result:', JSON.stringify(result))
+        console.log('[BLE] ⚠️ Vehicle disconnected! result:', JSON.stringify(result))
         this.connected = false
         if (setupStarted) {
-          console.log('[BLE] Setup in progress, will be handled by stabilization check')
+          // Setup was in progress when vehicle disconnected - treat as setup failure
+          console.log('[BLE] Disconnect during setup, settling immediately')
+          this._cleanup()
+          settle({ success: false, error: 'Vehicle disconnected during setup', attemptNumber })
           return
         }
         console.log('[BLE] Connect failed:', result.status)
