@@ -97,6 +97,30 @@ function onConnectSession() {
   })
 }
 
+function sendRKECommand(action, actionName) {
+  addLog('▶ Sending ' + actionName + '...', 0xffcc00)
+  console.log('[PASSIVE] ▶ Sending ' + actionName + ' command')
+  
+  teslaSession.setStorage(storage)
+  teslaSession.sendRKECommand(action, function(result) {
+    if (result.success) {
+      addLog('✓ ' + actionName + ' OK!', 0x00cc44)
+      console.log('[PASSIVE] ✓ ' + actionName + ' succeeded')
+    } else {
+      addLog('✗ ' + actionName + ': ' + (result.error || '?'), 0xff4444)
+      console.log('[PASSIVE] ✗ ' + actionName + ' failed: ' + (result.error || 'unknown'))
+    }
+  })
+}
+
+function onUnlock() {
+  sendRKECommand(1, 'UNLOCK')
+}
+
+function onLock() {
+  sendRKECommand(2, 'LOCK')
+}
+
 // ── page ─────────────────────────────────────────────────────────────────────
 Page(BasePage({
   build() {
@@ -183,17 +207,17 @@ Page(BasePage({
     // UNLOCK button
     hmUI.createWidget(hmUI.widget.BUTTON, {
       x: 220, y: 350, w: 90, h: 50,
-      text: 'PRECOMP', text_size: 14, color: 0xffffff,
+      text: 'UNLOCK', text_size: 14, color: 0xffffff,
       normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 8,
-      click_func: function() { console.log('PRECOMP clicked') },
+      click_func: onUnlock,
     })
 
     // LOCK button
     hmUI.createWidget(hmUI.widget.BUTTON, {
       x: 320, y: 350, w: 90, h: 50,
-      text: 'CLEAR', text_size: 14, color: 0xffffff,
+      text: 'LOCK', text_size: 14, color: 0xffffff,
       normal_color: 0x5c3a00, press_color: 0x2d1d00, radius: 8,
-      click_func: function() { console.log('CLEAR clicked') },
+      click_func: onLock,
     })
 
     // Check components (don't load table into memory, just check if it exists)

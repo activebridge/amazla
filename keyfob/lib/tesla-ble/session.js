@@ -779,6 +779,10 @@ class TeslaSession {
   }
 
   // Convenience methods for specific actions
+  sendRKECommand(action, callback) {
+    this.sendCommand(action, callback)
+  }
+
   lock(callback) {
     this.sendCommand(RKE_ACTION_LOCK, callback)
   }
