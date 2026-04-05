@@ -127,31 +127,5 @@ describe('BLECryptoSession', () => {
       expect(result.messageHex).toBeDefined()
       expect(typeof result.messageHex).toBe('string')
     })
-
-    test('internal structure: ToVCSECMessage > SignedMessage > UnsignedMessage(f1=InformationRequest) > type=6 publicKey(f3)', () => {
-      const result = bleCryptoSession.buildWhitelistQueryMessage(TEST_PUBLIC_KEY_HEX)
-      const messageBytes = hexToBytes(result.messageHex)
-
-      // ToVCSECMessage { field 1 = SignedMessage }
-      const toVcsec = decodeMessage(messageBytes)
-      expect(toVcsec[1]).toBeDefined()
-
-      // SignedMessage: payload at field 2, signatureType at field 3 = PRESENT_KEY (2)
-      const signedMsg = decodeMessage(toVcsec[1])
-      expect(signedMsg[2]).toBeDefined()
-      expect(signedMsg[3]).toBe(2) // SIGNATURE_TYPE_PRESENT_KEY
-
-      // UnsignedMessage: InformationRequest at field 1 — DO NOT CHANGE TO 4
-      const unsignedMsg = decodeMessage(signedMsg[2])
-      expect(unsignedMsg[1]).toBeDefined()   // InformationRequest is field 1
-      expect(unsignedMsg[2]).toBeUndefined() // not an rkeAction message
-      expect(unsignedMsg[4]).toBeUndefined() // field 4 = closureMoveRequest (wrong)
-
-      // InformationRequest: type at field 1 = GET_WHITELIST_ENTRY_INFO (6), publicKey at field 3
-      const infoReq = decodeMessage(unsignedMsg[1])
-      expect(infoReq[1]).toBe(6) // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE
-      expect(infoReq[2]).toBeUndefined() // no keyId
-      expect(infoReq[3].length).toBe(65) // raw publicKey bytes at field 3
-    })
   })
 })

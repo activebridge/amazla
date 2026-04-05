@@ -1,13 +1,10 @@
 import * as hmUI from '@zos/ui'
 import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../../zeppify/index.js'
-import teslaBleApi, { CONNECTION_CONFIG } from '../../lib/tesla-ble/index.js'
-import teslaSession from '../../lib/tesla-ble/session.js'
-import { ecdh, _setProfile, _setWNAFWidth } from '../../lib/tesla-ble/crypto/p256.js'
-import { sha1 } from '../../lib/tesla-ble/crypto/sha256.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
+import teslaSession from '../../lib/tesla-ble/session.js'
 
-// Shared storage with BLE page (same ble_settings.txt, same MAC)
+// Shared storage
 var storage = {
   data: {},
   load: function() {
@@ -16,38 +13,25 @@ var storage = {
       this.data = json ? JSON.parse(json) : {}
     } catch (e) { this.data = {} }
   },
+  getItem: function(key) { return this.data[key] || null },
+  setItem: function(key, val) { this.data[key] = val; this.save() },
   save: function() {
     try {
       writeFileSync({ path: 'ble_settings.txt', data: JSON.stringify(this.data), options: { encoding: 'utf8' } })
     } catch (e) {}
   },
-  getItem: function(key) { return this.data[key] || null },
-  setItem: function(key, val) { this.data[key] = val; this.save() },
-  removeItem: function(key) { delete this.data[key]; this.save() }
 }
 
-// ── state ─────────────────────────────────────────────────────────────────────
-// IDLE → CONNECTING → SESSION (ECDH running) → READY → UNLOCKING/LOCKING
-var state = 'IDLE'
-var lastCmdMs = 0
-var logLines  = ['', '', '', '', '', '', '', '']
-var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
-
-// Connection persistence: keep BLE alive for 60 seconds between commands
-// Reduces time for subsequent commands from 18s to 1-2s
-const SESSION_IDLE_TIMEOUT = 60000  // 60 seconds
-var lastCommandTime = 0
-var idleDisconnectTimer = null
-
-var statusDotWidget  = null
 var statusTextWidget = null
 var deviceInfoWidget = null
-var logWidgets       = []
-var currentPage      = null
+var logWidgets = []
+var logLines  = ['', '', '', '', '', '', '', '']
+var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
+var currentPage = null
+var initialized = false
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 function addLog(msg, color) {
-  console.log('[Log]', msg)  // Also log to console
+  console.log('[PASSIVE] ' + msg)
   var s = msg.length > 36 ? msg.slice(0, 36) : msg
   for (var i = 0; i < 7; i++) {
     logLines[i]  = logLines[i + 1]
@@ -63,433 +47,69 @@ function addLog(msg, color) {
   }
 }
 
-function updateStatus(label, dotColor) {
-  if (statusDotWidget)  statusDotWidget.setProperty(hmUI.prop.COLOR,  dotColor)
-  if (statusTextWidget) {
-    statusTextWidget.setProperty(hmUI.prop.TEXT,  label)
-    statusTextWidget.setProperty(hmUI.prop.COLOR, dotColor)
+function onFetchECKey() {
+  var watchKey = storage.getItem('watch_public_key')
+  if (!watchKey) {
+    addLog('✗ No watch key - pair first', 0xff4444)
+    return
   }
-}
-
-function updateDeviceInfo() {
-  var s       = teslaBleApi.getStatus()
-  var savePart = (s.savedMAC && s.savedMAC.length >= 8) ? s.savedMAC.slice(-8) : '--------'
-  var poolSize = teslaSession.getPoolSize()
-  var lastStr  = lastCmdMs > 0 ? lastCmdMs + 'ms' : '---'
-  if (deviceInfoWidget) deviceInfoWidget.setProperty(hmUI.prop.TEXT,
-    'MAC:' + savePart + ' POOL:' + poolSize + '  LAST:' + lastStr)
-}
-
-function dumpHex(bytes, n) {
-  if (!bytes) return 'null'
-  var s = ''
-  var limit = Math.min(bytes.length, n || 8)
-  for (var i = 0; i < limit; i++) s += ('0' + bytes[i].toString(16)).slice(-2)
-  if (bytes.length > limit) s += '..'
-  return s
-}
-
-function hexToBytes(hex) {
-  var b = new Uint8Array(hex.length / 2)
-  for (var i = 0; i < hex.length; i += 2) b[i / 2] = parseInt(hex.substr(i, 2), 16)
-  return b
-}
-
-// ── perf test ─────────────────────────────────────────────────────────────────
-// Test vectors from __tests__/crypto-p256.test.js (ALICE_PRIV × BOB_PUB)
-var PERF_PRIV = hexToBytes('c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721')
-var PERF_PUB  = hexToBytes(
-  '047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978' +
-  '07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1'
-)
-
-function onPerfTest() {
-  onPerfTestWithWidth(4) // Default: wNAF-4
-}
-
-function onPerfTest5() {
-  onPerfTestWithWidth(5) // Test: wNAF-5
-}
-
-function onPerfTestWithWidth(width) {
-  var N = 1  // Simulate single session establishment
-  addLog('PERF: Profiling ECDH...', 0xffcc00)
-  updateStatus('PERF TEST...', 0xffcc00)
-
-  // Defer so the log message renders before the blocking scalar-mul
-  setTimeout(function() {
-    console.log('[PERF] Starting detailed profiling...')
-    
-    _setWNAFWidth(width)
-    console.log('[PERF] Using wNAF-' + width + ' encoding')
-    
-    // Setup profiling
-    var profile = {}
-    _setProfile(profile)
-    
-    var t0 = Date.now()
-    
-    // Time the ECDH call
-    var shared = ecdh(PERF_PRIV, PERF_PUB)
-    
-    // Time SHA1
-    var sessionKey = sha1(shared).slice(0, 16)
-    var t3 = Date.now()
-    
-    var elapsed = t3 - t0
-    
-    console.log('[PERF] Total:', elapsed + 'ms')
-    console.log('[PERF] ECDH:', profile.scalarMul_ms + 'ms')
-    console.log('[PERF] modInv calls:', profile.modInv_calls + ', time:', profile.modInv_ms + 'ms')
-    console.log('[PERF] jacDbl calls:', profile.jacDbl_calls)
-    
-    // Granular jacDbl breakdown
-    if (profile.dbl_sqr_A_ms || profile.dbl_mul_B_ms) {
-      console.log('[PERF] jacDbl breakdown (per call avg):')
-      console.log('[PERF]   sqr(A):', (profile.dbl_sqr_A_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
-      console.log('[PERF]   mul(B):', (profile.dbl_mul_B_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
-      console.log('[PERF]   sqr(C):', (profile.dbl_sqr_C_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
-      console.log('[PERF]   mul(D):', (profile.dbl_mul_D_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
-      console.log('[PERF]   final:', (profile.dbl_final_ms / profile.jacDbl_calls).toFixed(2) + 'ms')
-      var dbl_total = (profile.dbl_sqr_A_ms || 0) + (profile.dbl_mul_B_ms || 0) + (profile.dbl_sqr_C_ms || 0) + (profile.dbl_mul_D_ms || 0) + (profile.dbl_final_ms || 0)
-      console.log('[PERF]   jacDbl total:', dbl_total + 'ms')
-    }
-    
-    console.log('[PERF] jacAdd calls:', profile.jacAdd_calls)
-    if (profile.add_setup_ms || profile.add_compute_ms) {
-      console.log('[PERF] jacAdd breakdown (per call avg):')
-      console.log('[PERF]   setup:', (profile.add_setup_ms / profile.jacAdd_calls).toFixed(2) + 'ms')
-      console.log('[PERF]   compute:', (profile.add_compute_ms / profile.jacAdd_calls).toFixed(2) + 'ms')
-      var add_total = (profile.add_setup_ms || 0) + (profile.add_compute_ms || 0)
-      console.log('[PERF]   jacAdd total:', add_total + 'ms')
-    }
-    console.log('[PERF] Result:', dumpHex(shared, 16))
-    
-    addLog('Total: ' + elapsed + 'ms', 0x00cc44)
-    addLog('ECDH:  ' + ecdhTime + 'ms', 0x666666)
-    addLog('SHA1:  ' + sha1Time + 'ms', 0x666666)
-    addLog('~30/sec = passive unlock', 0x4488ff)
-    updateStatus('PERF DONE', 0x00cc44)
-  }, 50)
-}
-
-// ── key pool generation ───────────────────────────────────────────────────────
-function requestKeyPool() {
-  var oldSize = teslaSession.getPoolSize()
-  addLog('Current pool: ' + oldSize + ' keys', 0x666666)
-  addLog('Generating 5 more...', 0xffcc00)
-  currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 5 } })
-    .then(function(response) {
-      console.log('[KeyPool] Response:', JSON.stringify(response))
+  
+  if (!storage.getItem('tesla_ble_mac') && !storage.getItem('vehicle_mac')) {
+    addLog('✗ No vehicle MAC - pair first', 0xff4444)
+    return
+  }
+  
+  addLog('▶ Connecting to vehicle...', 0xffcc00)
+  console.log('[PASSIVE] ▶ Fetching EC key from vehicle')
+  
+  // Use session to request vehicle public key via BLE
+  teslaSession.setStorage(storage)
+  teslaSession.requestVehiclePublicKey(function(result) {
+    if (result.success) {
+      addLog('✓ EC key saved!', 0x00cc44)
+      console.log('[PASSIVE] ✓ Vehicle EC key retrieved and saved')
       
-      // Handle nested result object: response.result contains the actual data
-      var result = response && response.result ? response.result : response
-      
-      if (result && result.success && result.pool) {
-        // Store base64 binary directly in LocalStorage (session.js reads from there)
-        var s = teslaSession.storage
-        console.log('[KeyPool] Storage type:', typeof s, 'has setItem:', typeof s.setItem)
-        s.setItem('key_pool', result.pool)
-        console.log('[KeyPool] Stored to key_pool, length:', result.pool.length)
-        
-        // Verify it was saved
-        var readBack = s.getItem('key_pool')
-        console.log('[KeyPool] Read back length:', readBack ? readBack.length : 'null')
-        
-        var count = teslaSession.getPoolSize()
-        addLog('✓ Pool: ' + count + ' keys ready', 0x00cc44)
-        console.log('[KeyPool] Final count:', count)
-        updateDeviceInfo()
-      } else {
-        addLog('Pool gen failed', 0xff4444)
-        addLog('Result: ' + JSON.stringify(result || {}), 0xff8800)
-        console.log('[KeyPool] Failed - result:', JSON.stringify(result))
-      }
-    })
-    .catch(function(e) {
-      addLog('Pool err: ' + (e && e.message || '?'), 0xff4444)
-      addLog('Make sure phone app is open', 0xff8800)
-      console.log('[KeyPool] Error:', e)
-    })
-}
-
-// ── session persistence & idle disconnect ─────────────────────────────────────
-
-function resetIdleDisconnectTimer() {
-  // Clear any pending idle disconnect
-  if (idleDisconnectTimer) {
-    clearTimeout(idleDisconnectTimer)
-  }
-  
-  // Set up new timer: disconnect if idle for 60 seconds
-  lastCommandTime = Date.now()
-  idleDisconnectTimer = setTimeout(function() {
-    if (teslaBleApi.isConnected()) {
-      addLog('Session idle timeout (60s)', 0xff8800)
-      teslaBleApi.disconnect()
-    }
-  }, SESSION_IDLE_TIMEOUT)
-}
-
-function updateDeviceStatus() {
-  // Update device info widget with storage status
-  if (!deviceInfoWidget) return
-  
-  const hasEC = !!storage.getItem('vehicle_ec_public_key')
-  const hasTable = !!storage.getItem('vehicle_doublings_table')
-  const mac = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
-  
-  var statusLine = ''
-  if (!mac) {
-    statusLine = 'Not paired - go to BLE DEBUG'
-  } else {
-    var flags = ''
-    if (hasEC) flags += 'EC '
-    if (hasTable) flags += 'TBL '
-    statusLine = mac.slice(-17) + ' [' + (flags || 'waiting') + ']'
-  }
-  
-  if (deviceInfoWidget) {
-    deviceInfoWidget.setProperty(hmUI.prop.TEXT, statusLine)
-  }
-}
-
-function onCommandStarted() {
-  // Called when user starts a command - extends session timeout
-  resetIdleDisconnectTimer()
-}
-
-// ── connect + session flow ────────────────────────────────────────────────────
-function onConnect() {
-  if (state === 'CONNECTING' || state === 'SESSION') {
-    addLog('Busy: ' + state, 0xff8800)
-    return
-  }
-
-  // Check pool before connecting
-  var poolSize = teslaSession.getPoolSize()
-  if (poolSize === 0) {
-    addLog('Pool empty!', 0xff4444)
-    requestKeyPool()
-    return
-  }
-
-  if (teslaBleApi.isConnected() && state === 'READY') {
-    addLog('Already ready', 0xcccccc)
-    resetIdleDisconnectTimer()
-    return
-  }
-
-  var mac = storage.getItem('tesla_ble_mac')
-  if (!mac) {
-    addLog('No saved MAC', 0xff4444)
-    addLog('Pair first via BLE page', 0xff8800)
-    return
-  }
-
-  state = 'CONNECTING'
-  updateStatus('CONNECTING...', 0xffcc00)
-  addLog('Connecting...', 0xcccccc)
-  addLog(mac.slice(-17), 0xaaaaaa)
-
-  // Reset any previous session if reconnecting after session expired
-  if (!teslaSession.isPreserved()) {
-    teslaSession.reset()
-  }
-
-  // Connect immediately - UI is already rendered from page.build()
-  doConnect(mac, 0)
-}
-
-function doConnect(mac, attempt) {
-  var timeoutMs = CONNECTION_CONFIG.timeouts[attempt] || CONNECTION_CONFIG.timeouts[CONNECTION_CONFIG.timeouts.length - 1]
-  var attemptLabel = (attempt + 1) + '/' + CONNECTION_CONFIG.maxAttempts
-  addLog('BLE: attempt ' + attemptLabel + ' (' + (timeoutMs / 1000).toFixed(1) + 's timeout)', 0x666666)
-  
-  teslaBleApi.connect(mac, function(result) {
-    if (!result.success) {
-      var errMsg = result.error || 'unknown'
-      addLog('BLE: conn failed - ' + errMsg, 0xff4444)
-      
-      // Retry if we haven't exceeded max attempts
-      if (attempt < CONNECTION_CONFIG.maxAttempts - 1) {
-        addLog('BLE: retrying in ' + (CONNECTION_CONFIG.retryDelayMs / 1000) + 's...', 0xff8800)
-        setTimeout(function() { doConnect(mac, attempt + 1) }, CONNECTION_CONFIG.retryDelayMs)
-        return
-      }
-      
-      // All attempts exhausted
-      state = 'IDLE'
-      updateStatus('CONN FAIL', 0xff4444)
-      addLog('BLE: gave up after ' + CONNECTION_CONFIG.maxAttempts + ' attempts', 0xff4444)
-      return
-    }
-
-    addLog('BLE: connected to ' + mac.slice(-5), 0x00cc44)
-    state = 'SESSION'
-    updateStatus('ECDH...', 0x4488ff)
-    addLog('CRYPTO: starting session...', 0xcccccc)
-
-    // Check if we have a preserved session from a previous connection (within 5 min)
-    if (teslaSession.restorePreservedSession()) {
-      // Session was successfully restored - skip ECDH!
-      state = 'READY'
-      updateStatus('READY (cached)', 0x00cc44)
-      addLog('CRYPTO: session restored from cache', 0x44ff44)
-      addLog('CRYPTO: counter=' + teslaSession.counter + ' epoch=' + teslaSession.epoch.slice(0, 8), 0x666666)
-      updateDeviceInfo()
-      return
-    }
-
-    // No preserved session - run full ECDH
-    addLog('CRYPTO: ECDH ~8s', 0x666666)
-
-    var t0 = Date.now()
-    teslaSession.requestSessionInfo(function(r) {
-      var ms = Date.now() - t0
-      if (!r.success) {
-        state = 'IDLE'
-        updateStatus('SESSION FAIL', 0xff4444)
-        var sessErr = r.error || 'unknown'
-        addLog('CRYPTO: session failed - ' + sessErr, 0xff4444)
-        if (sessErr.indexOf('HMAC') >= 0) {
-          addLog('ERR: Invalid session key', 0xff6666)
-        } else if (sessErr.indexOf('timeout') >= 0) {
-          addLog('ERR: BLE timeout', 0xff6666)
-        }
-        return
-      }
-      state = 'READY'
-      updateStatus('READY', 0x00cc44)
-      addLog('CRYPTO: session OK ' + ms + 'ms', 0x00cc44)
-      addLog('CRYPTO: counter=' + r.counter + ' epoch=' + r.epoch.slice(0, 8), 0x666666)
-      updateDeviceInfo()
-    })
-  }, storage)
-}
-
-// ── command handlers ──────────────────────────────────────────────────────────
-function onUnlock() {
-  if (state !== 'READY') {
-    addLog('CMD: not ready (' + state + ')', 0xff8800)
-    return
-  }
-  onCommandStarted()  // Extend session timeout
-  state = 'UNLOCKING'
-  updateStatus('UNLOCKING...', 0xff8800)
-  addLog('CMD: unlock starting...', 0xcccccc)
-  var t0 = Date.now()
-  teslaSession.unlock(function(result) {
-    lastCmdMs = Date.now() - t0
-    state = 'READY'
-    if (!result.success) {
-      updateStatus('READY', 0x00cc44)
-      var unlErr = result.error || 'unknown'
-      addLog('CMD: unlock failed - ' + unlErr, 0xff4444)
-      if (unlErr.indexOf('counter') >= 0) {
-        addLog('ERR: counter mismatch', 0xff6666)
-      } else if (unlErr.indexOf('HMAC') >= 0) {
-        addLog('ERR: authentication failed', 0xff6666)
-      }
+      // Refresh component status
+      setTimeout(function() {
+        location.reload()
+      }, 1000)
     } else {
-      updateStatus('UNLOCKED', 0x00cc44)
-      addLog('CMD: unlock OK ' + lastCmdMs + 'ms', 0x00cc44)
+      addLog('✗ Failed: ' + (result.error || '?'), 0xff4444)
+      console.log('[PASSIVE] ✗ Error: ' + (result.error || 'unknown'))
     }
-    updateDeviceInfo()
   })
 }
 
-function onLock() {
-  if (state !== 'READY') {
-    addLog('CMD: not ready (' + state + ')', 0xff8800)
-    return
-  }
-  onCommandStarted()  // Extend session timeout
-  state = 'LOCKING'
-  updateStatus('LOCKING...', 0xff8800)
-  addLog('CMD: lock starting...', 0xcccccc)
-  var t0 = Date.now()
-  teslaSession.lock(function(result) {
-    lastCmdMs = Date.now() - t0
-    state = 'READY'
-    if (!result.success) {
-      updateStatus('READY', 0x00cc44)
-      var lockErr = result.error || 'unknown'
-      addLog('CMD: lock failed - ' + lockErr, 0xff4444)
+function onConnectSession() {
+  addLog('▶ Connecting to vehicle...', 0xffcc00)
+  console.log('[PASSIVE] ▶ Establishing BLE session')
+  
+  teslaSession.setStorage(storage)
+  teslaSession.requestSessionInfo(function(result) {
+    if (result.success) {
+      addLog('✓ Session & EC key OK!', 0x00cc44)
+      console.log('[PASSIVE] ✓ Session established')
+      console.log('[PASSIVE] Vehicle EC key obtained and saved')
     } else {
-      updateStatus('LOCKED', 0x44aaff)
-      addLog('CMD: lock OK ' + lastCmdMs + 'ms', 0x44aaff)
+      addLog('✗ Session failed: ' + (result.error || '?'), 0xff4444)
+      console.log('[PASSIVE] ✗ Error: ' + (result.error || 'unknown'))
     }
-    updateDeviceInfo()
   })
 }
 
-// ── page ──────────────────────────────────────────────────────────────────────
+// ── page ─────────────────────────────────────────────────────────────────────
 Page(BasePage({
   build() {
-    currentPage = this
+    if (initialized) {
+      console.log('[PASSIVE] ⚠ Build called again, ignoring to prevent double initialization')
+      return
+    }
+    initialized = true
+    
     storage.load()
-    teslaBleApi.init(storage)
     
-    // Set teslaSession to use the same file-based storage
+    // Use the singleton session with shared storage
     teslaSession.setStorage(storage)
-
-    // Check and log EC key and doublings table on page load
-    console.log('[PASSIVE] ════════════════════════════════════════════')
-    console.log('[PASSIVE] Page load - Checking stored keys and tables...')
-    
-    const ecKeyHex = storage.getItem('vehicle_ec_public_key')
-    const tableB64 = storage.getItem('vehicle_doublings_table')
-    
-    if (ecKeyHex) {
-      console.log('[PASSIVE] ✓ Vehicle EC key found: ' + ecKeyHex.slice(0, 16) + '... (130 chars)')
-    } else {
-      console.log('[PASSIVE] ✗ Vehicle EC key NOT found - pair first')
-    }
-    
-    if (tableB64) {
-      const tableSize = tableB64.length
-      const decodedSize = Math.round(tableSize * 3 / 4)  // base64 to binary ratio
-      console.log('[PASSIVE] ✓ ECDH doublings table found: ' + tableSize + ' chars (~' + decodedSize + ' bytes decoded)')
-    } else {
-      console.log('[PASSIVE] ✗ ECDH doublings table NOT found - will use standard ECDH')
-    }
-    
-    const macAddr = storage.getItem('vehicle_mac')
-    if (macAddr) {
-      console.log('[PASSIVE] ✓ Vehicle MAC address: ' + macAddr)
-    } else {
-      console.log('[PASSIVE] ✗ Vehicle MAC address NOT found - pair first')
-    }
-    
-    const keyPool = storage.getItem('key_pool')
-    if (keyPool) {
-      console.log('[PASSIVE] ✓ Session key pool present')
-    } else {
-      console.log('[PASSIVE] ✗ Session key pool NOT found - sync keys')
-    }
-    
-    // Summary
-    const hasEC = !!ecKeyHex
-    const hasTable = !!tableB64
-    const hasMAC = !!macAddr
-    
-    if (hasEC && hasTable && hasMAC) {
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-      console.log('[PASSIVE] ✓ READY: All keys present, fast ECDH available')
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-    } else if (hasMAC) {
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-      console.log('[PASSIVE] ⚠ PARTIAL: MAC found, EC key/table missing')
-      if (!hasTable) {
-        console.log('[PASSIVE]   Will use standard ECDH (~8 seconds)')
-      }
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-    } else {
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-      console.log('[PASSIVE] ✗ NOT READY: No pairing - go to BLE DEBUG page')
-      console.log('[PASSIVE] ════════════════════════════════════════════')
-    }
 
     // Title
     hmUI.createWidget(hmUI.widget.TEXT, {
@@ -504,7 +124,7 @@ Page(BasePage({
     })
 
     // Status dot
-    statusDotWidget = hmUI.createWidget(hmUI.widget.FILL_RECT, {
+    hmUI.createWidget(hmUI.widget.FILL_RECT, {
       x: 50, y: 62, w: 14, h: 14, radius: 7, color: 0x888888
     })
 
@@ -521,16 +141,13 @@ Page(BasePage({
       text: '...', text_size: 18, color: 0x777777,
       align_h: hmUI.align.LEFT,
     })
-    
-    // Update device status to show what's available
-    updateDeviceStatus()
 
     // Second separator
     hmUI.createWidget(hmUI.widget.FILL_RECT, {
       x: 20, y: 122, w: 440, h: 1, color: 0x333333
     })
 
-    // 8 log rows (y=124, step=27)
+    // 8 log rows
     for (var i = 0; i < 8; i++) {
       logWidgets[i] = hmUI.createWidget(hmUI.widget.TEXT, {
         x: 20, y: 124 + i * 27, w: 440, h: 26,
@@ -544,84 +161,62 @@ Page(BasePage({
       x: 20, y: 340, w: 440, h: 1, color: 0x333333
     })
 
+    // Store reference to current page for request() calls
+    currentPage = this
+
+    // FETCH KEY button (no car needed - queries vehicle via phone BLE)
+    hmUI.createWidget(hmUI.widget.BUTTON, {
+      x: 20, y: 350, w: 90, h: 50,
+      text: 'FETCH\nKEY', text_size: 14, color: 0xffffff,
+      normal_color: 0x005588, press_color: 0x003344, radius: 8,
+      click_func: onFetchECKey,
+    })
+
     // CONNECT button
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 35, y: 350, w: 120, h: 50,
-      text: 'CONNECT', text_size: 18, color: 0xffffff,
-      normal_color: 0x1a3a5c, press_color: 0x0d1f2d, radius: 12,
-      click_func: onConnect,
+      x: 120, y: 350, w: 90, h: 50,
+      text: 'CONNECT', text_size: 14, color: 0xffffff,
+      normal_color: 0x1a3a5c, press_color: 0x0d1f2d, radius: 8,
+      click_func: onConnectSession,
     })
 
     // UNLOCK button
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 180, y: 350, w: 120, h: 50,
-      text: 'UNLOCK', text_size: 20, color: 0xffffff,
-      normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 12,
-      click_func: onUnlock,
+      x: 220, y: 350, w: 90, h: 50,
+      text: 'PRECOMP', text_size: 14, color: 0xffffff,
+      normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 8,
+      click_func: function() { console.log('PRECOMP clicked') },
     })
 
     // LOCK button
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 325, y: 350, w: 120, h: 50,
-      text: 'LOCK', text_size: 20, color: 0xffffff,
-      normal_color: 0x5c3a00, press_color: 0x2d1d00, radius: 12,
-      click_func: onLock,
+      x: 320, y: 350, w: 90, h: 50,
+      text: 'CLEAR', text_size: 14, color: 0xffffff,
+      normal_color: 0x5c3a00, press_color: 0x2d1d00, radius: 8,
+      click_func: function() { console.log('CLEAR clicked') },
     })
 
-    // Hidden debug buttons (temporary, can be removed)
-    // PERF TEST button (commented out for production)
-    // hmUI.createWidget(hmUI.widget.BUTTON, {
-    //   x: 35, y: 410, w: 200, h: 50,
-    //   text: 'PERF TEST', text_size: 20, color: 0xffffff,
-    //   normal_color: 0x3a2060, press_color: 0x1a0e30, radius: 12,
-    //   click_func: onPerfTest,
-    // })
-
-    // GENERATE POOL button (keep for debugging key pool issues)
-    hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 35, y: 410, w: 410, h: 50,
-      text: 'GEN POOL (DEBUG)', text_size: 18, color: 0xffffff,
-      normal_color: 0x006080, press_color: 0x003040, radius: 12,
-      click_func: requestKeyPool,
-    })
-
-    teslaBleApi.onDisconnect = function() {
-      state = 'IDLE'
-      // Preserve session for 5 minutes in case of brief disconnection
-      // This allows reconnect to reuse ECDH result instead of recomputing
-      teslaSession.preserveForReconnect(300000)  // 5 minutes
-      updateStatus('DISCONNECTED', 0xff4444)
-      addLog('Disconnected (session preserved for 5 min)', 0xff8800)
-    }
-
-    updateDeviceInfo()
-
-    // Auto-generate key pool if empty
-    var poolSize = teslaSession.getPoolSize()
-    if (poolSize === 0) {
-      addLog('Pool empty - generating...', 0xffcc00)
-      requestKeyPool()
-    } else {
-      addLog('Pool: ' + poolSize + ' keys ready', 0x00cc44)
-      // Auto-connect to Tesla when page opens
-      addLog('Auto-connecting...', 0x666666)
-      setTimeout(function() {
-        onConnect()
-      }, 500)
-    }
+    // Check components (don't load table into memory, just check if it exists)
+    addLog('Checking components...', 0xcccccc)
+    
+    var watchKey = storage.getItem('watch_public_key')
+    var ecKey = storage.getItem('vehicle_ec_public_key')
+    var hasTable = !!storage.getItem('vehicle_doublings_table')
+    var mac = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
+    
+    addLog((watchKey ? '✓' : '✗') + ' Watch key', watchKey ? 0x00cc44 : 0xff4444)
+    addLog((ecKey ? '✓' : '✗') + ' Vehicle EC key', ecKey ? 0x00cc44 : 0xff4444)
+    addLog((hasTable ? '✓' : '✗') + ' ECDH table', hasTable ? 0x00cc44 : 0xff4444)
+    addLog((mac ? '✓' : '✗') + ' Vehicle MAC', mac ? 0x00cc44 : 0xff4444)
 
     keepScreenOn(true, 600000)
   },
 
   onDestroy() {
     keepScreenOn(false)
-    teslaBleApi.disconnect()
-    teslaSession.reset()
   },
 
   onHide() {
     keepScreenOn(false)
-    teslaBleApi.disconnect()
-    teslaSession.reset()
   }
 }))

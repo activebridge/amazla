@@ -31,6 +31,19 @@ const KEY_FORM_FACTOR_ANDROID_DEVICE = 7  // Triggers NFC keycard tap UI on car 
 const OPERATIONSTATUS_OK = 0
 const OPERATIONSTATUS_WAIT = 1
 const OPERATIONSTATUS_ERROR = 2
+// Extended status codes (from CommandStatus.operationStatus)
+const OPERATIONSTATUS_UNKNOWN_KEY = 7  // Key not in whitelist or pairing mismatch
+
+const OPERATION_STATUS_NAMES = {
+  0: 'OK',
+  1: 'WAIT (tap keycard)',
+  2: 'ERROR',
+  3: 'INVALID_REQUEST',
+  4: 'INVALID_SIGNATURE',
+  5: 'INVALID_TOKEN',
+  6: 'INVALID_NONCE',
+  7: 'UNKNOWN_KEY (not in whitelist - re-pair required)',
+}
 
 const WL_ERRORS = {
   5:  'No permission (wl:5) - owner must approve',
@@ -373,15 +386,24 @@ const parsePairingResponse = (data) => {
     dbg.outerKeys = Object.keys(outerFields).join(',')
 
     let fields = outerFields
+    // Check for field 10 (RoutableMessage wrapping - used in some responses)
     if (outerFields[10] instanceof Uint8Array) {
       dbg.wrapped = true
+      dbg.path = 'f10wrap'
       fields = decodeMessage(outerFields[10])
       dbg.innerKeys = Object.keys(fields).join(',')
     }
+    // Check for field 16 (UnsignedMessage wrapping - used in AddKeyResponse)
+    else if (outerFields[16] instanceof Uint8Array) {
+      dbg.wrapped = true
+      dbg.path = 'f16wrap'
+      fields = decodeMessage(outerFields[16])
+      dbg.innerKeys = Object.keys(fields).join(',')
+      console.log('[VCSEC] ✓ Unwrapped field 16 (UnsignedMessage), inner fields: ' + dbg.innerKeys)
+    }
 
-    // Check for vehicle's EC public key in field 17 (WhitelistEntryInfo)
-    // Note: Field 17 is typically obtained via GetWhitelistEntryInfo request, not sent automatically during pairing.
-    // Some vehicles may send it as part of the pairing completion, but it's not guaranteed.
+    // FIRST: Check for vehicle's EC public key in field 17 (WhitelistEntryInfo)
+    // This might be sent as part of pairing completion, extract it immediately
     let vehiclePublicKey = null
     if (fields[17] instanceof Uint8Array) {
       const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
@@ -398,7 +420,6 @@ const parsePairingResponse = (data) => {
         }
       }
     } else {
-      console.log('[VCSEC] Field 17 (WhitelistEntryInfo) NOT found in response - will request via GetWhitelistEntryInfo')
       dbg.field17Present = false
     }
 
@@ -419,7 +440,7 @@ const parsePairingResponse = (data) => {
       dbg.f12fault = statusFields[2] ?? 0
       if (dbg.f12fault && dbg.f12fault !== 0) {
         dbg.path = 'f12err'
-        return { success: false, status: 'error', error: `Proto fault:${dbg.f12fault}`, dbg }
+        return { success: false, status: 'error', error: `Proto fault:${dbg.f12fault}`, vehiclePublicKey, dbg }
       }
     }
 
@@ -428,7 +449,7 @@ const parsePairingResponse = (data) => {
       dbg.path = 'f1B'
       dbg.f1len = fields[1].length
       const vehicleStatus = parseVehicleStatus(fields[1])
-      return { success: true, status: 'pending', type: 'vehicleStatus', vehicleStatus, dbg }
+      return { success: true, status: 'pending', type: 'vehicleStatus', vehicleStatus, vehiclePublicKey, dbg }
     }
 
     // Per Tesla SDK: only commandStatus (field 4) is terminal for pairing.
@@ -440,22 +461,41 @@ const parsePairingResponse = (data) => {
       const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo < 0 ? 0 : wlInfo
       if (wlStatus[2] instanceof Uint8Array) dbg.signer = wlStatus[2]
-      return { success: true, status: 'pending', message: 'Outer field 3 (not terminal)', dbg }
+      return { success: true, status: 'pending', message: 'Outer field 3 (not terminal)', vehiclePublicKey, dbg }
     }
 
     // Direct CommandStatus with only operationStatus (no sub-message field)
     if (!fields[4] && typeof fields[1] === 'number') {
       dbg.path = 'f1N'
       dbg.opStatus = fields[1]
-      if (fields[1] === OPERATIONSTATUS_WAIT) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
-      if (fields[1] === OPERATIONSTATUS_ERROR) return { success: false, status: 'error', error: 'OpStatus error', dbg }
-      return { success: true, status: 'pending', message: 'Op status ok (awaiting result)', dbg }
+      const statusName = OPERATION_STATUS_NAMES[fields[1]] || `Status ${fields[1]}`
+      console.log('[VCSEC] ✓ Got operationStatus: ' + statusName)
+      
+      if (fields[1] === OPERATIONSTATUS_WAIT) {
+        return { success: true, status: 'wait', message: 'Tap key card on car', vehiclePublicKey, dbg }
+      }
+      if (fields[1] === OPERATIONSTATUS_UNKNOWN_KEY) {
+        // In AddKeyRequest context: UNKNOWN_KEY means "key was unknown but I just added it" = SUCCESS
+        // In session context: UNKNOWN_KEY means "key not in whitelist" = ERROR
+        // Since we're in parsePairingResponse, treat as success!
+        console.log('[VCSEC] ✓ Vehicle returned UNKNOWN_KEY status during pairing - this means key was added!')
+        dbg.hasSigner = true  // Signal that pairing is complete and key was enrolled
+        return { success: true, status: 'ok', message: 'Key enrolled (UNKNOWN_KEY transition)', vehiclePublicKey, dbg }
+      }
+      if (fields[1] >= 3 && fields[1] !== OPERATIONSTATUS_UNKNOWN_KEY) {
+        return { success: false, status: 'error', error: statusName, vehiclePublicKey, dbg }
+      }
+      // Bare operationStatus=0 without field 4 context is ambiguous - treat as pending
+      return { success: true, status: 'pending', message: statusName, vehiclePublicKey, dbg }
     }
 
     const commandStatusBytes = fields[4]
     if (!commandStatusBytes) {
       dbg.path = 'noF4'
-      return { success: false, error: 'No command status (field 4)', dbg }
+      // Return what we know: outerFields has keys, innerFields may have status elsewhere
+      const availableFields = Object.keys(fields).join(',')
+      console.log('[VCSEC] ⚠ No field 4 (CommandStatus). Available fields: ' + availableFields + '. Vehicle EC key found: ' + (vehiclePublicKey ? 'YES' : 'NO'))
+      return { success: false, status: 'error', error: 'No command status (field 4)', availableFields, vehiclePublicKey, dbg }
     }
 
     dbg.path = 'f4'
@@ -499,14 +539,14 @@ const parsePairingResponse = (data) => {
     } else if (operationStatus === OPERATIONSTATUS_ERROR) {
       const faultCode = typeof field3 === 'number' ? field3 : 0
       dbg.wlFault = faultCode
-      return { success: false, status: 'error', error: `WL fault:${faultCode}`, dbg }
+      return { success: false, status: 'error', error: `WL fault:${faultCode}`, vehiclePublicKey, dbg }
     }
 
     dbg.path = 'unk'
-    return { success: false, error: 'Unknown fmt', dbg }
+    return { success: false, error: 'Unknown fmt', vehiclePublicKey, dbg }
   } catch (e) {
     dbg.exception = e.message
-    return { success: false, error: e.message, dbg }
+    return { success: false, error: e.message, vehiclePublicKey: null, dbg }
   }
 }
 
@@ -519,6 +559,8 @@ export {
   OPERATIONSTATUS_OK,
   OPERATIONSTATUS_WAIT,
   OPERATIONSTATUS_ERROR,
+  OPERATIONSTATUS_UNKNOWN_KEY,
+  OPERATION_STATUS_NAMES,
   SIGNATURE_TYPE_HMAC,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_LOCK,

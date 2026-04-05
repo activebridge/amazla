@@ -90,6 +90,11 @@ function encodeEnum(fieldNumber, value) {
   return result
 }
 
+function encodeVarintField(fieldNumber, value) {
+  // Same as encodeEnum - both encode field as varint (wire type 0)
+  return encodeEnum(fieldNumber, value)
+}
+
 function concat(...arrays) {
   const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0)
   const result = new Uint8Array(totalLength)
@@ -264,14 +269,12 @@ class BLECryptoSession {
   // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,
   //               FromVCSECMessage { commandStatus (field 4) } if not enrolled.
   buildWhitelistQueryMessage(publicKeyHex) {
-    const publicKeyBytes = hexToBytes(publicKeyHex)
-
-    // InformationRequest { type (field 1) = GET_WHITELIST_ENTRY_INFO(6), publicKey (field 3) = raw bytes }
+    // InformationRequest { type (field 1) = GET_WHITELIST_ENTRY_INFO(6), slot (field 4) = 0 }
     // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE, verified from vcsec.proto InformationRequestType enum
-    // publicKey in InformationRequest is raw bytes, not a PublicKey sub-message
+    // Use slot=0 to fetch first/only enrolled key (Tesla SDK uses slot, not publicKey)
     const infoReq = concat(
-      encodeEnum(1, 6),               // GET_WHITELIST_ENTRY_INFO = 6
-      encodeBytes(3, publicKeyBytes)  // raw public key bytes (not wrapped in PublicKey message)
+      encodeEnum(1, 6),              // GET_WHITELIST_ENTRY_INFO = 6
+      encodeVarintField(4, 0)        // slot = 0 (fetch first enrolled key)
     )
 
     // UnsignedMessage { InformationRequest (field 1) }

@@ -3,7 +3,6 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../../zeppify/index.js'
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
-import { TESLA_PUBLIC_KEY } from '../../../secrets.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 
 // Lightweight inline storage (shares ble_settings.txt with ble-service)
@@ -85,11 +84,16 @@ function updateStatus(label, dotColor) {
 
 function updateDeviceInfo() {
   var s        = teslaBleApi.getStatus()
-  var keyPart  = TESLA_PUBLIC_KEY ? TESLA_PUBLIC_KEY.slice(2, 10) : '--------'
+  var watchKey = getWatchPublicKey()
+  var keyPart  = watchKey ? watchKey.slice(2, 10) : '--------'
   var savePart = (s.savedMAC && s.savedMAC.length >= 8) ? s.savedMAC.slice(-8) : '--------'
   var nowPart  = (s.mac && s.mac.length >= 8)           ? s.mac.slice(-8)      : '--------'
   if (deviceInfoWidget) deviceInfoWidget.setProperty(hmUI.prop.TEXT,
     'KEY:' + keyPart + ' SAVE:' + savePart + ' NOW:' + nowPart)
+}
+
+function getWatchPublicKey() {
+  return storage.getItem('watch_public_key') || null
 }
 
 // ── pair flow ─────────────────────────────────────────────────────────────────
@@ -103,29 +107,51 @@ function doPair() {
   state = 'PAIRING'
   updateStatus('PAIRING...', 0xffcc00)
   addLog('Requesting pair msg...', 0xcccccc)
+  console.log('[BLE] ▶ Starting pairing flow')
 
-  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyHex: TESLA_PUBLIC_KEY } })
+  var watchKey = getWatchPublicKey()
+  if (!watchKey) {
+    state = 'IDLE'
+    updateStatus('ERROR - no key', 0xff4444)
+    addLog('No watch public key', 0xff4444)
+    console.log('[BLE] ✗ No watch public key in storage')
+    return
+  }
+  console.log('[BLE] Using watch public key: ' + watchKey.slice(0, 16) + '...')
+
+  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyHex: watchKey } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
         updateStatus('ERROR', 0xff4444)
         addLog('Pair msg err: ' + (result.error || '?'), 0xff4444)
+        console.log('[BLE] ✗ Failed to build pairing message: ' + result.error)
         return
       }
       var msgBytes = hexToBytes(result.messageHex)
+      console.log('[BLE] Built pairing message (' + msgBytes.length + ' bytes)')
       addLog('TX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
 
-      // Primary false-positive guard.
-      // Set to true when car sends wlInfo=14 (tap required).
-      // 'ok' is only accepted as genuine when sawTapRequired=true OR dbg.hasSigner=true.
       var sawTapRequired = false
 
-      // Car should reply with wlInfo=14 (tap NFC) within 15s.
+      console.log('[BLE] Sending pairing request, waiting for response...')
       teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
         if (!r.success) {
+          console.log('[BLE] ⚠ No response from vehicle (timeout) - but key may still be enrolled')
           addLog('PRX:timeout', 0x888888)
+          // Even if response times out, the vehicle may have processed the AddKeyRequest
+          // and enrolled the key. Attempt to fetch EC key via GetWhitelistEntryInfo anyway.
+          addLog('Trying to fetch EC key...', 0xff8800)
+          var watchKey2 = getWatchPublicKey()
+          if (watchKey2) {
+            console.log('[BLE] Attempting to fetch EC key despite response timeout...')
+            state = 'DONE'
+            updateStatus('Fetch EC key', 0xffcc00)
+            setTimeout(function() { doVerify() }, 1000)
+          }
           return
         }
+        console.log('[BLE] Received pairing response (' + r.data.length + ' bytes)')
         addLog('RX[' + r.data.length + ']:' + dumpHex(r.data, 8), 0x888888)
         var parsed = parsePairingResponse(r.data)
         var dbg = parsed.dbg || {}
@@ -134,60 +160,42 @@ function doPair() {
         var keysStr = dbg.outerKeys ? ' k:' + dbg.outerKeys : ''
         addLog('PRX:' + parsed.status + wlStr + pathStr, 0x4488ff)
         addLog(keysStr || 'no keys', 0x666666)
-        console.log('[BLE] Pairing response status: ' + parsed.status + ', fields: ' + keysStr)
+        console.log('[BLE] Pairing response status: ' + parsed.status + ', wlFault: ' + (dbg.wlFault || 'none'))
 
         if (parsed.status === 'ok') {
-          console.log('[BLE] ✓ Pairing complete, checking for vehicle EC key...')
+          console.log('[BLE] ✓ Pairing status OK - AddKeyResponse received')
           if (sawTapRequired || dbg.hasSigner) {
-            console.log('[BLE] Got tap/signer signal')
-            // Save vehicle's EC public key if provided
-            if (parsed.vehiclePublicKey && parsed.vehiclePublicKey.length === 65) {
-              var pubKeyHex = ''
-              for (var pk = 0; pk < parsed.vehiclePublicKey.length; pk++) {
-                pubKeyHex += ('0' + parsed.vehiclePublicKey[pk].toString(16)).slice(-2)
-              }
-              storage.setItem('vehicle_ec_public_key', pubKeyHex)
-              addLog('✓ Saved vehicle EC key', 0x44ff44)
-              console.log('[BLE] ✓ Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
-              // Precompute ECDH doublings table on phone while still connected
-              addLog('Requesting ECDH table...', 0x666666)
-              currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
-                .then(function(r) {
-                  if (r.success && r.table) {
-                    storage.setItem('vehicle_doublings_table', r.table)
-                    addLog('✓ Saved ECDH table', 0x44ff44)
-                    console.log('[BLE] ✓ ECDH doublings table stored (16 KB, base64 encoded)')
-                  } else {
-                    addLog('Table generation failed', 0xffaa44)
-                    console.log('[BLE] ✗ ECDH table generation failed:', r.error)
-                  }
-                })
-                .catch(function(e) {
-                  addLog('Table request error', 0xff8844)
-                  console.log('[BLE] ✗ ECDH table request error:', e)
-                })
+            console.log('[BLE] ✓ Got tap/signer signal - key enrolled on vehicle')
+            
+            // Per Tesla SDK: EC key is obtained via KeyInfoBySlot (GetWhitelistEntryInfo),
+            // never from the AddKeyRequest response. Always fetch it now.
+            addLog('⚠ Fetching EC key...', 0xff8800)
+            var watchKey2 = getWatchPublicKey()
+            if (watchKey2) {
+              console.log('[BLE] Pairing step 1 complete. Step 2: Requesting vehicle EC key via GetWhitelistEntryInfo(slot=0)...')
+              state = 'DONE'
+              updateStatus('PAIRED!', 0x00cc44)
+              addLog('✓ Paired!', 0x44ff44)
+              setTimeout(function() { doVerify() }, 500)
             } else {
-              console.log('[BLE] ✗ NO vehicle public key in pairing response!')
-              if (parsed.vehiclePublicKey) {
-                console.log('[BLE]   Key exists but wrong size: ' + parsed.vehiclePublicKey.length + ' bytes (expected 65)')
-              }
-              addLog('⚠ Missing EC key in response', 0xff8844)
+              console.log('[BLE] ✗ No watch public key available for EC key fetch')
+              addLog('⚠ No watch key', 0xff8800)
             }
-
-            state = 'DONE'
-            updateStatus('PAIRED!', 0x00cc44)
-            addLog('Key enrolled!', 0x00cc44)
           } else {
-            // False positive — ambient push before NFC tap; keep waiting
-            addLog('PRX:ok-skip(no tap)', 0xff8800)
+            console.log('[BLE] Ignoring false positive (no tap signal)')
+            addLog('Waiting for tap...', 0xff8800)
             waitForResult()
           }
           return
         }
 
-        if (parsed.status === 'wait') sawTapRequired = true
+        if (parsed.status === 'wait') {
+          console.log('[BLE] Vehicle waiting for NFC tap')
+          sawTapRequired = true
+        }
 
         if (parsed.status === 'wait' || parsed.status === 'pending') {
+          console.log('[BLE] Waiting for next response...')
           waitForResult()
         }
       }, 15000)
@@ -207,17 +215,6 @@ function doPair() {
           var d2 = p2.dbg || {}
           var wl2 = d2.wlFault ? ' wl:' + d2.wlFault : ''
           addLog('NFC:' + p2.status + wl2 + (d2.path ? ' p:' + d2.path : ''), 0x4488ff)
-          
-          // Capture EC key from field 17 in ANY message (might come in separate notification)
-          if (p2.vehiclePublicKey && p2.vehiclePublicKey.length === 65 && !storage.getItem('vehicle_ec_public_key')) {
-            var pkHex = ''
-            for (var i = 0; i < p2.vehiclePublicKey.length; i++) {
-              pkHex += ('0' + p2.vehiclePublicKey[i].toString(16)).slice(-2)
-            }
-            storage.setItem('vehicle_ec_public_key', pkHex)
-            addLog('✓ Captured EC key from message', 0x44ff44)
-            console.log('[BLE] ✓ Vehicle EC key captured from separate message: ' + pkHex.slice(0, 16) + '...')
-          }
 
           if (p2.status === 'wait') {
             sawTapRequired = true
@@ -226,52 +223,18 @@ function doPair() {
             waitForResult()
           } else if (p2.status === 'ok') {
             if (sawTapRequired || d2.hasSigner) {
-              console.log('[BLE] Got status=ok with tap/signer. Vehicle EC key present: ' + (p2.vehiclePublicKey ? 'YES' : 'NO'))
-              // Save vehicle's EC public key if provided
-              if (p2.vehiclePublicKey && p2.vehiclePublicKey.length === 65) {
-                var pubKeyHex = ''
-                for (var pk = 0; pk < p2.vehiclePublicKey.length; pk++) {
-                  pubKeyHex += ('0' + p2.vehiclePublicKey[pk].toString(16)).slice(-2)
-                }
-                storage.setItem('vehicle_ec_public_key', pubKeyHex)
-                addLog('✓ Saved vehicle EC key', 0x44ff44)
-                console.log('[BLE] ✓ Vehicle public key saved: ' + pubKeyHex.slice(0, 16) + '... (65 bytes)')
-                // Precompute ECDH doublings table on phone while still connected
-                addLog('Requesting ECDH table...', 0x666666)
-                currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: pubKeyHex } })
-                  .then(function(r) {
-                    if (r.success && r.table) {
-                      storage.setItem('vehicle_doublings_table', r.table)
-                      addLog('✓ Saved ECDH table', 0x44ff44)
-                      console.log('[BLE] ✓ ECDH doublings table stored (16 KB, base64 encoded)')
-                    } else {
-                      addLog('Table generation failed', 0xffaa44)
-                      console.log('[BLE] ✗ ECDH table generation failed:', r.error)
-                    }
-                  })
-                  .catch(function(e) {
-                    addLog('Table request error', 0xff8844)
-                    console.log('[BLE] ✗ ECDH table request error:', e)
-                  })
-              } else {
-                console.log('[BLE] ✗ EC key missing from pairing response! Cannot generate precomputed table.')
-                if (p2.vehiclePublicKey) {
-                  console.log('[BLE]   Key exists but wrong size: ' + p2.vehiclePublicKey.length + ' bytes (expected 65)')
-                }
-                addLog('⚠ EC key missing - fetching...', 0xff8800)
-                // Request EC key via GetWhitelistEntryInfo
-                console.log('[BLE] Requesting vehicle EC key via GetWhitelistEntryInfo...')
-                var watchKey = getWatchPublicKey()
-                if (watchKey) {
-                  setTimeout(function() { doVerify() }, 500)
-                } else {
-                  console.log('[BLE] Cannot verify - no watch public key')
-                }
-              }
-
+              console.log('[BLE] Got status=ok with tap/signer signal - pairing complete')
+              console.log('[BLE] Per Tesla SDK: EC key fetched via GetWhitelistEntryInfo, not pairing response')
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
               addLog('Key enrolled!', 0x00cc44)
+              
+              // Fetch the EC key after pairing completes
+              var watchKey3 = getWatchPublicKey()
+              if (watchKey3) {
+                console.log('[BLE] Pairing complete, now fetching vehicle EC key via GetWhitelistEntryInfo...')
+                setTimeout(function() { doVerify() }, 500)
+              }
             } else {
               addLog('NFC:ok-skip(no tap)', 0xff8800)
               waitForResult()
@@ -307,8 +270,18 @@ function doVerify() {
   }
   updateStatus('QUERYING...', 0xffcc00)
   addLog('Querying whitelist...', 0xcccccc)
+  console.log('[BLE] ▶ Starting GetWhitelistEntryInfo query')
 
-  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyHex: TESLA_PUBLIC_KEY } })
+  var watchKey = getWatchPublicKey()
+  if (!watchKey) {
+    state = 'IDLE'
+    updateStatus('ERROR - no key', 0xff4444)
+    addLog('No watch key', 0xff4444)
+    console.log('[BLE] ✗ No watch public key in storage')
+    return
+  }
+
+  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyHex: watchKey } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
@@ -324,18 +297,22 @@ function doVerify() {
           state = 'IDLE'
           updateStatus('NO RESPONSE', 0xff8800)
           addLog('Query timeout', 0xff8800)
+          console.log('[BLE] ✗ Query response timeout (attempt ' + (attempt + 1) + ')')
           return
         }
         var rx = r.data
+        console.log('[BLE] Got query response (' + rx.length + ' bytes)')
         addLog('QRX[' + rx.length + ']:' + dumpHex(rx, 6), 0x4488ff)
 
         var fields = decodeRawFields(rx)
         var fkeys = Object.keys(fields).join(',')
         addLog('f:' + fkeys, 0x4488ff)
+        console.log('[BLE] Response fields: ' + fkeys)
 
         // Field 3 only = keychainStatus push (car sends on CCCD enable and occasionally).
         // Skip up to 3 ambients and wait for the real query response.
         if (fkeys === '3' && attempt < 3) {
+          console.log('[BLE] Ambient push #' + (attempt + 1) + ' - skipping...')
           addLog('Ambient#' + (attempt + 1) + ' skip', 0x888888)
           teslaBLE.waitForNextResponse(6000, function(r2) {
             handleQueryResponse(r2, attempt + 1)
@@ -349,11 +326,108 @@ function doVerify() {
           updateStatus('NO QUERY RESP', 0xff8800)
           addLog('Only ambients,', 0xff8800)
           addLog('no query resp', 0xff8800)
+          console.log('[BLE] ✗ Only ambient pushes received, vehicle not responding to query')
           return
         }
 
         if (fields[17]) {
           // whitelistEntryInfo (field 17) present — our key is in the whitelist
+          console.log('[BLE] ✓ Got whitelistEntryInfo in response - key is enrolled!')
+          
+          // Field 17 = WhitelistEntryInfo protobuf message (Tesla SDK vcsec.proto)
+          // WhitelistEntryInfo structure:
+          //   field 1: KeyIdentifier (keyId)
+          //   field 2: PublicKey message (contains the EC key)
+          //   field 4: KeyMetadata
+          //   field 6: uint32 slot
+          //   field 7: Keys.Role keyRole
+          //
+          // PublicKey structure:
+          //   field 1: bytes PublicKeyRaw (the 65-byte EC key)
+          //
+          // So: field 17 → decode → field 2 (PublicKey) → decode → field 1 (EC key)
+          
+          var f17bytes = fields[17]
+          var ecKey = null
+          
+          if (f17bytes) {
+            // Parse the WhitelistEntryInfo message inside field 17
+            var whitelistEntryInfo = decodeRawFields(f17bytes)
+            var weiFields = Object.keys(whitelistEntryInfo).join(',')
+            console.log('[BLE] WhitelistEntryInfo fields: ' + weiFields)
+            
+            // Field 2 of WhitelistEntryInfo is the PublicKey message
+            if (whitelistEntryInfo[2]) {
+              var publicKeyMsg = whitelistEntryInfo[2]
+              console.log('[BLE] Field 2 (PublicKey message): ' + publicKeyMsg.length + ' bytes')
+              
+              // Decode the PublicKey message to extract field 1 (PublicKeyRaw)
+              var publicKey = decodeRawFields(publicKeyMsg)
+              var pkFields = Object.keys(publicKey).join(',')
+              console.log('[BLE] PublicKey fields: ' + pkFields)
+              
+              // Field 1 of PublicKey is the actual 65-byte EC key
+              if (publicKey[1] && publicKey[1].length === 65) {
+                ecKey = publicKey[1]
+                console.log('[BLE] ✓ Found EC key in WhitelistEntryInfo.field2.field1 (65 bytes)')
+              } else if (publicKey[1]) {
+                console.log('[BLE] ⚠ PublicKey.field1 exists but is ' + publicKey[1].length + ' bytes (expected 65)')
+              } else {
+                console.log('[BLE] ⚠ No field 1 in PublicKey message')
+              }
+            } else {
+              console.log('[BLE] ⚠ WhitelistEntryInfo missing field 2 (PublicKey)')
+            }
+            
+            if (!ecKey) {
+              console.log('[BLE] ⚠ Could not extract EC key from WhitelistEntryInfo')
+              // Debug: show all fields from first decode
+              for (var f in whitelistEntryInfo) {
+                var val = whitelistEntryInfo[f]
+                var info = ''
+                if (val && val.length !== undefined) {
+                  info = val.length + ' bytes'
+                } else if (typeof val === 'number') {
+                  info = 'number: ' + val
+                } else {
+                  info = 'type: ' + typeof val
+                }
+                console.log('[BLE]   WhitelistEntryInfo[' + f + ']: ' + info)
+              }
+            }
+          }
+          
+          if (ecKey && ecKey.length === 65) {
+            var ecKeyHex = ''
+            for (var i = 0; i < ecKey.length; i++) {
+              ecKeyHex += ('0' + ecKey[i].toString(16)).slice(-2)
+            }
+            storage.setItem('vehicle_ec_public_key', ecKeyHex)
+            console.log('[BLE] ✓ Extracted EC key from whitelist response: ' + ecKeyHex.slice(0, 16) + '...')
+            addLog('✓ Got EC key!', 0x44ff44)
+            
+            // Request ECDH table precomputation
+            addLog('Computing table...', 0x666666)
+            console.log('[BLE] Requesting ECDH doublings table...')
+            currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: ecKeyHex } })
+              .then(function(r) {
+                if (r.success && r.table) {
+                  storage.setItem('vehicle_doublings_table', r.table)
+                  addLog('✓ Saved table', 0x44ff44)
+                  console.log('[BLE] ✓ ECDH table stored (' + r.table.length + ' chars)')
+                } else {
+                  addLog('⚠ Table failed', 0xffaa44)
+                  console.log('[BLE] ⚠ Table generation failed: ' + (r.error || 'unknown'))
+                }
+              })
+              .catch(function(e) {
+                addLog('⚠ Table error', 0xff8844)
+                console.log('[BLE] ⚠ Table error: ' + e)
+              })
+          } else {
+            console.log('[BLE] ⚠ Could not extract 65-byte EC key from field 17')
+          }
+          
           state = 'DONE'
           updateStatus('PAIRED!', 0x00cc44)
           addLog('Key enrolled!', 0x00cc44)
@@ -363,10 +437,12 @@ function doVerify() {
           state = 'IDLE'
           updateStatus('NOT ENROLLED', 0xff4444)
           addLog('Not in whitelist', 0xff8800)
+          console.log('[BLE] ✗ Key not in whitelist (commandStatus field present)')
         } else {
           state = 'IDLE'
           updateStatus('NOT ENROLLED', 0xff4444)
           addLog('Tap key card first', 0xff8800)
+          console.log('[BLE] ✗ No enrollment info in response')
         }
       }
 
@@ -420,10 +496,64 @@ function decodeRawFields(data) {
 }
 
 // ── button handlers ──────────────────────────────────────────────────────────
-function onScan() {
-  if (state === 'SCANNING') return
-  state    = 'SCANNING'
-  foundMAC = null
+// GENKEY button: generate fresh key pair for pairing
+function onGenKey() {
+  console.log('[BLE] ▶ GENKEY button pressed - generating fresh key pair')
+  addLog('Generating fresh key...', 0xffcc00)
+  
+  currentPage.request({ method: 'BLE_SYNC_KEYS', params: { forceNew: true } })
+    .then(function(result) {
+      if (result.success && result.publicKeyHex) {
+        storage.setItem('watch_public_key', result.publicKeyHex)
+        console.log('[BLE] ✓ Generated fresh watch key: ' + result.publicKeyHex.slice(0, 16) + '...')
+        addLog('✓ Fresh key ready', 0x44ff44)
+        addLog('Now press PAIR', 0x00cc00)
+        state = 'IDLE'
+        updateStatus('READY', 0x00cc44)
+        updateDeviceInfo()
+      } else {
+        console.log('[BLE] ✗ Failed to generate key: ' + (result.error || 'unknown'))
+        addLog('⚠ Key gen failed', 0xff8844)
+      }
+    })
+    .catch(function(e) {
+      console.log('[BLE] ✗ Key generation error: ' + e)
+      addLog('⚠ Key error: ' + e, 0xff8844)
+    })
+}
+
+// PAIR button: automatic flow - scan → connect → pair → verify
+function onPair() {
+  if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING' || state === 'WAITING_KEYCARD') {
+    addLog('Busy: ' + state, 0xff8800)
+    return
+  }
+
+  if (state === 'DONE') {
+    addLog('Already paired!', 0x00cc44)
+    return
+  }
+
+  // Start automatic pairing flow
+  console.log('[BLE] ▶ PAIR button pressed - starting auto pairing flow')
+  addLog('Starting pairing...', 0xffcc00)
+  autoStartPairing()
+}
+
+function autoStartPairing() {
+  // Check if we have a saved MAC from previous pairing
+  var savedMAC = teslaBleApi.savedMAC
+  if (savedMAC) {
+    console.log('[BLE] Using saved MAC: ' + savedMAC)
+    addLog('Using saved MAC', 0xcccccc)
+    addLog(savedMAC.slice(-17), 0xaaaaaa)
+    doConnect(savedMAC, 0)
+    return
+  }
+
+  // No saved MAC - start scanning
+  console.log('[BLE] No saved MAC, starting scan...')
+  state = 'SCANNING'
   updateStatus('SCANNING...', 0xffcc00)
   addLog('Scanning 15s...', 0xcccccc)
 
@@ -431,61 +561,45 @@ function onScan() {
     if (result.type === 'found') {
       var dev = result.device
       foundMAC = dev.mac || null
+      console.log('[BLE] Found device: ' + dev.name + ' (' + foundMAC + ')')
       addLog('FND: ' + (dev.name || '?'), 0x00cc44)
       if (foundMAC) addLog(foundMAC.slice(-17), 0x00cc44)
       teslaBleApi.stopScan()
       state = 'IDLE'
-      updateStatus('FOUND', 0x00cc44)
+      
+      // Auto-connect immediately after finding device
+      console.log('[BLE] Device found, connecting...')
+      setTimeout(function() {
+        doConnect(foundMAC, 0)
+      }, 500)
     }
     if (result.type === 'complete') {
       if (state === 'SCANNING') {
-        state = 'IDLE'
         var cnt = (result.devices && result.devices.length) || 0
-        addLog('Done. Found: ' + cnt, 0xcccccc)
-        updateStatus(foundMAC ? 'FOUND' : 'IDLE', foundMAC ? 0x00cc44 : 0x888888)
+        console.log('[BLE] Scan complete. Found ' + cnt + ' devices')
+        if (!foundMAC) {
+          state = 'IDLE'
+          addLog('No device found', 0xff8800)
+          updateStatus('IDLE', 0x888888)
+        }
       }
     }
   }, 15000)
 }
 
-function onPair() {
-  if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING') {
-    addLog('Busy: ' + state, 0xff8800)
-    return
-  }
-
-  // Second press after sending pair TX: verify enrollment via whitelist query
-  if (state === 'WAITING_KEYCARD') {
-    doVerify()
-    return
-  }
-
-  if (teslaBleApi.isConnected()) {
-    addLog('Already connected', 0xcccccc)
-    doPair()
-    return
-  }
-
-  var mac = foundMAC || teslaBleApi.savedMAC
-  if (!mac) {
-    addLog('No MAC - scan first', 0xff4444)
-    return
-  }
-
+function doConnect(mac, attempt) {
+  console.log('[BLE] Connecting to ' + mac + ' (attempt ' + (attempt + 1) + ')')
   state = 'CONNECTING'
   updateStatus('CONNECTING...', 0xffcc00)
-  addLog('Connecting to:', 0xcccccc)
-  addLog(mac.slice(-17), 0xcccccc)
+  addLog('Connecting...', 0xcccccc)
+  addLog(mac.slice(-17), 0xaaaaaa)
 
-  // Delay before connect so ZeppOS BLE stack can recover after a previous attempt
-  setTimeout(function() { doConnect(mac, 0) }, 1500)
-}
-
-function doConnect(mac, attempt) {
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
+      console.log('[BLE] Connection failed: ' + (result.error || 'unknown error'))
       if (attempt < 1) {
         // Auto-retry once — ZeppOS BLE stack often needs a second try
+        console.log('[BLE] Retrying connection...')
         addLog('Retry ' + (attempt + 2) + '...', 0xff8800)
         setTimeout(function() { doConnect(mac, attempt + 1) }, 2000)
         return
@@ -493,8 +607,10 @@ function doConnect(mac, attempt) {
       state = 'IDLE'
       updateStatus('CONN FAIL', 0xff4444)
       addLog('Conn err: ' + (result.error || '?'), 0xff4444)
+      console.log('[BLE] Connection failed after retries')
       return
     }
+    console.log('[BLE] ✓ Connected to ' + mac)
     addLog('Connected!', 0x00cc44)
     updateDeviceInfo()
     doPair()
@@ -516,6 +632,23 @@ Page(BasePage({
     currentPage = this
     storage.load()
     teslaBleApi.init(storage)
+
+    // Sync keys with phone (auto-generate if needed)
+    console.log('[BLE] Syncing keys with phone...')
+    currentPage.request({ method: 'BLE_SYNC_KEYS', params: {} })
+      .then(function(result) {
+        if (result.success && result.publicKeyHex) {
+          storage.setItem('watch_public_key', result.publicKeyHex)
+          console.log('[BLE] ✓ Synced watch public key: ' + result.publicKeyHex.slice(0, 16) + '...')
+          addLog('✓ Watch key synced', 0x44ff44)
+        } else {
+          console.log('[BLE] ⚠ Failed to sync keys: ' + (result.error || 'unknown'))
+          addLog('⚠ Key sync failed', 0xff8800)
+        }
+      })
+      .catch(function(e) {
+        console.log('[BLE] ⚠ Key sync error: ' + e)
+      })
 
     // Title
     hmUI.createWidget(hmUI.widget.TEXT, {
@@ -567,17 +700,17 @@ Page(BasePage({
       x: 20, y: 340, w: 440, h: 1, color: 0x333333
     })
 
-    // SCAN button
+    // GENKEY button (generate fresh key before pairing)
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 35, y: 350, w: 120, h: 50,
-      text: 'SCAN', text_size: 20, color: 0xffffff,
-      normal_color: 0x1a3a5c, press_color: 0x0d1f2d, radius: 12,
-      click_func: onScan,
+      x: 20, y: 350, w: 100, h: 50,
+      text: 'GENKEY', text_size: 16, color: 0xffffff,
+      normal_color: 0x003366, press_color: 0x001a33, radius: 12,
+      click_func: onGenKey,
     })
 
-    // PAIR button
+    // PAIR button (automatic flow)
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 180, y: 350, w: 120, h: 50,
+      x: 140, y: 350, w: 160, h: 50,
       text: 'PAIR', text_size: 20, color: 0xffffff,
       normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 12,
       click_func: onPair,
@@ -585,8 +718,8 @@ Page(BasePage({
 
     // CLEAR button
     hmUI.createWidget(hmUI.widget.BUTTON, {
-      x: 325, y: 350, w: 120, h: 50,
-      text: 'CLEAR', text_size: 20, color: 0xffffff,
+      x: 320, y: 350, w: 140, h: 50,
+      text: 'CLEAR', text_size: 16, color: 0xffffff,
       normal_color: 0x5c1a1a, press_color: 0x2d0d0d, radius: 12,
       click_func: onClear,
     })
