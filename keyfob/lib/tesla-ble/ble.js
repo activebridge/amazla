@@ -206,7 +206,7 @@ class TeslaBLE {
       console.log('[BLE] Generating profile...')
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
-        [TESLA_READ_UUID]:  { value: 0x20 },  // INDICATE
+        // Don't specify INDICATE in profile config - we'll enable it manually via CCCD write
       })
       
       console.log('[BLE] Starting listener...')
