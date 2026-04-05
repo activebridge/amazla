@@ -5,8 +5,8 @@
     "appName": "Amazla",
     "appType": "app",
     "version": {
-      "code": 301,
-      "name": "3.0.1"
+      "code": 302,
+      "name": "3.0.2"
     },
     "icon": "icon.png",
     "vender": "activebridge",
@@ -14,7 +14,8 @@
   },
   "permissions": [
     "data:os.device.info",
-    "device:os.local_storage"
+    "device:os.local_storage",
+    "device:os.ble"
   ],
   "runtime": {
     "apiVersion": {
@@ -28,7 +29,9 @@
       "module": {
         "page": {
           "pages": [
-            "page/index"
+            "page/index",
+            "page/passive/index",
+            "page/ble/index"
           ]
         },
         "app-side": { "path": "app-side/index" },
@@ -47,20 +50,7 @@
           ]
         }
       },
-      "platforms": [
-        {
-          "st": "s",
-          "dw": 320
-        },
-        {
-          "st": "r",
-          "dw": 480
-        },
-        {
-          "st": "r",
-          "dw": 366
-        }
-      ],
+      "platforms": [{ "st": "r" }, { "st": "s" }, { "st": "b" }],
       "designWidth": 480
     }
   },

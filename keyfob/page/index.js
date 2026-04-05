@@ -3,7 +3,6 @@ import { setWakeUpRelaunch, setPageBrightTime } from '@zos/display'
 import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 import { onKey, KEY_SELECT, KEY_EVENT_CLICK } from '@zos/interaction'
 import { getSwiperIndex } from '@zos/page'
-import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page';
 import { writeFileSync, readFileSync } from '@zos/fs'
 
@@ -45,19 +44,7 @@ const { height } = getDeviceInfo()
 let isRunning = false
 let currentPage, actions = []
 
-// TODO: Temporarily disable HTTP fetch to focus on BLE pairing flow
-// This index page is now just a menu - enable this when we want HTTP features
-const DISABLE_HTTP_FETCH = true
-
 const fetch = (method, onSuccess, onError) => {
-  // TEMPORARILY DISABLED: Skip HTTP requests while fixing BLE pairing
-  // Remove DISABLE_HTTP_FETCH flag when ready to re-enable HTTP features
-  if (DISABLE_HTTP_FETCH) {
-    console.log('[INDEX] HTTP fetch disabled:', method)
-    hmUI.showToast({ text: 'HTTP disabled (BLE mode)' })
-    return
-  }
-
   currentPage.request({ method }).then(({ error, ...props }) => {
     isRunning = false
     if (error) return onError(error)
@@ -174,8 +161,8 @@ const render = (attrs) => {
   text({ ...BATTERY_RANGE, y: -height / 2 + 70, w: 140, x: 60, align_h: hmUI.align.RIGHT, h: 50, color: chargeColor, text_size: 40, text: `${battery_range}${unit}` }, slide2)
   rect({w: 40, h: 20, y: height/2 - 18, color: 0x000000 }, slide1)
 
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355, level: battery_level, color: chargeColor }, slide2)
+  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
+  progress({ ...BATTERY, x: 0, y: -10, radius: height / 2 - 5, line_width: 10, start_angle: 5, level: battery_level, color: chargeColor }, slide2)
 
   const limit = Math.floor(3.1 * soc_limit) + 41
 
@@ -185,7 +172,7 @@ const render = (attrs) => {
     end_angle: limit + 3,
     line_width: 12,
     x: 0,
-    y: 0,
+    y: -10,
     radius: height / 2 - 5,
     color: 0x000000,
   }, slide2)
@@ -198,10 +185,10 @@ const render = (attrs) => {
     color: 0xffffff,
     radius: height / 2 - 5,
     x: 0,
-    y: 0,
+    y: -10,
   }, slide2)
 
-  text({ text: `ϟ`, w: 50, y: -height/2 + 28, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
+  text({ text: `ϟ`, w: 50, y: -height/2 + 10, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
   !isChargerOpen && !isConnected && button({ x: 55, y: 15, w: 100, h: 100, src: `open_charger`, click_func: openCharger }, slide2)
   isChargerOpen && !isConnected && button({ x: 55, y: 15, w: 100, h: 100, src: `close_charger`, click_func: closeCharger }, slide2)
 
@@ -229,12 +216,6 @@ const render = (attrs) => {
   button({ x: -50, y: -120, src: `horn` }, slide4)
   button({ src: `homelink`, y: -20, x: -50 }, slide4)
   button({ x: 50, y: -120, src: `boombox` }, slide4)
-  button({ x: -100, y: 160, w: 90, h: 50, text: 'BLE DEBUG', text_size: 16,
-    click_func: function() { push({ url: 'page/ble/index' }) }
-  }, slide4)
-  button({ x: 100, y: 160, w: 90, h: 50, text: 'PASSIVE', text_size: 16,
-    click_func: function() { push({ url: 'page/passive/index' }) }
-  }, slide4)
   // text({ text: "⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗", text_size: 30 }, slide4)
   // text({ text: "", text_size: 30 }, slide4)
 
