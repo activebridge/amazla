@@ -564,7 +564,8 @@ class TeslaSession {
     console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
 
     // Send via BLE
-    teslaBLE.send(message, function(result) {
+    const self = this
+    teslaBLE.send(message, function sessionInfoResponseHandler(result) {
       if (!result.success) {
         callback({ success: false, error: result.error })
         return
@@ -584,10 +585,11 @@ class TeslaSession {
         const fieldKeys = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(',')
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
         
-        // If we only got field 3 (vehicle status push), skip it and wait for SessionInfo response
+        // If we only got field 3 (vehicle status push), re-register callback and wait for SessionInfo response
         if (rawFields[3] && !response.sessionInfo && !response.payload && !response.signedMessageStatus) {
           console.log('[SESSION] Received status push (field 3 only), waiting for SessionInfo response...')
-          // Return without error - the vehicle will send SessionInfo next
+          // Re-register callback to catch the next response
+          teslaBLE.responseCallback = sessionInfoResponseHandler
           return
         }
         
