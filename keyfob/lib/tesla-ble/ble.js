@@ -234,40 +234,24 @@ class TeslaBLE {
         }
         this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
 
-        // Gate the connected callback on descWriteComplete so CCCD is confirmed
-        // before the caller sends — mirrors Go SDK's Subscribe blocking on CCCD ack.
-        this.writeCompleteHandler = (chara, desc, status) => {
-          console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
-          if (done) return
-          // Negotiate MTU after CCCD — mirrors Go SDK ExchangeMTU() order
-          console.log('[BLE] Requesting MTU 247...')
-          try {
-            hmBle.mstSetMTU(247, (mtuResult) => {
-              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
-          console.log('[BLE] CCCD confirmed, ready')
-          settle({ success: true, mac })
-        }
-        this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
-
-        // Write CCCD with INDICATE (0x0002) — Tesla ignores NOTIFY (0x0001)
-        // This is REQUIRED for indications to work (unlike what the profile config suggests)
-        console.log('[BLE] Enabling indications (CCCD=0x0002)...')
-        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-
-        // Safety fallback if descWriteComplete never fires (observed to take 7+ seconds)
-        // Rather than wait indefinitely, proceed after a reasonable timeout
+        // Profile already specifies INDICATE mode (0x20) which configures CCCD automatically
+        // Do NOT manually write CCCD again as this causes the vehicle to disconnect
+        console.log('[BLE] Listener ready, settling connection')
         setTimeout(() => {
           if (!done) {
-            console.log('[BLE] CCCD timeout fallback, continuing anyway')
+            console.log('[BLE] MTU negotiation...')
+            try {
+              hmBle.mstSetMTU(247, (mtuResult) => {
+                const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+                this._mtu = Math.max(20, negotiated)
+                console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+              })
+            } catch (e) {
+              console.log('[BLE] mstSetMTU not available:', e.message || e)
+            }
             settle({ success: true, mac })
           }
-        }, 4000)
+        }, 100)
       })
     })
   }
