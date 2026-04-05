@@ -209,37 +209,39 @@ class TeslaBLE {
         [TESLA_READ_UUID]:  { value: 0x20 },  // INDICATE
       })
       
-      // Write CCCD descriptor BEFORE starting listener
-      // Vehicle requires this before accepting subscription/indication setup
-      console.log('[BLE] Writing CCCD descriptor (0x0002 = INDICATE)...')
-      this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200', () => {
-        console.log('[BLE] CCCD written, starting listener...')
-        
-        this._ensureBLE().startListener(this.profile, (response) => {
-          console.log('[BLE] Listener response:', JSON.stringify(response))
+      console.log('[BLE] Starting listener...')
+
+      this._ensureBLE().startListener(this.profile, (response) => {
+        console.log('[BLE] Listener response:', JSON.stringify(response))
+        if (done) return
+
+        if (!response.success) {
+          this.connected = false
+          console.log('[BLE] Listener failed:', response.message)
+          this._cleanup()
+          settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
+          return
+        }
+
+        this.charaValueHandler = (uuid, data, len) => {
+          console.log('[BLE] charaValueArrived:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+        }
+        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+
+        this.charaNotificationHandler = (uuid, data, len) => {
+          console.log('[BLE] charaNotification:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+        }
+        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+
+        // Gate the connected callback on descWriteComplete so CCCD is confirmed
+        // before the caller sends — mirrors Go SDK's Subscribe blocking on CCCD ack.
+        this.writeCompleteHandler = (chara, desc, status) => {
+          console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
           if (done) return
-
-          if (!response.success) {
-            this.connected = false
-            console.log('[BLE] Listener failed:', response.message)
-            this._cleanup()
-            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
-            return
-          }
-
-          this.charaValueHandler = (uuid, data, len) => {
-            console.log('[BLE] charaValueArrived:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-
-          this.charaNotificationHandler = (uuid, data, len) => {
-            console.log('[BLE] charaNotification:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-
-          console.log('[BLE] Listener ready, negotiating MTU...')
+          // Negotiate MTU after CCCD — mirrors Go SDK ExchangeMTU() order
+          console.log('[BLE] Requesting MTU 247...')
           try {
             hmBle.mstSetMTU(247, (mtuResult) => {
               const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
@@ -249,9 +251,24 @@ class TeslaBLE {
           } catch (e) {
             console.log('[BLE] mstSetMTU not available:', e.message || e)
           }
-          console.log('[BLE] Connection ready')
+          console.log('[BLE] CCCD confirmed, ready')
           settle({ success: true, mac })
-        })
+        }
+        this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
+
+        // Write CCCD with INDICATE (0x0002) — Tesla ignores NOTIFY (0x0001)
+        // This is REQUIRED for indications to work (unlike what the profile config suggests)
+        console.log('[BLE] Enabling indications (CCCD=0x0002)...')
+        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+
+        // Safety fallback if descWriteComplete never fires (observed to take 7+ seconds)
+        // Rather than wait indefinitely, proceed after a reasonable timeout
+        setTimeout(() => {
+          if (!done) {
+            console.log('[BLE] CCCD timeout fallback, continuing anyway')
+            settle({ success: true, mac })
+          }
+        }, 4000)
       })
     })
   }
