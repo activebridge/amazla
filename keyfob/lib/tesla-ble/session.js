@@ -27,6 +27,12 @@ import {
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
 
+// Helper: Format byte as 2-digit hex (replaces String.padStart which may not be available)
+function byteToHex(byte) {
+  const hex = byte.toString(16)
+  return hex.length === 1 ? '0' + hex : hex
+}
+
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
@@ -376,7 +382,7 @@ class TeslaSession {
               self.vehiclePublicKey = wlEntryInfo.publicKey
               
               // Save to storage for future use
-              const keyHex = Array.from(self.vehiclePublicKey, x => x.toString(16).padStart(2, '0')).join('')
+              const keyHex = Array.from(self.vehiclePublicKey, x => byteToHex(x)).join('')
               self.storage.setItem('vehicle_ec_public_key', keyHex)
               
               const keyStart = keyHex.slice(0, 16)
@@ -508,7 +514,7 @@ class TeslaSession {
     })
 
     // Debug: log the request being sent
-    const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => x.toString(16).padStart(2, '0')).join('')
+    const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => byteToHex(x)).join('')
     console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
 
     // Send via BLE
@@ -521,7 +527,7 @@ class TeslaSession {
       // Parse response
       try {
         // Debug: dump raw message bytes as hex
-        const dataHex = Array.from(result.data.slice(0, 31), x => x.toString(16).padStart(2, '0')).join('')
+        const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
         console.log('[SESSION] Raw response hex: ' + dataHex)
         
         const response = parseRoutableMessage(result.data)
@@ -534,7 +540,7 @@ class TeslaSession {
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
         
         if (rawFields[3]) {
-          const field3Hex = Array.from(rawFields[3].slice(0, Math.min(32, rawFields[3].length)), x => x.toString(16).padStart(2, '0')).join('')
+          const field3Hex = Array.from(rawFields[3].slice(0, Math.min(32, rawFields[3].length)), x => byteToHex(x)).join('')
           console.log('[SESSION] field[3] raw bytes: ' + field3Hex + ' (len=' + rawFields[3].length + ')')
           
           // Detailed decode of field 3 structure
@@ -548,7 +554,7 @@ class TeslaSession {
             if (fieldData.length === 0) {
               console.log('[SESSION]   field[3][' + fieldNum + ']: (empty)')
             } else {
-              const dataHex = Array.from(fieldData.slice(0, Math.min(32, fieldData.length)), x => x.toString(16).padStart(2, '0')).join('')
+              const dataHex = Array.from(fieldData.slice(0, Math.min(32, fieldData.length)), x => byteToHex(x)).join('')
               console.log('[SESSION]   field[3][' + fieldNum + ']: ' + dataHex + ' (len=' + fieldData.length + ')')
               
               // If this field looks like protobuf, decode it too
@@ -560,10 +566,10 @@ class TeslaSession {
                   for (const subFieldNum in subFields) {
                     const subData = subFields[subFieldNum]
                     if (subData.length <= 32) {
-                      const subDataHex = Array.from(subData, x => x.toString(16).padStart(2, '0')).join('')
+                      const subDataHex = Array.from(subData, x => byteToHex(x)).join('')
                       console.log('[SESSION]        field[' + subFieldNum + ']: ' + subDataHex + ' (len=' + subData.length + ')')
                     } else {
-                      const subDataHex = Array.from(subData.slice(0, 32), x => x.toString(16).padStart(2, '0')).join('')
+                      const subDataHex = Array.from(subData.slice(0, 32), x => byteToHex(x)).join('')
                       console.log('[SESSION]        field[' + subFieldNum + ']: ' + subDataHex + '... (len=' + subData.length + ')')
                     }
                   }
@@ -603,7 +609,7 @@ class TeslaSession {
             // as a fallback. In production, this should be the long-term key from pairing.
             // But if pairing doesn't provide field 17, we use ephemeral as proxy.
             if (!this.storage.getItem('vehicle_ec_public_key')) {
-              const keyHex = Array.from(response.sessionInfo.publicKey, x => x.toString(16).padStart(2, '0')).join('')
+              const keyHex = Array.from(response.sessionInfo.publicKey, x => byteToHex(x)).join('')
               this.storage.setItem('vehicle_ec_public_key', keyHex)
               console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
             }
@@ -628,7 +634,7 @@ class TeslaSession {
           // Debug: log public key details
           if (this.vehiclePublicKey) {
             console.log('[SESSION] Vehicle public key length: ' + this.vehiclePublicKey.length + ' bytes')
-            const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
+            const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
             console.log('[SESSION] Vehicle public key starts with: ' + keyHex)
           } else {
             console.log('[SESSION] ERROR: vehiclePublicKey is null/undefined')
