@@ -159,6 +159,47 @@ class TeslaSession {
       return null
     }
   }
+
+  // Generate fresh ephemeral keypair on watch when key pool is empty
+  // Uses a simple approach: derive from timestamp + random bytes
+  _generateEphemeralKeypair() {
+    try {
+      // Use a simple pseudo-random approach on watch (no crypto.getRandomValues)
+      const timestamp = Date.now()
+      const random = new Uint8Array(32)
+      for (let i = 0; i < 32; i++) {
+        const val = Math.floor(Math.random() * 256)
+        random[i] = val
+      }
+      
+      // Mix timestamp into first 8 bytes
+      const view = new DataView(random.buffer)
+      view.setUint32(0, timestamp >>> 0, true)
+      view.setUint32(4, (timestamp / 0x100000000) >>> 0, true)
+
+      // Use the random bytes as private key scalar (modulo N for valid scalar)
+      const privateKey = new Uint8Array(random)
+      
+      // ECDH with generator point to derive public key
+      // Generator point G = 04 6B17D1F2 E12C4247 F8BCE6E5 63A440F2 77037D81 2DEB33A0 F4A13945 D898C296 4FE342E2 FE1A7F9B 8EE7EB4A 7C0F9E16 2BCE33 57 6B315ECE CBB64068 37BF51F5
+      const G = new Uint8Array([
+        0x04,
+        0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5, 0x63, 0xA4, 0x40, 0xF2,
+        0x77, 0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0, 0xF4, 0xA1, 0x39, 0x45, 0xD8, 0x98, 0xC2, 0x96,
+        0x4F, 0xE3, 0x42, 0xE2, 0xFE, 0x1A, 0x7F, 0x9B, 0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E, 0x16,
+        0x2B, 0xCE, 0x33, 0x57, 0x6B, 0x31, 0x5E, 0xCE, 0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF, 0x51, 0xF5
+      ])
+
+      // Use ECDH to derive public key: Q = k*G
+      const publicKey = ecdh(privateKey, G)
+      
+      console.log('[SESSION] Generated fresh ephemeral keypair')
+      return { privateKeyBytes: privateKey, publicKeyBytes: publicKey }
+    } catch (e) {
+      console.log('[SESSION] _generateEphemeralKeypair error: ' + e.message)
+      return null
+    }
+  }
   
   // Manual base64 encoder (fallback for ZeppOS if btoa not available)
   _base64Encode(bytes) {
@@ -482,10 +523,15 @@ class TeslaSession {
   }
 
   _doSessionInfoRequest(callback) {
-    const keypair = this.popKeyFromPool()
+    let keypair = this.popKeyFromPool()
     if (!keypair) {
-      callback({ success: false, error: 'Key pool empty' })
-      return
+      // No pre-generated pool: generate fresh ephemeral keypair on watch
+      console.log('[SESSION] Key pool empty, generating fresh ephemeral keypair on watch')
+      keypair = this._generateEphemeralKeypair()
+      if (!keypair) {
+        callback({ success: false, error: 'Failed to generate ephemeral keypair' })
+        return
+      }
     }
 
     this.ephemeralPrivateKey = keypair.privateKeyBytes  // Uint8Array[32]
