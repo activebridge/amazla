@@ -216,8 +216,6 @@ class TeslaSession {
   }
   loadDoublingsTable() {
     try {
-      // TEMP: Disable doublings table to debug OOM
-      return null
       const b64 = this.storage.getItem('vehicle_doublings_table')
       if (!b64) {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
@@ -334,6 +332,13 @@ class TeslaSession {
     ensureConnectedAndFetch()
   }
   requestSessionInfo(callback) {
+    // Early exit if table not available - don't proceed with session at all
+    if (!this.storage.getItem('vehicle_doublings_table')) {
+      console.log('[SESSION] ❌ Doublings table not found - cannot establish session')
+      callback({ success: false, error: 'Doublings table not found. Please complete pairing first.' })
+      return
+    }
+    
     const self = this
     const ensureConnected = function() {
       if (teslaBLE.isConnected()) {
