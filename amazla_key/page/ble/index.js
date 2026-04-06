@@ -39,6 +39,7 @@ var foundMAC = null
 var logLines  = ['', '', '', '', '', '']
 var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
 var currentPage = null
+var activeTimers = []
 var statusDotWidget  = null
 var statusTextWidget = null
 var chkKeyWidget     = null
@@ -69,6 +70,17 @@ function updateStatus(label, dotColor) {
     statusTextWidget.setProperty(hmUI.prop.TEXT,  label)
     statusTextWidget.setProperty(hmUI.prop.COLOR, dotColor)
   }
+}
+function scheduleTimeout(fn, delay) {
+  var id = setTimeout(fn, delay)
+  activeTimers.push(id)
+  return id
+}
+function clearAllTimers() {
+  for (var i = 0; i < activeTimers.length; i++) {
+    clearTimeout(activeTimers[i])
+  }
+  activeTimers = []
 }
 function updateChecklist() {
   var watchKey = storage.getItem('watch_public_key')
@@ -125,7 +137,7 @@ function doPair() {
           addLog('Timeout - trying verify...', 0x888888)
           state = 'DONE'
           updateStatus('Fetch EC key', 0xffcc00)
-          setTimeout(function() { doVerify() }, 1000)
+          scheduleTimeout(function() { doVerify() }, 1000)
           return
         }
         addLog('RX[' + r.data.length + ']:' + dumpHex(r.data, 8), 0x888888)
@@ -137,7 +149,7 @@ function doPair() {
             state = 'DONE'
             updateStatus('PAIRED!', 0x00cc44)
             addLog('✓ Paired!', 0x44ff44)
-            setTimeout(function() { doVerify() }, 500)
+            scheduleTimeout(function() { doVerify() }, 500)
           } else {
             addLog('Waiting for tap...', 0xff8800)
             waitForResult()
@@ -159,7 +171,7 @@ function doPair() {
             if (sawTapRequired || d2.hasSigner) {
               state = 'DONE'
               updateStatus('PAIRED!', 0x00cc44)
-              setTimeout(function() { doVerify() }, 500)
+              scheduleTimeout(function() { doVerify() }, 500)
             } else { addLog('ok-skip(no tap)', 0xff8800); waitForResult() }
           } else if (p2.status === 'error') {
             state = 'IDLE'
@@ -321,7 +333,7 @@ function onPair() {
       addLog('FND: ' + (result.device.name || '?'), 0x00cc44)
       teslaBleApi.stopScan()
       state = 'IDLE'
-      setTimeout(function() { doConnect(foundMAC, 0, doPair) }, 500)
+      scheduleTimeout(function() { doConnect(foundMAC, 0, doPair) }, 500)
     }
     if (result.type === 'complete' && state === 'SCANNING') {
       if (!foundMAC) { state = 'IDLE'; addLog('No device found', 0xff8800); updateStatus('IDLE', 0x888888) }
@@ -334,7 +346,7 @@ function doConnect(mac, attempt, onConnected) {
   addLog('Connecting ' + mac.slice(-8) + '...', 0xcccccc)
   teslaBleApi.connect(mac, function(result) {
     if (!result.success) {
-      if (attempt < 1) { setTimeout(function() { doConnect(mac, attempt + 1, onConnected) }, 2000); return }
+      if (attempt < 1) { scheduleTimeout(function() { doConnect(mac, attempt + 1, onConnected) }, 2000); return }
       state = 'IDLE'
       updateStatus('CONN FAIL', 0xff4444)
       addLog('Conn err: ' + (result.error || '?'), 0xff4444)
@@ -503,8 +515,18 @@ Page(BasePage({
   onDestroy() {
     keepScreenOn(false)
     teslaBleApi.disconnect()
+    teslaBleApi.onDisconnect = null
+    clearAllTimers()
+    logWidgets = []
+    statusDotWidget = null
+    statusTextWidget = null
+    chkKeyWidget = null
+    chkECWidget = null
+    chkTableWidget = null
+    chkPoolWidget = null
+    chkMacWidget = null
   },
   onHide() {
     keepScreenOn(false)
   }
-}))
+})))
