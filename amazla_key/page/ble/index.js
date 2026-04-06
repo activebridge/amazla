@@ -530,4 +530,4 @@ Page(BasePage({
   onHide() {
     keepScreenOn(false)
   }
-})))
+}))
