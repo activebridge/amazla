@@ -411,6 +411,7 @@ function onClear() {
 }
 Page(BasePage({
   build() {
+    console.log('[BLE-LIFECYCLE] build() called')
     logWidgets = []
     UI.reset()
     currentPage = this
@@ -516,6 +517,7 @@ Page(BasePage({
     keepScreenOn(true, 600000)
   },
   onDestroy() {
+    console.log('[BLE-LIFECYCLE] onDestroy() called')
     keepScreenOn(false)
     teslaBleApi.reset()
     teslaBleApi.onDisconnect = null
@@ -535,6 +537,7 @@ Page(BasePage({
     chkMacWidget = null
   },
   onHide() {
+    console.log('[BLE-LIFECYCLE] onHide() called')
     keepScreenOn(false)
   }
 }))
