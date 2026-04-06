@@ -20,8 +20,6 @@ import {
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
-  RKE_ACTION_OPEN_TRUNK,
-  RKE_ACTION_OPEN_FRUNK,
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
 function byteToHex(byte) {
@@ -586,12 +584,6 @@ class TeslaSession {
   }
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
-  }
-  openTrunk(callback) {
-    this.sendCommand(RKE_ACTION_OPEN_TRUNK, callback)
-  }
-  openFrunk(callback) {
-    this.sendCommand(RKE_ACTION_OPEN_FRUNK, callback)
   }
   isEstablished() {
     return this.established
