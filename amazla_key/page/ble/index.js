@@ -7,9 +7,10 @@ import teslaSession from '../../lib/tesla-ble/session.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 
-// Initialization guard - prevent double-initialization on page re-entry
-let pageInitialized = false
-let pageBuilt = false
+// Store initialization flag on the imported module (survives re-evaluation)
+if (teslaBleApi.__blePageInit === undefined) {
+  teslaBleApi.__blePageInit = false
+}
 
 var storage = {
   data: {},
@@ -416,16 +417,16 @@ function onClear() {
 }
 Page(BasePage({
   build() {
-    console.log('[BLE-LIFECYCLE] build() called, pageInitialized=' + pageInitialized)
+    console.log('[BLE-LIFECYCLE] build() called, __blePageInit=' + teslaBleApi.__blePageInit)
     logWidgets = []
     UI.reset()
     currentPage = this
     storage.load()
     
-    if (!pageInitialized) {
+    if (!teslaBleApi.__blePageInit) {
       console.log('[BLE-LIFECYCLE] First initialization - calling teslaBleApi.init()')
       teslaBleApi.init(storage)
-      pageInitialized = true
+      teslaBleApi.__blePageInit = true
     } else {
       console.log('[BLE-LIFECYCLE] Re-entry - skipping teslaBleApi.init()')
     }
@@ -530,7 +531,7 @@ Page(BasePage({
     keepScreenOn(true, 600000)
   },
   onDestroy() {
-    console.log('[BLE-LIFECYCLE] onDestroy() called, pageInitialized=' + pageInitialized)
+    console.log('[BLE-LIFECYCLE] onDestroy() called, __blePageInit=' + teslaBleApi.__blePageInit)
     keepScreenOn(false)
     console.log('[BLE-LIFECYCLE] Calling teslaBleApi.reset()')
     teslaBleApi.reset()
