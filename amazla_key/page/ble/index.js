@@ -5,6 +5,7 @@ import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
+import { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 var storage = {
   data: {},
   load: function() {
@@ -423,83 +424,83 @@ Page(BasePage({
         updateChecklist()
       })
       .catch(function() { updateChecklist() })
-    hmUI.createWidget(hmUI.widget.TEXT, {
+    uiText({
       x: 0, y: 8, w: 480, h: 36,
       text: 'BLE CONTROL', text_size: 26, color: 0xffffff,
-      align_h: hmUI.align.CENTER_H,
+      align_h: hmUI.align.CENTER_H, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 20, y: 44, w: 440, h: 2, color: 0x333333 })
-    statusDotWidget = hmUI.createWidget(hmUI.widget.FILL_RECT, {
-      x: 22, y: 52, w: 14, h: 14, radius: 7, color: 0x888888
+    uiRect({ x: 20, y: 44, w: 440, h: 2, color: 0x333333, centered: false })
+    statusDotWidget = uiRect({
+      x: 22, y: 52, w: 14, h: 14, radius: 7, color: 0x888888, centered: false
     })
-    statusTextWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    statusTextWidget = uiText({
       x: 44, y: 50, w: 416, h: 22,
-      text: 'IDLE', text_size: 20, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: 'IDLE', text_size: 20, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 20, y: 76, w: 440, h: 1, color: 0x222222 })
-    chkKeyWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    uiRect({ x: 20, y: 76, w: 440, h: 1, color: 0x222222, centered: false })
+    chkKeyWidget = uiText({
       x: 20, y: 80, w: 210, h: 22,
-      text: '? KEY', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: '? KEY', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    chkECWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    chkECWidget = uiText({
       x: 250, y: 80, w: 210, h: 22,
-      text: '? EC', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: '? EC', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    chkTableWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    chkTableWidget = uiText({
       x: 20, y: 104, w: 210, h: 22,
-      text: '? TABLE', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: '? TABLE', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    chkPoolWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    chkPoolWidget = uiText({
       x: 250, y: 104, w: 210, h: 22,
-      text: 'POOL:?', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: 'POOL:?', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    chkMacWidget = hmUI.createWidget(hmUI.widget.TEXT, {
+    chkMacWidget = uiText({
       x: 20, y: 128, w: 440, h: 22,
-      text: '? MAC', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT,
+      text: '? MAC', text_size: 18, color: 0x888888, align_h: hmUI.align.LEFT, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 20, y: 154, w: 440, h: 1, color: 0x222222 })
+    uiRect({ x: 20, y: 154, w: 440, h: 1, color: 0x222222, centered: false })
     for (var i = 0; i < 6; i++) {
-      logWidgets[i] = hmUI.createWidget(hmUI.widget.TEXT, {
+      logWidgets[i] = uiText({
         x: 20, y: 158 + i * 26, w: 440, h: 24,
-        text: '', text_size: 19, color: 0x666666, align_h: hmUI.align.LEFT,
+        text: '', text_size: 19, color: 0x666666, align_h: hmUI.align.LEFT, centered: false,
       })
     }
-    hmUI.createWidget(hmUI.widget.FILL_RECT, { x: 20, y: 316, w: 440, h: 1, color: 0x333333 })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiRect({ x: 20, y: 316, w: 440, h: 1, color: 0x333333, centered: false })
+    uiButton({
       x: 20, y: 322, w: 120, h: 42,
       text: 'GENKEY', text_size: 15, color: 0xffffff,
       normal_color: 0x003366, press_color: 0x001a33, radius: 8,
-      click_func: onGenKey,
+      click_func: onGenKey, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiButton({
       x: 148, y: 322, w: 184, h: 42,
       text: 'PAIR', text_size: 18, color: 0xffffff,
       normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 8,
-      click_func: onPair,
+      click_func: onPair, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiButton({
       x: 340, y: 322, w: 120, h: 42,
       text: 'CLEAR', text_size: 15, color: 0xffffff,
       normal_color: 0x5c1a1a, press_color: 0x2d0d0d, radius: 8,
-      click_func: onClear,
+      click_func: onClear, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiButton({
       x: 20, y: 370, w: 120, h: 42,
       text: 'CONNECT', text_size: 14, color: 0xffffff,
       normal_color: 0x1a3a5c, press_color: 0x0d1f2d, radius: 8,
-      click_func: onConnect,
+      click_func: onConnect, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiButton({
       x: 148, y: 370, w: 88, h: 42,
       text: 'LOCK', text_size: 16, color: 0xffffff,
       normal_color: 0x5c3a00, press_color: 0x2d1d00, radius: 8,
-      click_func: onLock,
+      click_func: onLock, centered: false,
     })
-    hmUI.createWidget(hmUI.widget.BUTTON, {
+    uiButton({
       x: 244, y: 370, w: 216, h: 42,
       text: 'UNLOCK', text_size: 16, color: 0xffffff,
       normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 8,
-      click_func: onUnlock,
+      click_func: onUnlock, centered: false,
     })
     teslaBleApi.onDisconnect = function() {
       if (state === 'WAITING_KEYCARD' || state === 'PAIRING') {
