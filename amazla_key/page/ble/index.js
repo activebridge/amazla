@@ -518,6 +518,7 @@ Page(BasePage({
     keepScreenOn(false)
     teslaBleApi.disconnect()
     teslaBleApi.onDisconnect = null
+    teslaSession.reset()
     clearAllTimers()
     logWidgets = []
     statusDotWidget = null
