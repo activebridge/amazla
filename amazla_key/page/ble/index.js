@@ -411,6 +411,7 @@ function onClear() {
 }
 Page(BasePage({
   build() {
+    logWidgets = []
     UI.reset()
     currentPage = this
     storage.load()
