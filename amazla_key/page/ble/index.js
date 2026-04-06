@@ -1,11 +1,25 @@
 import * as hmUI from '@zos/ui'
 import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../../zeppify/index.js'
-import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
-import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
-import teslaSession from '../../lib/tesla-ble/session.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
+
+// Module cache - prevent re-import on page re-entry
+let moduleCache = {
+  teslaBleApi: null,
+  parsePairingResponse: null,
+  teslaSession: null
+}
+
+function getModules() {
+  if (!moduleCache.teslaBleApi) {
+    moduleCache.teslaBleApi = require('../../lib/tesla-ble/index.js').default
+    moduleCache.parsePairingResponse = require('../../lib/tesla-ble/protocol/vcsec.js').parsePairingResponse
+    moduleCache.teslaSession = require('../../lib/tesla-ble/session.js').default
+  }
+  return moduleCache
+}
+
 var storage = {
   data: {},
   load: function() {
@@ -113,6 +127,7 @@ function updateChecklist() {
   if (chkMacWidget)   chkMacWidget.setProperty(hmUI.prop.COLOR,   mac       ? 0x44cc66 : 0xff5555)
 }
 function doPair() {
+  const { teslaBleApi, parsePairingResponse } = getModules()
   state = 'PAIRING'
   updateStatus('PAIRING...', 0xffcc00)
   var watchKey = storage.getItem('watch_public_key')
@@ -192,6 +207,7 @@ function doPair() {
     })
 }
 function doVerify() {
+  const { teslaBleApi, teslaSession } = getModules()
   if (!teslaBleApi.isConnected()) {
     state = 'IDLE'
     updateStatus('CONN LOST', 0xff4444)
@@ -315,6 +331,7 @@ function onGenKey() {
     .catch(function(e) { addLog('Key err: ' + e, 0xff8844) })
 }
 function onPair() {
+  const { teslaBleApi } = getModules()
   if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING' || state === 'WAITING_KEYCARD') {
     addLog('Busy: ' + state, 0xff8800)
     return
@@ -342,6 +359,7 @@ function onPair() {
   }, 15000)
 }
 function doConnect(mac, attempt, onConnected) {
+  const { teslaBleApi } = getModules()
   state = 'CONNECTING'
   updateStatus('CONNECTING...', 0xffcc00)
   addLog('Connecting ' + mac.slice(-8) + '...', 0xcccccc)
@@ -360,6 +378,7 @@ function doConnect(mac, attempt, onConnected) {
   }, storage)
 }
 function onConnect() {
+  const { teslaSession } = getModules()
   addLog('Connecting...', 0xffcc00)
   updateStatus('CONNECTING...', 0xffcc00)
   teslaSession.setStorage(storage)
@@ -375,6 +394,7 @@ function onConnect() {
   })
 }
 function onLock() {
+  const { teslaSession } = getModules()
   addLog('Locking...', 0xffcc00)
   teslaSession.setStorage(storage)
   teslaSession.lock(function(result) {
@@ -388,6 +408,7 @@ function onLock() {
   })
 }
 function onUnlock() {
+  const { teslaSession } = getModules()
   addLog('Unlocking...', 0xffcc00)
   teslaSession.setStorage(storage)
   teslaSession.unlock(function(result) {
@@ -401,6 +422,7 @@ function onUnlock() {
   })
 }
 function onClear() {
+  const { teslaBleApi, teslaSession } = getModules()
   teslaBleApi.clear(storage)
   teslaSession.reset()
   state    = 'IDLE'
@@ -412,6 +434,7 @@ function onClear() {
 Page(BasePage({
   build() {
     console.log('[BLE-LIFECYCLE] build() called')
+    const { teslaBleApi, teslaSession } = getModules()
     logWidgets = []
     UI.reset()
     currentPage = this
@@ -518,6 +541,7 @@ Page(BasePage({
   },
   onDestroy() {
     console.log('[BLE-LIFECYCLE] onDestroy() called')
+    const { teslaBleApi, teslaSession } = getModules()
     keepScreenOn(false)
     teslaBleApi.reset()
     teslaBleApi.onDisconnect = null
