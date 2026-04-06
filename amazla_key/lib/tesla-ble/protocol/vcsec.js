@@ -365,14 +365,16 @@ const parsePairingResponse = (data) => {
       }
       if (wlInfo === 14) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
-    } else if (operationStatus === OPERATIONSTATUS_OK) {
-      return { success: true, status: 'pending', message: 'Op status ok (awaiting wl result)', dbg }
-    } else if (operationStatus === OPERATIONSTATUS_WAIT) {
-      return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
-    } else if (operationStatus === OPERATIONSTATUS_ERROR) {
-      const faultCode = typeof field3 === 'number' ? field3 : 0
-      dbg.wlFault = faultCode
-      return { success: false, status: 'error', error: `WL fault:${faultCode}`, vehiclePublicKey, dbg }
+    }
+    switch(operationStatus) {
+      case OPERATIONSTATUS_OK:
+        return { success: true, status: 'pending', message: 'Op status ok (awaiting wl result)', dbg }
+      case OPERATIONSTATUS_WAIT:
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
+      case OPERATIONSTATUS_ERROR:
+        const faultCode = typeof field3 === 'number' ? field3 : 0
+        dbg.wlFault = faultCode
+        return { success: false, status: 'error', error: `WL fault:${faultCode}`, vehiclePublicKey, dbg }
     }
     dbg.path = 'unk'
     return { success: false, error: 'Unknown fmt', vehiclePublicKey, dbg }
