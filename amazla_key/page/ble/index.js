@@ -5,7 +5,7 @@ import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
-import { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
+import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 var storage = {
   data: {},
   load: function() {
@@ -411,6 +411,7 @@ function onClear() {
 }
 Page(BasePage({
   build() {
+    UI.reset()
     currentPage = this
     storage.load()
     teslaBleApi.init(storage)
