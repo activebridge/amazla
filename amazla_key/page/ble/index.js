@@ -9,6 +9,7 @@ import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../..
 
 // Initialization guard - prevent double-initialization on page re-entry
 let pageInitialized = false
+let pageBuilt = false
 
 var storage = {
   data: {},
@@ -415,17 +416,20 @@ function onClear() {
 }
 Page(BasePage({
   build() {
-    console.log('[BLE-LIFECYCLE] build() called')
+    console.log('[BLE-LIFECYCLE] build() called, pageInitialized=' + pageInitialized)
     logWidgets = []
     UI.reset()
     currentPage = this
     storage.load()
     
     if (!pageInitialized) {
-      console.log('[BLE-LIFECYCLE] First initialization')
+      console.log('[BLE-LIFECYCLE] First initialization - calling teslaBleApi.init()')
       teslaBleApi.init(storage)
       pageInitialized = true
+    } else {
+      console.log('[BLE-LIFECYCLE] Re-entry - skipping teslaBleApi.init()')
     }
+    console.log('[BLE-LIFECYCLE] Setting session storage')
     teslaSession.setStorage(storage)
     currentPage.request({ method: 'BLE_SYNC_KEYS', params: {} })
       .then(function(result) {
@@ -526,11 +530,14 @@ Page(BasePage({
     keepScreenOn(true, 600000)
   },
   onDestroy() {
-    console.log('[BLE-LIFECYCLE] onDestroy() called')
+    console.log('[BLE-LIFECYCLE] onDestroy() called, pageInitialized=' + pageInitialized)
     keepScreenOn(false)
+    console.log('[BLE-LIFECYCLE] Calling teslaBleApi.reset()')
     teslaBleApi.reset()
     teslaBleApi.onDisconnect = null
+    console.log('[BLE-LIFECYCLE] Calling teslaSession.reset()')
     teslaSession.reset()
+    console.log('[BLE-LIFECYCLE] Clearing timers')
     clearAllTimers()
     state = 'IDLE'
     foundMAC = null
