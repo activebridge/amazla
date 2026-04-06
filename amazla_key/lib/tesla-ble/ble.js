@@ -216,6 +216,11 @@ class TeslaBLE {
     this.connected = false
     this._cleanup()
   }
+  reset() {
+    this.connected = false
+    this._cleanup()
+    this.onDisconnect = null
+  }
   send(data, callback) {
     if (!this.connected) {
       callback({ success: false, error: 'Not connected' })

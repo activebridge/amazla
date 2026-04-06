@@ -98,6 +98,9 @@ class TeslaBleApi {
     _publicKeyHex = null
     this.savedMAC = null
   }
+  reset() {
+    teslaBLE.reset()
+  }
 }
 const teslaBleApi = new TeslaBleApi()
 export default teslaBleApi

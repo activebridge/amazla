@@ -516,7 +516,7 @@ Page(BasePage({
   },
   onDestroy() {
     keepScreenOn(false)
-    teslaBleApi.disconnect()
+    teslaBleApi.reset()
     teslaBleApi.onDisconnect = null
     teslaSession.reset()
     clearAllTimers()
