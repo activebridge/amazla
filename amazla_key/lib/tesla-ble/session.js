@@ -26,6 +26,7 @@ function byteToHex(byte) {
   const hex = byte.toString(16)
   return hex.length === 1 ? '0' + hex : hex
 }
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
@@ -126,7 +127,6 @@ class TeslaSession {
     }
   }
   _base64Encode(bytes) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     let result = ''
     let i = 0
     
@@ -135,10 +135,10 @@ class TeslaSession {
       const b2 = i < bytes.length ? bytes[i++] : 0
       const b3 = i < bytes.length ? bytes[i++] : 0
       
-      result += chars[b1 >> 2]
-      result += chars[((b1 & 3) << 4) | (b2 >> 4)]
-      result += i - 2 < bytes.length ? chars[((b2 & 15) << 2) | (b3 >> 6)] : '='
-      result += i - 1 < bytes.length ? chars[b3 & 63] : '='
+      result += BASE64_CHARS[b1 >> 2]
+      result += BASE64_CHARS[((b1 & 3) << 4) | (b2 >> 4)]
+      result += i - 2 < bytes.length ? BASE64_CHARS[((b2 & 15) << 2) | (b3 >> 6)] : '='
+      result += i - 1 < bytes.length ? BASE64_CHARS[b3 & 63] : '='
     }
     
     return result
@@ -167,14 +167,13 @@ class TeslaSession {
     }
   }
   _base64Decode(b64) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     let result = ''
     let bits = 0
     let bitCount = 0
     
     for (let i = 0; i < b64.length; i++) {
       if (b64[i] === '=') break
-      const val = chars.indexOf(b64[i])
+      const val = BASE64_CHARS.indexOf(b64[i])
       if (val === -1) continue
       
       bits = (bits << 6) | val
