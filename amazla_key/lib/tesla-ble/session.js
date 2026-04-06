@@ -216,6 +216,8 @@ class TeslaSession {
   }
   loadDoublingsTable() {
     try {
+      // TEMP: Disable doublings table to debug OOM
+      return null
       const b64 = this.storage.getItem('vehicle_doublings_table')
       if (!b64) {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
