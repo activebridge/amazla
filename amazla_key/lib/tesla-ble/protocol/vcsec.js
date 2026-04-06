@@ -125,23 +125,13 @@ const generateRoutingAddress = () => {
 }
 const parseSessionInfo = (data) => {
   const fields = decodeMessage(data)
-  let publicKey = null
-  let epoch = null
-  
-  if (fields[2]) {
-    if (fields[2].length === 65) {
-      publicKey = fields[2]
-      epoch = fields[3] ?? null
-    } else if (fields[2].length === 16) {
-      epoch = fields[2]
-      publicKey = null
-    } else {
-      publicKey = fields[2]
-      epoch = fields[3] ?? null
-    }
-  } else {
-    epoch = fields[3] ?? null
-  }
+  const [publicKey, epoch] = !fields[2] 
+    ? [null, fields[3] ?? null]
+    : fields[2].length === 65
+    ? [fields[2], fields[3] ?? null]
+    : fields[2].length === 16
+    ? [null, fields[2]]
+    : [fields[2], fields[3] ?? null]
   
   return {
     counter:    fields[1] ?? 0,
