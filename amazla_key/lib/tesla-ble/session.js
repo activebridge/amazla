@@ -31,6 +31,7 @@ class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
     this.DEBUG_VEHICLE_PUBLIC_KEY = null // Set this to a Uint8Array[65] to test with hardcoded key
+    this.onPoolLow = null // Callback when pool gets low - receives callback(count) to request from phone
     this.reset()
   }
   setStorage(storageObject) {
@@ -47,6 +48,7 @@ class TeslaSession {
     this.routingAddress = null
     this.established = false
     this.preserved = null
+    this.replenishingPool = false
   }
   preserveForReconnect(timeoutMs) {
     this.preserved = {
@@ -95,21 +97,45 @@ class TeslaSession {
   popKeyFromPool() {
     try {
       const b64 = this.storage.getItem('key_pool')
-      if (!b64) return null
+      if (!b64) {
+        if (this.onPoolLow && !this.replenishingPool) {
+          this.replenishingPool = true
+          this.onPoolLow(15)
+        }
+        return null
+      }
       const decoded = typeof atob !== 'undefined' ? atob(b64) : this._base64Decode(b64)
       const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
-      if (raw.length < 97) return null
+      if (raw.length < 97) {
+        if (this.onPoolLow && !this.replenishingPool) {
+          this.replenishingPool = true
+          this.onPoolLow(15)
+        }
+        return null
+      }
       const priv = raw.slice(0, 32)
       const pub  = raw.slice(32, 97)
       const rest = raw.slice(97)
+      const poolSize = Math.floor(rest.length / 97)
+      
       rest.length > 0 
         ? this.storage.setItem('key_pool', typeof btoa !== 'undefined' ? btoa(String.fromCharCode.apply(null, rest)) : this._base64Encode(rest))
         : this.storage.removeItem('key_pool')
+      
+      // Trigger replenishment when pool gets low
+      if (poolSize < 5 && this.onPoolLow && !this.replenishingPool) {
+        this.replenishingPool = true
+        this.onPoolLow(15)
+      }
+      
       return { privateKeyBytes: priv, publicKeyBytes: pub }
     } catch (e) {
       console.log('[Session] popKeyFromPool error:', e.message)
       return null
     }
+  }
+  completePoolReplenishment() {
+    this.replenishingPool = false
   }
   _base64Encode(bytes) {
     let result = ''

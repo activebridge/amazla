@@ -257,9 +257,19 @@ function doVerify() {
               } else {
                 addLog('Table failed: ' + (r.error || '?'), 0xffaa44)
               }
+              addLog('Generating key pool...', 0x666666)
+              return currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+            })
+            .then(function(r) {
+              if (r.success && r.pool) {
+                storage.setItem('key_pool', r.pool)
+                addLog('✓ Pool:20 keys ready', 0x44ff44)
+              } else {
+                addLog('Pool gen failed: ' + (r.error || '?'), 0xffaa44)
+              }
               updateChecklist()
             })
-            .catch(function(e) { addLog('Table err: ' + e, 0xff8844); updateChecklist() })
+            .catch(function(e) { addLog('Setup err: ' + e, 0xff8844); updateChecklist() })
         } else {
           addLog('No EC key in WEI', 0xff8800)
         }
@@ -432,6 +442,25 @@ Page(BasePage({
     }
     console.log('[BLE-LIFECYCLE] Setting session storage')
     teslaSession.setStorage(storage)
+    teslaSession.onPoolLow = function(count) {
+      console.log('[BLE] Pool low, requesting ' + count + ' more keys')
+      currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: count } })
+        .then(function(r) {
+          if (r.success && r.pool) {
+            var b64 = storage.getItem('key_pool') || ''
+            var newPool = b64 + r.pool.substring(b64.length ? 0 : 0)
+            storage.setItem('key_pool', b64 ? (b64 + r.pool) : r.pool)
+            addLog('✓ Pool replenished: +' + count, 0x44ff44)
+          } else {
+            addLog('Pool replenish failed', 0xff8844)
+          }
+          teslaSession.completePoolReplenishment()
+        })
+        .catch(function(e) {
+          addLog('Pool replenish err', 0xff8844)
+          teslaSession.completePoolReplenishment()
+        })
+    }
     currentPage.request({ method: 'BLE_SYNC_KEYS', params: {} })
       .then(function(result) {
         if (result.success && result.publicKeyHex) {
