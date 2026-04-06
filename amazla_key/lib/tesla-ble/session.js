@@ -96,30 +96,15 @@ class TeslaSession {
     try {
       const b64 = this.storage.getItem('key_pool')
       if (!b64) return null
-      let decoded
-      if (typeof atob !== 'undefined') {
-        decoded = atob(b64)
-      } else {
-        decoded = this._base64Decode(b64)
-      }
-      
+      const decoded = typeof atob !== 'undefined' ? atob(b64) : this._base64Decode(b64)
       const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
       if (raw.length < 97) return null
       const priv = raw.slice(0, 32)
       const pub  = raw.slice(32, 97)
       const rest = raw.slice(97)
-      
-      if (rest.length > 0) {
-        let encoded
-        if (typeof btoa !== 'undefined') {
-          encoded = btoa(String.fromCharCode.apply(null, rest))
-        } else {
-          encoded = this._base64Encode(rest)
-        }
-        this.storage.setItem('key_pool', encoded)
-      } else {
-        this.storage.removeItem('key_pool')
-      }
+      rest.length > 0 
+        ? this.storage.setItem('key_pool', typeof btoa !== 'undefined' ? btoa(String.fromCharCode.apply(null, rest)) : this._base64Encode(rest))
+        : this.storage.removeItem('key_pool')
       return { privateKeyBytes: priv, publicKeyBytes: pub }
     } catch (e) {
       console.log('[Session] popKeyFromPool error:', e.message)
@@ -151,15 +136,10 @@ class TeslaSession {
         return 0
       }
       console.log('[Session] getPoolSize: b64 length =', b64.length)
-      if (typeof atob === 'undefined') {
-        console.log('[Session] ERROR: atob is not defined!')
-        const decoded = this._base64Decode(b64)
-        console.log('[Session] Manual decode: length =', decoded.length)
-        return (decoded.length / 97) | 0
-      }
-      
-      const decoded = atob(b64)
-      console.log('[Session] atob decode: length =', decoded.length)
+      const decoded = typeof atob === 'undefined' 
+        ? (console.log('[Session] ERROR: atob is not defined!'), this._base64Decode(b64))
+        : atob(b64)
+      console.log('[Session]', typeof atob === 'undefined' ? 'Manual' : 'atob', 'decode: length =', decoded.length)
       return (decoded.length / 97) | 0
     } catch (e) {
       console.log('[Session] getPoolSize error:', e.message)
@@ -218,12 +198,7 @@ class TeslaSession {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-      let decoded
-      if (typeof atob !== 'undefined') {
-        decoded = atob(b64)
-      } else {
-        decoded = this._base64Decode(b64)
-      }
+      const decoded = typeof atob !== 'undefined' ? atob(b64) : this._base64Decode(b64)
       const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
       if (raw.length !== 256 * 64) {
         console.log('[SESSION] Doublings table wrong size: ' + raw.length + ' bytes (need 16384)')
