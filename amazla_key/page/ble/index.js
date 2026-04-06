@@ -520,6 +520,10 @@ Page(BasePage({
     teslaBleApi.onDisconnect = null
     teslaSession.reset()
     clearAllTimers()
+    state = 'IDLE'
+    foundMAC = null
+    logLines = ['', '', '', '', '', '']
+    logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
     logWidgets = []
     statusDotWidget = null
     statusTextWidget = null
