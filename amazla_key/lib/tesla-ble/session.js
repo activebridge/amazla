@@ -1,9 +1,7 @@
-// Tesla BLE Session Management
-// Handles ECDH key exchange, session establishment, and command authentication
 
 import { sha1 } from './crypto/sha256.js'
-import { hmacSha256, concatBytes, hexToBytes, bytesToHex } from './crypto/hmac.js'
-import { ecdh, ecdhFixed, bytesToBigInt } from './crypto/p256.js'
+import { hmacSha256, hexToBytes, bytesToHex } from './crypto/hmac.js'
+import { ecdhFixed, bytesToBigInt } from './crypto/p256.js'
 import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -26,51 +24,31 @@ import {
   RKE_ACTION_OPEN_FRUNK,
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
-
-// Helper: Format byte as 2-digit hex (replaces String.padStart which may not be available)
 function byteToHex(byte) {
   const hex = byte.toString(16)
   return hex.length === 1 ? '0' + hex : hex
 }
-
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
     this.DEBUG_VEHICLE_PUBLIC_KEY = null // Set this to a Uint8Array[65] to test with hardcoded key
     this.reset()
   }
-
-  // Override storage (for file-based storage compatibility)
   setStorage(storageObject) {
     this.storage = storageObject
   }
-
   reset() {
-    // Ephemeral key pair for this session
     this.ephemeralPrivateKey = null
     this.ephemeralPublicKey = null
-
-    // Vehicle's session info
     this.vehiclePublicKey = null
     this.epoch = null
     this.counter = 0
     this.clockTime = 0
-
-    // Derived session key
     this.sessionKey = null
-
-    // Routing
     this.routingAddress = null
-
-    // State
     this.established = false
-    
-    // Session preservation for reconnects (preserves ECDH result)
     this.preserved = null
   }
-
-  // Preserve session state for brief reconnections (e.g., within 5 minutes)
-  // Allows reuse of ECDH result instead of recomputing
   preserveForReconnect(timeoutMs) {
     this.preserved = {
       ephemeralPrivateKey: this.ephemeralPrivateKey,
@@ -86,8 +64,6 @@ class TeslaSession {
     }
     console.log('[Session] Session preserved for reconnect (timeout: ' + (timeoutMs / 1000).toFixed(1) + 's)')
   }
-
-  // Check if a preserved session exists and is still valid
   isPreserved() {
     if (!this.preserved) return false
     var age = Date.now() - this.preserved.timestamp
@@ -98,8 +74,6 @@ class TeslaSession {
     }
     return isValid
   }
-
-  // Restore session from preserved state (clears preserved state after restore)
   restorePreservedSession() {
     if (!this.isPreserved()) return false
     
@@ -119,15 +93,10 @@ class TeslaSession {
     console.log('[Session] Session restored from preserved state (age: ' + (age / 1000).toFixed(1) + 's)')
     return true
   }
-
-  // Pop one keypair from the binary key pool stored in LocalStorage
-  // Pool is flat binary: N * 97 bytes (32 priv + 65 pub), base64-encoded
   popKeyFromPool() {
     try {
       const b64 = this.storage.getItem('key_pool')
       if (!b64) return null
-      
-      // Decode base64
       let decoded
       if (typeof atob !== 'undefined') {
         decoded = atob(b64)
@@ -142,7 +111,6 @@ class TeslaSession {
       const rest = raw.slice(97)
       
       if (rest.length > 0) {
-        // Encode remaining pool back to base64
         let encoded
         if (typeof btoa !== 'undefined') {
           encoded = btoa(String.fromCharCode.apply(null, rest))
@@ -159,49 +127,6 @@ class TeslaSession {
       return null
     }
   }
-
-  // Generate fresh ephemeral keypair on watch when key pool is empty
-  // Uses a simple approach: derive from timestamp + random bytes
-  _generateEphemeralKeypair() {
-    try {
-      // Use a simple pseudo-random approach on watch (no crypto.getRandomValues)
-      const timestamp = Date.now()
-      const random = new Uint8Array(32)
-      for (let i = 0; i < 32; i++) {
-        const val = Math.floor(Math.random() * 256)
-        random[i] = val
-      }
-      
-      // Mix timestamp into first 8 bytes
-      const view = new DataView(random.buffer)
-      view.setUint32(0, timestamp >>> 0, true)
-      view.setUint32(4, (timestamp / 0x100000000) >>> 0, true)
-
-      // Use the random bytes as private key scalar (modulo N for valid scalar)
-      const privateKey = new Uint8Array(random)
-      
-      // ECDH with generator point to derive public key
-      // Generator point G = 04 6B17D1F2 E12C4247 F8BCE6E5 63A440F2 77037D81 2DEB33A0 F4A13945 D898C296 4FE342E2 FE1A7F9B 8EE7EB4A 7C0F9E16 2BCE33 57 6B315ECE CBB64068 37BF51F5
-      const G = new Uint8Array([
-        0x04,
-        0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5, 0x63, 0xA4, 0x40, 0xF2,
-        0x77, 0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0, 0xF4, 0xA1, 0x39, 0x45, 0xD8, 0x98, 0xC2, 0x96,
-        0x4F, 0xE3, 0x42, 0xE2, 0xFE, 0x1A, 0x7F, 0x9B, 0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E, 0x16,
-        0x2B, 0xCE, 0x33, 0x57, 0x6B, 0x31, 0x5E, 0xCE, 0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF, 0x51, 0xF5
-      ])
-
-      // Use ECDH to derive public key: Q = k*G
-      const publicKey = ecdh(privateKey, G)
-      
-      console.log('[SESSION] Generated fresh ephemeral keypair')
-      return { privateKeyBytes: privateKey, publicKeyBytes: publicKey }
-    } catch (e) {
-      console.log('[SESSION] _generateEphemeralKeypair error: ' + e.message)
-      return null
-    }
-  }
-  
-  // Manual base64 encoder (fallback for ZeppOS if btoa not available)
   _base64Encode(bytes) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     let result = ''
@@ -220,8 +145,6 @@ class TeslaSession {
     
     return result
   }
-
-  // Get number of keypairs remaining in pool
   getPoolSize() {
     try {
       const b64 = this.storage.getItem('key_pool')
@@ -230,11 +153,8 @@ class TeslaSession {
         return 0
       }
       console.log('[Session] getPoolSize: b64 length =', b64.length)
-      
-      // Decode base64 - check if atob is available
       if (typeof atob === 'undefined') {
         console.log('[Session] ERROR: atob is not defined!')
-        // Fallback: manual base64 decode
         const decoded = this._base64Decode(b64)
         console.log('[Session] Manual decode: length =', decoded.length)
         return (decoded.length / 97) | 0
@@ -248,8 +168,6 @@ class TeslaSession {
       return 0
     }
   }
-  
-  // Manual base64 decoder (fallback for ZeppOS if atob not available)
   _base64Decode(b64) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     let result = ''
@@ -273,17 +191,12 @@ class TeslaSession {
     
     return result
   }
-
-  // Load user's enrolled keypair (public key pre-computed to avoid crypto)
   setPrivateKey(privateKeyHex, publicKeyHex) {
     this.enrolledPrivateKey = hexToBytes(privateKeyHex)
     if (publicKeyHex) {
       this.enrolledPublicKey = hexToBytes(publicKeyHex)
     }
   }
-
-  // Try to load vehicle's EC public key from storage (obtained during pairing)
-  // Returns true if key was loaded, false if not found
   loadVehiclePublicKey() {
     try {
       const pubKeyHex = this.storage.getItem('vehicle_ec_public_key')
@@ -301,9 +214,6 @@ class TeslaSession {
       return false
     }
   }
-
-  // Load precomputed doublings table built by phone during pairing.
-  // Returns Array[256] of [Uint32Array(8), Uint32Array(8)] pairs, or null if unavailable.
   loadDoublingsTable() {
     try {
       const b64 = this.storage.getItem('vehicle_doublings_table')
@@ -311,21 +221,17 @@ class TeslaSession {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-
       let decoded
       if (typeof atob !== 'undefined') {
         decoded = atob(b64)
       } else {
         decoded = this._base64Decode(b64)
       }
-
       const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
       if (raw.length !== 256 * 64) {
         console.log('[SESSION] Doublings table wrong size: ' + raw.length + ' bytes (need 16384)')
         return null
       }
-
-      // table[0] = Q (the vehicle's public key); validate it matches vehiclePublicKey
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
           if (raw[i] !== this.vehiclePublicKey[1 + i] || raw[32 + i] !== this.vehiclePublicKey[33 + i]) {
@@ -334,7 +240,6 @@ class TeslaSession {
           }
         }
       }
-
       const table = []
       for (let i = 0; i < 256; i++) {
         table.push([bytesToBigInt(raw.slice(i * 64, i * 64 + 32)),
@@ -348,14 +253,8 @@ class TeslaSession {
       return null
     }
   }
-
-  // Request the vehicle's public key via GetWhitelistEntryInfo
-  // This is the proper way to get the long-term EC key after pairing
-  // Returns true if key was obtained, false otherwise
   requestVehiclePublicKey(callback) {
     const self = this
-    
-    // Ensure BLE is connected first
     const ensureConnectedAndFetch = function() {
       if (teslaBLE.isConnected()) {
         console.log('[SESSION] ✓ BLE connected, requesting vehicle public key')
@@ -385,9 +284,6 @@ class TeslaSession {
     
     const doFetch = function() {
       console.log('[SESSION] Requesting vehicle public key via GetWhitelistEntryInfo...')
-      
-      // Build InformationRequest with GET_WHITELIST_ENTRY_INFO
-      // Per Tesla SDK: use slot=0 to request the enrolled key info (not keyId or publicKey)
       const infoRequest = buildInformationRequest(
         INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
         null,
@@ -405,24 +301,15 @@ class TeslaSession {
           callback({ success: false, error: 'Failed to get whitelist entry info' })
           return
         }
-        
-        // Response is FromVCSECMessage (may be wrapped in RoutableMessage field 10)
-        // Parse to find field 17 (WhitelistEntryInfo)
         try {
           let fields = decodeMessage(r.data)
-          
-          // If wrapped in RoutableMessage, field 10 contains FromVCSECMessage
           if (fields[10] instanceof Uint8Array) {
             fields = decodeMessage(fields[10])
           }
-          
-          // Look for field 17 (WhitelistEntryInfo)
           if (fields[17] instanceof Uint8Array) {
             const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
             if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
               self.vehiclePublicKey = wlEntryInfo.publicKey
-              
-              // Save to storage for future use
               const keyHex = Array.from(self.vehiclePublicKey, x => byteToHex(x)).join('')
               self.storage.setItem('vehicle_ec_public_key', keyHex)
               
@@ -444,12 +331,8 @@ class TeslaSession {
     
     ensureConnectedAndFetch()
   }
-
-  // Initiate session handshake
   requestSessionInfo(callback) {
     const self = this
-    
-    // Ensure BLE is connected to vehicle
     const ensureConnected = function() {
       if (teslaBLE.isConnected()) {
         console.log('[SESSION] ✓ BLE already connected and ready')
@@ -462,8 +345,6 @@ class TeslaSession {
         callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
         return
       }
-      
-      // Aggressively clean BLE state
       console.log('[SESSION] Cleaning BLE state...')
       try {
         teslaBLE.stopScan() // Stop any running scan
@@ -471,8 +352,6 @@ class TeslaSession {
         console.log('[SESSION] stopScan error (ignored):', e.message || e)
       }
       teslaBLE.disconnect() // Disconnect and cleanup
-      
-      // Wait for BLE stack to fully reset
       setTimeout(function() {
         console.log('[SESSION] Connecting to vehicle: ' + mac)
         teslaBLE.connect(mac, function(result) {
@@ -483,9 +362,6 @@ class TeslaSession {
             callback({ success: false, error: 'BLE connection failed: ' + (result.error || 'unknown') })
             return
           }
-          
-          // Connection successful - BLE is ready (CCCD confirmed, listener active)
-          // Immediately proceed to avoid vehicle disconnecting us
           console.log('[SESSION] ✓ Connected to vehicle, proceeding immediately')
           proceedWithSession()
         })
@@ -493,124 +369,80 @@ class TeslaSession {
     }
     
     const proceedWithSession = function() {
-      // Try to load vehicle's EC public key from storage (obtained during pairing)
-      // If missing, attempt to fetch via GetWhitelistEntryInfo
       if (!self.vehiclePublicKey) {
         self.loadVehiclePublicKey() // Loads from storage if available
-        
-        // If still missing, try to fetch via GetWhitelistEntryInfo
         if (!self.vehiclePublicKey) {
           console.log('[SESSION] Vehicle EC key not in storage, attempting to fetch via GetWhitelistEntryInfo...')
           return self.requestVehiclePublicKey(function(keyResult) {
             if (keyResult.success) {
               console.log('[SESSION] Successfully obtained vehicle public key, now requesting session info...')
-              // Recursively call proceedWithSession with the key now available
               proceedWithSession()
             } else {
               console.log('[SESSION] Failed to fetch vehicle EC key, continuing with fallback...')
-              // Continue with session request using SessionInfo ephemeral key fallback
               self._doSessionInfoRequest(callback)
             }
           })
         }
       }
-      
-      // EC key is available (either from storage or just fetched), proceed with session request
       self._doSessionInfoRequest(callback)
     }
     
     ensureConnected()
   }
-
   _doSessionInfoRequest(callback) {
-    let keypair = this.popKeyFromPool()
+    const keypair = this.popKeyFromPool()
     if (!keypair) {
-      // No pre-generated pool: generate fresh ephemeral keypair on watch
-      console.log('[SESSION] Key pool empty, generating fresh ephemeral keypair on watch')
-      keypair = this._generateEphemeralKeypair()
-      if (!keypair) {
-        callback({ success: false, error: 'Failed to generate ephemeral keypair' })
-        return
-      }
+      callback({ success: false, error: 'Key pool empty — sync from phone (GEN POOL)' })
+      return
     }
-
     this.ephemeralPrivateKey = keypair.privateKeyBytes  // Uint8Array[32]
     this.ephemeralPublicKey  = keypair.publicKeyBytes   // Uint8Array[65]
-
-    // Generate routing address
     this.routingAddress = generateRoutingAddress()
-
-    // Generate UUID for this request
     const uuid = generateUUID()
-
-    // Build session info request
-    // NOTE: Tesla SDK only sends publicKey, NOT challenge (even though proto defines it)
-    // Challenge field is optional and unused by vehicle
     const sessionInfoRequest = buildSessionInfoRequest(
       this.ephemeralPublicKey,
       null // NO challenge - matches Tesla SDK behavior
     )
-
-    // Build routable message
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
       sessionInfoRequest: sessionInfoRequest,
       uuid: uuid
     })
-
-    // Debug: log the request being sent
     const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => byteToHex(x)).join('')
     console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
-
-    // Send via BLE
     const self = this
     teslaBLE.send(message, function sessionInfoResponseHandler(result) {
       if (!result.success) {
         callback({ success: false, error: result.error })
         return
       }
-
-      // Parse response
       try {
-        // Debug: dump raw message bytes as hex
         const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
         console.log('[SESSION] Raw response hex: ' + dataHex)
         
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
-        
-        // Debug: dump raw response fields
         const rawFields = decodeMessage(result.data)
         const fieldKeys = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(',')
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
-        
-        // If we only got field 3 (vehicle status push), re-register callback and wait for SessionInfo response
         if (rawFields[3] && !response.sessionInfo && !response.payload && !response.signedMessageStatus) {
           console.log('[SESSION] Received status push (field 3 only), waiting for SessionInfo response...')
-          // Re-register callback to catch the next response
           teslaBLE.responseCallback = sessionInfoResponseHandler
           return
         }
         
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
-
         if (response.sessionInfo) {
-          // Try to use vehicle public key from response first
           if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
             this.vehiclePublicKey = response.sessionInfo.publicKey
             console.log('[SESSION] Got vehicle public key from SessionInfo response')
-            
-            // If we don't have vehicle EC key in storage yet, save this ephemeral key
-            // as a fallback. In production, this should be the long-term key from pairing.
-            // But if pairing doesn't provide field 17, we use ephemeral as proxy.
             if (!this.storage.getItem('vehicle_ec_public_key')) {
               const keyHex = Array.from(response.sessionInfo.publicKey, x => byteToHex(x)).join('')
               this.storage.setItem('vehicle_ec_public_key', keyHex)
               console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
             }
           } else {
-            // SessionInfo response doesn't have valid key - try loading from storage (pairing result)
             console.log('[SESSION] SessionInfo response has no valid public key')
             if (!this.vehiclePublicKey) { // Not already loaded
               const keyLoaded = this.loadVehiclePublicKey()
@@ -626,8 +458,6 @@ class TeslaSession {
           this.epoch = response.sessionInfo.epoch
           this.counter = response.sessionInfo.counter
           this.clockTime = response.sessionInfo.clockTime
-          
-          // Debug: log public key details
           if (this.vehiclePublicKey) {
             console.log('[SESSION] Vehicle public key length: ' + this.vehiclePublicKey.length + ' bytes')
             const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
@@ -635,31 +465,21 @@ class TeslaSession {
           } else {
             console.log('[SESSION] ERROR: vehiclePublicKey is null/undefined')
           }
-
-          // Validate public key before ECDH
           if (!this.vehiclePublicKey || this.vehiclePublicKey.length !== 65) {
             const actualLength = this.vehiclePublicKey ? this.vehiclePublicKey.length : 0
             console.log('[SESSION] ❌ INVALID PUBLIC KEY: ' + actualLength + ' bytes, need 65')
             callback({ success: false, error: 'Invalid vehicle public key: ' + actualLength + ' bytes' })
             return
           }
-
-          // Derive session key: K = SHA1(ECDH_x)[:16]
-          // Fast path: use precomputed doublings table if available (eliminates all doublings)
           const _ecdhTable = this.loadDoublingsTable()
-          let sharedSecret
-          if (_ecdhTable) {
-            console.log('[SESSION] ECDH: Using FAST path (precomputed table, ~128 additions, 0 doublings)')
-            sharedSecret = ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
-          } else {
-            console.log('[SESSION] ECDH: Using standard path (256 doublings + 64 additions, ~8 seconds)')
-            sharedSecret = ecdh(this.ephemeralPrivateKey, this.vehiclePublicKey)
+          if (!_ecdhTable) {
+            callback({ success: false, error: 'No ECDH table — re-pair to generate' })
+            return
           }
+          const sharedSecret = ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
           const keyMaterial = sha1(sharedSecret)
           this.sessionKey = keyMaterial.slice(0, 16)
-
           this.established = true
-
           console.log('[SESSION] Established: counter=' + this.counter + ', epoch=' + bytesToHex(this.epoch).slice(0, 8))
           callback({
             success: true,
@@ -667,14 +487,11 @@ class TeslaSession {
             epoch: bytesToHex(this.epoch)
           })
         } else {
-          // SessionInfo not found - provide detailed diagnostic info
           const rawFields = decodeMessage(result.data)
           const fieldList = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(', ')
           console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
           console.log('[SESSION] Fields present: [' + fieldList + ']')
           console.log('[SESSION] payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
-          
-          // Try to provide helpful debugging info
           if (rawFields[10]) {
             console.log('[SESSION] Field 10 (payload) present - SessionInfo might be nested, but couldn\'t extract')
           }
@@ -690,23 +507,13 @@ class TeslaSession {
       }
     }.bind(this))
   }
-
-  // Build authenticated command
   buildAuthenticatedCommand(rkeAction) {
     if (!this.established) {
       throw new Error('Session not established')
     }
-
-    // Increment counter
     this.counter++
-
-    // Build the unsigned VCSEC message
     const unsignedMessage = buildUnsignedMessage({ rkeAction })
-
-    // Expiration: 60 seconds from vehicle clock
     const expiresAt = this.clockTime + 60
-
-    // Build signed message wrapper (without signature first, for HMAC input)
     const signedMessage = buildSignedMessage({
       payload: unsignedMessage,
       signatureType: SIGNATURE_TYPE_HMAC,
@@ -714,11 +521,7 @@ class TeslaSession {
       epoch: this.epoch,
       expiresAt: expiresAt
     })
-
-    // Calculate HMAC over the signed message
     const hmac = hmacSha256(this.sessionKey, signedMessage)
-
-    // Rebuild with signature
     const authenticatedMessage = buildSignedMessage({
       payload: unsignedMessage,
       signatureType: SIGNATURE_TYPE_HMAC,
@@ -727,11 +530,7 @@ class TeslaSession {
       epoch: this.epoch,
       expiresAt: expiresAt
     })
-
-    // Wrap in ToVCSECMessage
     const toVcsec = buildToVCSECMessage(authenticatedMessage)
-
-    // Build final routable message
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
@@ -739,21 +538,16 @@ class TeslaSession {
       uuid: generateUUID()
     })
   }
-
-  // Send authenticated command
   sendCommand(rkeAction, callback) {
     const self = this
-
     const doSend = function() {
       try {
         const message = self.buildAuthenticatedCommand(rkeAction)
-
         teslaBLE.send(message, function(result) {
           if (!result.success) {
             callback({ success: false, error: result.error })
             return
           }
-
           try {
             const response = parseRoutableMessage(result.data)
             callback({ success: true, response })
@@ -765,8 +559,6 @@ class TeslaSession {
         callback({ success: false, error: e.message })
       }
     }
-
-    // Establish session if needed
     if (!this.established) {
       this.requestSessionInfo(function(result) {
         if (!result.success) {
@@ -779,34 +571,24 @@ class TeslaSession {
       doSend()
     }
   }
-
-  // Convenience methods for specific actions
   sendRKECommand(action, callback) {
     this.sendCommand(action, callback)
   }
-
   lock(callback) {
     this.sendCommand(RKE_ACTION_LOCK, callback)
   }
-
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
   }
-
   openTrunk(callback) {
     this.sendCommand(RKE_ACTION_OPEN_TRUNK, callback)
   }
-
   openFrunk(callback) {
     this.sendCommand(RKE_ACTION_OPEN_FRUNK, callback)
   }
-
-  // Check if session is active
   isEstablished() {
     return this.established
   }
-
-  // Get session status
   getStatus() {
     return {
       established: this.established,
@@ -816,9 +598,6 @@ class TeslaSession {
     }
   }
 }
-
-// Singleton
 const teslaSession = new TeslaSession()
-
 export { TeslaSession }
 export default teslaSession

@@ -1,22 +1,5 @@
-// P-256 ECDH — watch-side only (no key generation needed, phone provides keypairs)
-// wNAF-4 for arbitrary-point scalar multiplication (ECDH)
-// Jacobian coordinates, special NIST P-256 reduction, Float64 intermediate multiplication
-
-// Profiling counters (set to window.__ECDH_PROFILE = {} to enable)
-let _profile = null
-const _setProfile = (p) => { _profile = p }
-
-// wNAF width configuration (4, 5, or 9)
-let _WNAF_WIDTH = 4
-const _setWNAFWidth = (w) => {
-  if (w !== 4 && w !== 5 && w !== 9) throw new Error('Only wNAF-4, wNAF-5, and wNAF-9 supported')
-  _WNAF_WIDTH = w
-}
 
 const P = new Uint32Array([0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 0, 1, 0xFFFFFFFF])
-const N = new Uint32Array([0xFC632551, 0xF3B9CAC2, 0xA7179E84, 0xBCE6FAAD, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0xFFFFFFFF])
-
-// Basic 256-bit operations (unrolled)
 const cmp = (a, b) => {
   if (a[7] < b[7]) return -1; if (a[7] > b[7]) return 1
   if (a[6] < b[6]) return -1; if (a[6] > b[6]) return 1
@@ -56,20 +39,16 @@ const sub = (r, a, b) => {
 }
 const modAdd = (r, a, b) => { if (add(r, a, b) || cmp(r, P) >= 0) sub(r, r, P) }
 const modSub = (r, a, b) => { if (sub(r, a, b)) add(r, r, P) }
-
-// 256x256 -> 512 bit multiplication - no Math.floor/modulo in hot path
 const _m = new Uint32Array(16)
 const _t = new Float64Array(17)
 const M32 = 2.3283064365386963e-10  // 1/2^32
 const mul256 = (r, a, b) => {
-  // Manual reset instead of fill (faster - avoid function call overhead)
   for (let i = 0; i < 16; i++) _t[i] = 0
   for (let i = 0; i < 8; i++) {
     const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
     for (let j = 0; j < 8; j++) {
       const bj = b[j], bl = bj & 0xFFFF, bh = bj >>> 16
       const ll = al * bl, lh = al * bh, hl = ah * bl, hh = ah * bh
-      // Split mid = lh + hl using bitwise ops (each < 2^32)
       const lhL = lh & 0xFFFF, lhH = lh >>> 16
       const hlL = hl & 0xFFFF, hlH = hl >>> 16
       let mL = lhL + hlL
@@ -79,7 +58,6 @@ const mul256 = (r, a, b) => {
       _t[i + j + 1] += hh + mH
     }
   }
-  // Carry propagation (unrolled)
   let c = 0, v
   v = _t[0]; r[0] = v >>> 0; c = (v * M32) | 0
   v = _t[1] + c; r[1] = v >>> 0; c = (v * M32) | 0
@@ -98,19 +76,14 @@ const mul256 = (r, a, b) => {
   v = _t[14] + c; r[14] = v >>> 0; c = (v * M32) | 0
   v = _t[15] + c; r[15] = v >>> 0
 }
-
-// Specialized squaring - exploits symmetry for ~1.5x speedup
 const sqr256 = (r, a) => {
-  // Manual reset instead of fill (faster - avoid function call)
   for (let i = 0; i < 16; i++) _t[i] = 0
   for (let i = 0; i < 8; i++) {
     const ai = a[i], al = ai & 0xFFFF, ah = ai >>> 16
-    // Diagonal: a[i] * a[i]
     const ll = al * al, lh = al * ah, hh = ah * ah
     const mL = (lh & 0xFFFF) * 2, mH = (lh >>> 16) * 2 + (mL >>> 16)
     _t[i * 2] += ll + (mL & 0xFFFF) * 65536
     _t[i * 2 + 1] += hh + mH
-    // Off-diagonal: 2 * a[i] * a[j] for j > i
     for (let j = i + 1; j < 8; j++) {
       const bj = a[j], bl = bj & 0xFFFF, bh = bj >>> 16
       const ll2 = al * bl, lh2 = al * bh, hl2 = ah * bl, hh2 = ah * bh
@@ -119,12 +92,10 @@ const sqr256 = (r, a) => {
       let mL2 = lhL + hlL
       const mH2 = lhH + hlH + (mL2 >>> 16)
       mL2 &= 0xFFFF
-      // Multiply by 2 for symmetry
       _t[i + j] += (ll2 + mL2 * 65536) * 2
       _t[i + j + 1] += (hh2 + mH2) * 2
     }
   }
-  // Carry propagation (unrolled)
   let c = 0, v
   v = _t[0]; r[0] = v >>> 0; c = (v * M32) | 0
   v = _t[1] + c; r[1] = v >>> 0; c = (v * M32) | 0
@@ -143,11 +114,8 @@ const sqr256 = (r, a) => {
   v = _t[14] + c; r[14] = v >>> 0; c = (v * M32) | 0
   v = _t[15] + c; r[15] = v >>> 0
 }
-
 const reduce = (r, t) => {
   const c8=t[8], c9=t[9], c10=t[10], c11=t[11], c12=t[12], c13=t[13], c14=t[14], c15=t[15]
-
-  // Combined NIST terms
   const a0 = t[0] + c8 + c9 - c11 - c12 - c13 - c14
   const a1 = t[1] + c9 + c10 - c12 - c13 - c14 - c15
   const a2 = t[2] + c10 + c11 - c13 - c14 - c15
@@ -156,8 +124,6 @@ const reduce = (r, t) => {
   const a5 = t[5] + 2*(c13 + c14) + c15 - c10 - c11
   const a6 = t[6] + 3*c14 + 2*c15 + c13 - c8 - c9
   const a7 = t[7] + 3*c15 + c8 - c10 - c11 - c12 - c13
-
-  // Carry propagation using reciprocal
   const M = 2.3283064365386963e-10
   let c, v
   v = a0; c = (v * M) | 0; if (v < 0) c--; r[0] = (v - c * 0x100000000) >>> 0
@@ -168,32 +134,21 @@ const reduce = (r, t) => {
   v = a5 + c; c = (v * M) | 0; if (v < 0) c--; r[5] = (v - c * 0x100000000) >>> 0
   v = a6 + c; c = (v * M) | 0; if (v < 0) c--; r[6] = (v - c * 0x100000000) >>> 0
   v = a7 + c; c = (v * M) | 0; if (v < 0) c--; r[7] = (v - c * 0x100000000) >>> 0
-
-  // Final adjustment
   while (c > 0) { c -= sub(r, r, P) }
   while (c < 0) { c += add(r, r, P) }
   if (cmp(r, P) >= 0) sub(r, r, P)
 }
-
 const modMul = (r, a, b) => { mul256(_m, a, b); reduce(r, _m) }
 const modSqr = (r, a) => { sqr256(_m, a); reduce(r, _m) }
-
-// Right shift by 1 (unrolled)
 const shr1 = (a) => {
   a[0]=(a[0]>>>1)|((a[1]&1)<<31);a[1]=(a[1]>>>1)|((a[2]&1)<<31)
   a[2]=(a[2]>>>1)|((a[3]&1)<<31);a[3]=(a[3]>>>1)|((a[4]&1)<<31)
   a[4]=(a[4]>>>1)|((a[5]&1)<<31);a[5]=(a[5]>>>1)|((a[6]&1)<<31)
   a[6]=(a[6]>>>1)|((a[7]&1)<<31);a[7]>>>=1
 }
-
-// ModInv using binary extended GCD
 const _inv_u = new Uint32Array(8), _inv_v = new Uint32Array(8)
 const _inv_x1 = new Uint32Array(8), _inv_x2 = new Uint32Array(8)
-
 const modInv = (r, a) => {
-  if (_profile) _profile.modInv_calls = (_profile.modInv_calls || 0) + 1
-  const t0 = _profile ? Date.now() : 0
-  
   copy(_inv_u, a); copy(_inv_v, P)
   _inv_x1[0]=1;_inv_x1[1]=_inv_x1[2]=_inv_x1[3]=_inv_x1[4]=_inv_x1[5]=_inv_x1[6]=_inv_x1[7]=0
   _inv_x2[0]=_inv_x2[1]=_inv_x2[2]=_inv_x2[3]=_inv_x2[4]=_inv_x2[5]=_inv_x2[6]=_inv_x2[7]=0
@@ -216,317 +171,39 @@ const modInv = (r, a) => {
     else { sub(_inv_v, _inv_v, _inv_u); modSub(_inv_x2, _inv_x2, _inv_x1) }
   }
   copy(r, isZero(_inv_u) ? _inv_x2 : _inv_x1)
-  
-  if (_profile) _profile.modInv_ms = (_profile.modInv_ms || 0) + (Date.now() - t0)
 }
-
-// Point operations in Jacobian coordinates
 const _dbl_A = new Uint32Array(8), _dbl_B = new Uint32Array(8)
 const _dbl_C = new Uint32Array(8), _dbl_D = new Uint32Array(8), _dbl_t = new Uint32Array(8)
-
 const jacDbl = (RX, RY, RZ, X, Y, Z) => {
-  if (_profile) _profile.jacDbl_calls = (_profile.jacDbl_calls || 0) + 1
   if (isZero(Z)) { for (let i = 0; i < 8; i++) RZ[i] = 0; return }
-  // A = Y^2, B = 4*X*Y^2, C = 8*Y^4
-  const t0 = _profile ? Date.now() : 0
   modSqr(_dbl_A, Y)
-  if (_profile) _profile.dbl_sqr_A_ms = (_profile.dbl_sqr_A_ms || 0) + (Date.now() - t0)
-  
-  const t1 = _profile ? Date.now() : 0
   modMul(_dbl_B, X, _dbl_A); modAdd(_dbl_B, _dbl_B, _dbl_B); modAdd(_dbl_B, _dbl_B, _dbl_B)
-  if (_profile) _profile.dbl_mul_B_ms = (_profile.dbl_mul_B_ms || 0) + (Date.now() - t1)
-  
-  const t2 = _profile ? Date.now() : 0
   modSqr(_dbl_C, _dbl_A); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C); modAdd(_dbl_C, _dbl_C, _dbl_C)
-  if (_profile) _profile.dbl_sqr_C_ms = (_profile.dbl_sqr_C_ms || 0) + (Date.now() - t2)
-  
-  // D = 3*(X-Z^2)*(X+Z^2) for a=-3
-  const t3 = _profile ? Date.now() : 0
   modSqr(_dbl_t, Z); modSub(_dbl_D, X, _dbl_t); modAdd(_dbl_t, X, _dbl_t)
   modMul(_dbl_D, _dbl_D, _dbl_t); modAdd(_dbl_t, _dbl_D, _dbl_D); modAdd(_dbl_D, _dbl_t, _dbl_D)
-  if (_profile) _profile.dbl_mul_D_ms = (_profile.dbl_mul_D_ms || 0) + (Date.now() - t3)
-  
-  // X' = D^2 - 2*B, Y' = D*(B-X') - C, Z' = 2*Y*Z
-  const t4 = _profile ? Date.now() : 0
   modSqr(RX, _dbl_D); modSub(RX, RX, _dbl_B); modSub(RX, RX, _dbl_B)
   modSub(_dbl_t, _dbl_B, RX); modMul(RY, _dbl_D, _dbl_t); modSub(RY, RY, _dbl_C)
   modMul(RZ, Y, Z); modAdd(RZ, RZ, RZ)
-  if (_profile) _profile.dbl_final_ms = (_profile.dbl_final_ms || 0) + (Date.now() - t4)
 }
-
 const _madd_t = new Uint32Array(8), _madd_t2 = new Uint32Array(8)
 const _madd_H = new Uint32Array(8), _madd_R = new Uint32Array(8), _madd_V = new Uint32Array(8)
-
 const jacAddAffine = (RX, RY, RZ, X1, Y1, Z1, X2, Y2) => {
-  if (_profile) _profile.jacAdd_calls = (_profile.jacAdd_calls || 0) + 1
   if (isZero(Z1)) { copy(RX, X2); copy(RY, Y2); RZ[0] = 1; for (let i = 1; i < 8; i++) RZ[i] = 0; return }
-  
-  const t0 = _profile ? Date.now() : 0
   modSqr(_madd_t, Z1); modMul(_madd_t2, X2, _madd_t)
   modSub(_madd_H, _madd_t2, X1)
   modMul(_madd_t, _madd_t, Z1); modMul(_madd_t2, Y2, _madd_t)
   modSub(_madd_R, _madd_t2, Y1)
-  if (_profile) _profile.add_setup_ms = (_profile.add_setup_ms || 0) + (Date.now() - t0)
-  
   if (isZero(_madd_H)) { if (isZero(_madd_R)) { jacDbl(RX, RY, RZ, X1, Y1, Z1) } else { for (let i = 0; i < 8; i++) RZ[i] = 0 } return }
-  
-  const t1 = _profile ? Date.now() : 0
   modSqr(_madd_t, _madd_H)
   modMul(_madd_V, X1, _madd_t)
   modMul(_madd_t2, _madd_t, _madd_H)
   modSqr(RX, _madd_R); modSub(RX, RX, _madd_t2); modSub(RX, RX, _madd_V); modSub(RX, RX, _madd_V)
   modSub(_madd_t, _madd_V, RX); modMul(RY, _madd_R, _madd_t); modMul(_madd_t, Y1, _madd_t2); modSub(RY, RY, _madd_t)
   modMul(RZ, Z1, _madd_H)
-  if (_profile) _profile.add_compute_ms = (_profile.add_compute_ms || 0) + (Date.now() - t1)
 }
-
-// Buffers for scalar multiplication
 const _RX = new Uint32Array(8), _RY = new Uint32Array(8), _RZ = new Uint32Array(8)
 const _TX = new Uint32Array(8), _TY = new Uint32Array(8), _TZ = new Uint32Array(8)
 const _zi = new Uint32Array(8), _zi2 = new Uint32Array(8), _zi3 = new Uint32Array(8)
-
-
-const _buf_x = [_RX, _TX]
-const _buf_y = [_RY, _TY]
-const _buf_z = [_RZ, _TZ]
-
-// ============================================
-// wNAF for general scalar multiplication (ECDH)
-// Supports wNAF-4 (8 points) or wNAF-9 (256 points)
-// ============================================
-const _wnaf = new Int16Array(257)
-const _wnaf_w = new Uint32Array(9)
-
-// Dynamically allocate based on width
-const _pre = {
-  x: Array.from({ length: 256 }, () => new Uint32Array(8)),
-  y: Array.from({ length: 256 }, () => new Uint32Array(8)),
-  ny: Array.from({ length: 256 }, () => new Uint32Array(8))
-}
-const _pre_tx = new Uint32Array(8), _pre_ty = new Uint32Array(8), _pre_tz = new Uint32Array(8)
-const _pre_2x = new Uint32Array(8), _pre_2y = new Uint32Array(8), _pre_2z = new Uint32Array(8)
-const _batch_z = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _batch_x = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _batch_y = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _batch_prod = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _batch_inv = new Uint32Array(8), _batch_t = new Uint32Array(8)
-
-const toWNAF = (k) => {
-  for (let i = 0; i < 8; i++) _wnaf_w[i] = k[i]
-  _wnaf_w[8] = 0
-  const w = _wnaf_w
-  let len = 0
-  
-  const width = _WNAF_WIDTH
-  const mask = (1 << width) - 1
-  const halfMask = 1 << (width - 1)
-  
-  while (w[0] || w[1] || w[2] || w[3] || w[4] || w[5] || w[6] || w[7] || w[8]) {
-    if (w[0] & 1) {
-      let digit = w[0] & mask
-      if (digit >= halfMask) digit -= (halfMask << 1)
-      _wnaf[len] = digit
-      if (digit > 0) {
-        w[0] = (w[0] - digit) >>> 0
-      } else {
-        let c = -digit
-        for (let i = 0; i < 9 && c; i++) { const s = w[i] + c; w[i] = s >>> 0; c = s > 0xFFFFFFFF ? 1 : 0 }
-      }
-    } else {
-      _wnaf[len] = 0
-    }
-    // Shift right by width bits (or width/2 if width is even, to maintain word-by-word shifting for efficiency)
-    // Actually, for correctness, we should shift right by 1 bit to keep the standard binary representation
-    // and just rely on width to determine the lookahead distance
-    for (let i = 0; i < 8; i++) w[i] = (w[i] >>> 1) | ((w[i + 1] & 1) << 31)
-    w[8] >>>= 1
-    len++
-  }
-  return len
-}
-
-const precompute = (Px, Py) => {
-  if (_WNAF_WIDTH === 5) {
-    precompute8(Px, Py)
-  } else {
-    precompute4(Px, Py)
-  }
-}
-
-// Original wNAF-4 (proven, unchanged)
-const precompute4 = (Px, Py) => {
-  copy(_pre.x[0], Px); copy(_pre.y[0], Py); sub(_pre.ny[0], P, Py)
-  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
-  jacDbl(_pre_2x, _pre_2y, _pre_2z, Px, Py, _pre_tz)
-  modInv(_pre9_zi, _pre_2z); modSqr(_pre9_zi2, _pre9_zi)
-  modMul(_pre_tx, _pre_2x, _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi)
-  modMul(_pre_ty, _pre_2y, _pre9_zi)
-  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
-  jacAddAffine(_batch_x[0], _batch_y[0], _batch_z[0], Px, Py, _pre_tz, _pre_tx, _pre_ty)
-  jacAddAffine(_batch_x[1], _batch_y[1], _batch_z[1], _batch_x[0], _batch_y[0], _batch_z[0], _pre_tx, _pre_ty)
-  jacAddAffine(_batch_x[2], _batch_y[2], _batch_z[2], _batch_x[1], _batch_y[1], _batch_z[1], _pre_tx, _pre_ty)
-  copy(_batch_prod[0], _batch_z[0])
-  modMul(_batch_prod[1], _batch_prod[0], _batch_z[1])
-  modMul(_batch_prod[2], _batch_prod[1], _batch_z[2])
-  modInv(_batch_inv, _batch_prod[2])
-  modMul(_pre9_zi, _batch_prod[1], _batch_inv)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[3], _batch_x[2], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[3], _batch_y[2], _pre9_zi)
-  sub(_pre.ny[3], P, _pre.y[3])
-  modMul(_batch_t, _batch_z[2], _batch_inv)
-  modMul(_pre9_zi, _batch_prod[0], _batch_t)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[2], _batch_x[1], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[2], _batch_y[1], _pre9_zi)
-  sub(_pre.ny[2], P, _pre.y[2])
-  modMul(_pre9_zi, _batch_z[1], _batch_t)
-  modSqr(_pre9_zi2, _pre9_zi); modMul(_pre.x[1], _batch_x[0], _pre9_zi2)
-  modMul(_pre9_zi, _pre9_zi2, _pre9_zi); modMul(_pre.y[1], _batch_y[0], _pre9_zi)
-  sub(_pre.ny[1], P, _pre.y[1])
-}
-
-// Allocate extra buffers for wNAF-5 precomputation (8 points via batch inversion)
-const _pre5_buf_x = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), 
-                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _pre5_buf_y = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8),
-                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _pre5_buf_z = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8),
-                      new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _pre5_prod = [new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), new Uint32Array(8), 
-                     new Uint32Array(8), new Uint32Array(8), new Uint32Array(8)]
-const _pre5_inv = new Uint32Array(8), _pre5_t = new Uint32Array(8)
-const _pre5_2x = new Uint32Array(8), _pre5_2y = new Uint32Array(8), _pre5_2z = new Uint32Array(8)
-const _pre9_zi = new Uint32Array(8), _pre9_zi2 = new Uint32Array(8) // Needed for both precompute8 and other uses
-
-// wNAF-5: Precompute 8 odd multiples {P, 3P, 5P, 7P, 9P, 11P, 13P, 15P}
-// Uses batch inversion: 1 modInv + 6 modMul for all 7 points
-const precompute8 = (Px, Py) => {
-  // Step 1: Compute 2P
-  copy(_pre.x[0], Px); copy(_pre.y[0], Py); sub(_pre.ny[0], P, Py)
-  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
-  jacDbl(_pre5_2x, _pre5_2y, _pre5_2z, Px, Py, _pre_tz)
-  
-  // Step 2: Convert 2P to affine
-  modInv(_pre5_t, _pre5_2z); modSqr(_pre5_inv, _pre5_t)
-  modMul(_pre_tx, _pre5_2x, _pre5_inv)
-  modMul(_pre5_t, _pre5_inv, _pre5_t)
-  modMul(_pre_ty, _pre5_2y, _pre5_t)
-  
-  // Step 3: Compute odd multiples: 3P, 5P, 7P, 9P, 11P, 13P, 15P
-  _pre_tz[0] = 1; for (let i = 1; i < 8; i++) _pre_tz[i] = 0
-  jacAddAffine(_pre5_buf_x[0], _pre5_buf_y[0], _pre5_buf_z[0], Px, Py, _pre_tz, _pre_tx, _pre_ty) // 3P
-  jacAddAffine(_pre5_buf_x[1], _pre5_buf_y[1], _pre5_buf_z[1], _pre5_buf_x[0], _pre5_buf_y[0], _pre5_buf_z[0], _pre_tx, _pre_ty) // 5P
-  jacAddAffine(_pre5_buf_x[2], _pre5_buf_y[2], _pre5_buf_z[2], _pre5_buf_x[1], _pre5_buf_y[1], _pre5_buf_z[1], _pre_tx, _pre_ty) // 7P
-  jacAddAffine(_pre5_buf_x[3], _pre5_buf_y[3], _pre5_buf_z[3], _pre5_buf_x[2], _pre5_buf_y[2], _pre5_buf_z[2], _pre_tx, _pre_ty) // 9P
-  jacAddAffine(_pre5_buf_x[4], _pre5_buf_y[4], _pre5_buf_z[4], _pre5_buf_x[3], _pre5_buf_y[3], _pre5_buf_z[3], _pre_tx, _pre_ty) // 11P
-  jacAddAffine(_pre5_buf_x[5], _pre5_buf_y[5], _pre5_buf_z[5], _pre5_buf_x[4], _pre5_buf_y[4], _pre5_buf_z[4], _pre_tx, _pre_ty) // 13P
-  jacAddAffine(_pre5_buf_x[6], _pre5_buf_y[6], _pre5_buf_z[6], _pre5_buf_x[5], _pre5_buf_y[5], _pre5_buf_z[5], _pre_tx, _pre_ty) // 15P
-  
-  // Step 4: Batch invert all 7 Z coordinates with 1 modInv + 6 modMul
-  copy(_pre5_prod[0], _pre5_buf_z[0])
-  modMul(_pre5_prod[1], _pre5_prod[0], _pre5_buf_z[1])
-  modMul(_pre5_prod[2], _pre5_prod[1], _pre5_buf_z[2])
-  modMul(_pre5_prod[3], _pre5_prod[2], _pre5_buf_z[3])
-  modMul(_pre5_prod[4], _pre5_prod[3], _pre5_buf_z[4])
-  modMul(_pre5_prod[5], _pre5_prod[4], _pre5_buf_z[5])
-  modMul(_pre5_prod[6], _pre5_prod[5], _pre5_buf_z[6])
-  modInv(_pre5_inv, _pre5_prod[6])
-  
-  // Back-substitute to get individual inversions
-  modMul(_pre5_t, _pre5_prod[5], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_buf_z[6])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[7], _pre5_buf_x[6], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[7], _pre5_buf_y[6], _pre5_t)
-  sub(_pre.ny[7], P, _pre.y[7])
-  
-  modMul(_pre5_t, _pre5_prod[4], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[6], _pre5_buf_x[5], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[6], _pre5_buf_y[5], _pre5_t)
-  sub(_pre.ny[6], P, _pre.y[6])
-  
-  modMul(_pre5_t, _pre5_prod[3], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[5], _pre5_buf_x[4], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[5], _pre5_buf_y[4], _pre5_t)
-  sub(_pre.ny[5], P, _pre.y[5])
-  
-  modMul(_pre5_t, _pre5_prod[2], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[4], _pre5_buf_x[3], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[4], _pre5_buf_y[3], _pre5_t)
-  sub(_pre.ny[4], P, _pre.y[4])
-  
-  modMul(_pre5_t, _pre5_prod[1], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[3], _pre5_buf_x[2], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[3], _pre5_buf_y[2], _pre5_t)
-  sub(_pre.ny[3], P, _pre.y[3])
-  
-  modMul(_pre5_t, _pre5_prod[0], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[2], _pre5_buf_x[1], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[2], _pre5_buf_y[1], _pre5_t)
-  sub(_pre.ny[2], P, _pre.y[2])
-  
-  modMul(_pre5_t, _pre5_buf_z[0], _pre5_inv)
-  modMul(_pre5_t, _pre5_t, _pre5_prod[0])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[1])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[2])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[3])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[4])
-  modMul(_pre5_t, _pre5_t, _pre5_prod[5])
-  modSqr(_pre9_zi2, _pre5_t); modMul(_pre.x[1], _pre5_buf_x[0], _pre9_zi2)
-  modMul(_pre5_t, _pre9_zi2, _pre5_t); modMul(_pre.y[1], _pre5_buf_y[0], _pre5_t)
-  sub(_pre.ny[1], P, _pre.y[1])
-}
-// wNAF-9: disabled due to implementation bugs
-// Original plan was to optimize precomputation with 256 points instead of 4,
-// but current implementation produces incorrect ECDH results
-// TODO: Implement correct Montgomery batch inversion for all 256 Z-coordinates
-// Or implement point caching instead (store precomputed points to persistent storage)
-
-const scalarMul = (rx, ry, k, Px, Py) => {
-  const tStart = _profile ? Date.now() : 0
-  precompute(Px, Py)
-  const wnafLen = toWNAF(k)
-  const preX = _pre.x, preY = _pre.y, preNY = _pre.ny
-  let c = 0
-  for (let i = 0; i < 8; i++) { _buf_x[0][i] = 0; _buf_y[0][i] = 0; _buf_z[0][i] = 0 }
-  for (let i = wnafLen - 1; i >= 0; i--) {
-    const n = 1 - c
-    jacDbl(_buf_x[n], _buf_y[n], _buf_z[n], _buf_x[c], _buf_y[c], _buf_z[c])
-    c = n
-    const d = _wnaf[i]
-    if (d !== 0) {
-      const nn = 1 - c
-      const idx = ((d < 0 ? -d : d) - 1) >> 1
-      const px = preX[idx], py = d > 0 ? preY[idx] : preNY[idx]
-      jacAddAffine(_buf_x[nn], _buf_y[nn], _buf_z[nn], _buf_x[c], _buf_y[c], _buf_z[c], px, py)
-      c = nn
-    }
-  }
-  const curX = _buf_x[c], curY = _buf_y[c], curZ = _buf_z[c]
-  if (isZero(curZ)) { for (let i = 0; i < 8; i++) { rx[i] = 0; ry[i] = 0 }; return false }
-  modInv(_zi, curZ); modSqr(_zi2, _zi); modMul(_zi3, _zi2, _zi)
-  modMul(rx, curX, _zi2); modMul(ry, curY, _zi3)
-  if (_profile) _profile.scalarMul_ms = (Date.now() - tStart)
-  return true
-}
-
-// Fixed-base scalar multiplication using precomputed doublings table.
-// table[i] must be affine coords of 2^i * basePoint as [Uint32Array(8), Uint32Array(8)].
-// Eliminates all point doublings — only ~128 mixed additions on average.
 const scalarMulFixed = (rx, ry, k, table) => {
   for (let i = 0; i < 8; i++) { _RX[i]=0; _RY[i]=0; _RZ[i]=0 }
   for (let i = 0; i < 256; i++) {
@@ -540,8 +217,6 @@ const scalarMulFixed = (rx, ry, k, table) => {
   modMul(rx, _RX, _zi2); modMul(ry, _RY, _zi3)
   return true
 }
-
-// Byte conversions
 const bytesToU256 = (bytes) => {
   const r = new Uint32Array(8)
   for (let i = 0; i < 8; i++) {
@@ -550,7 +225,6 @@ const bytesToU256 = (bytes) => {
   }
   return r
 }
-
 const u256ToBytes = (a) => {
   const r = new Uint8Array(32)
   for (let i = 0; i < 8; i++) {
@@ -562,59 +236,13 @@ const u256ToBytes = (a) => {
   }
   return r
 }
-
 const _pub_x = new Uint32Array(8), _pub_y = new Uint32Array(8)
-
-// Cache for parsed public keys to avoid repeated conversions
-const _pubKeyCache = {
-  bytes: null,
-  x: new Uint32Array(8),
-  y: new Uint32Array(8)
-}
-
-// Optimized ECDH with cached public key parsing
-function ecdh(privateKeyBytes, publicKeyBytes) {
-  const k = bytesToU256(privateKeyBytes)
-  
-  let pubX, pubY
-  // Check if public key is already cached (same key as last call)
-  if (_pubKeyCache.bytes === publicKeyBytes) {
-    pubX = _pubKeyCache.x
-    pubY = _pubKeyCache.y
-  } else {
-    // Parse and cache the public key
-    if (publicKeyBytes[0] === 0x04 && publicKeyBytes.length === 65) {
-      pubX = bytesToU256(publicKeyBytes.slice(1, 33))
-      pubY = bytesToU256(publicKeyBytes.slice(33, 65))
-    } else if (publicKeyBytes.length === 64) {
-      pubX = bytesToU256(publicKeyBytes.slice(0, 32))
-      pubY = bytesToU256(publicKeyBytes.slice(32, 64))
-    } else {
-      throw new Error('Invalid public key')
-    }
-    // Update cache
-    _pubKeyCache.bytes = publicKeyBytes
-    copy(_pubKeyCache.x, pubX)
-    copy(_pubKeyCache.y, pubY)
-  }
-  
-  if (!scalarMul(_pub_x, _pub_y, k, pubX, pubY)) throw new Error('ECDH failed')
-  return u256ToBytes(_pub_x)
-}
-
-// Fast ECDH using precomputed doublings table (built once by phone during pairing).
-// table: Array[256] of [Uint32Array(8), Uint32Array(8)] from loadDoublingsTable()
 function ecdhFixed(privateKeyBytes, table) {
   const k = bytesToU256(privateKeyBytes)
   if (!scalarMulFixed(_pub_x, _pub_y, k, table)) throw new Error('ECDH failed')
   return u256ToBytes(_pub_x)
 }
-
 export {
-  ecdh,
   ecdhFixed,
   bytesToU256 as bytesToBigInt,
-  u256ToBytes as bigIntToBytes,
-  _setProfile,
-  _setWNAFWidth
 }

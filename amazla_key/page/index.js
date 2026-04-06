@@ -63,25 +63,6 @@ const render = (attrs) => {
 
   UI.reset()
   const slide1 = page(0, 0)
-  const slide2 = page(0, 1)
-
-  // Slide 2: Main car view with battery and charge info
-  img({ w: 700, h: 750, src: `${car}.png` }, slide2)
-  circle({ color: carColor, alpha: 155, radius: Math.floor(height / 2) }, slide2)
-  img({ w: 880, h: 880, src: `${car}_bg.png` }, slide2)
-  img({ w: 880, h: 880, src: `${car}_details.png` }, slide2)
-  text({ ...NAME, text_size: 35, y: -110, text: name }, slide2)
-
-  isConnected && img({ ...CABLE, y: 10, x: 28 }, slide2)
-  isCharging && img({ ...CHARGING, y: 10, x: 28 }, slide2)
-
-  text({ ...ODOMETER, y: height / 2 - 80, text_size: 30, color: 0x777777, text: `${battery_range}${unit}` }, slide2)
-  text({ ...BATTERY_LEVEL, y: -height / 2 + 70, w: 140, align_h: hmUI.align.LEFT, color: chargeColor, text_size: 40, text: `${battery_level || '--'}%` }, slide2)
-
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355 }, slide2)
-  progress({ ...BATTERY, x: 0, y: 0, radius: height / 2 - 5, line_width: 10, start_angle: 5, end_angle: 355, level: battery_level, color: chargeColor }, slide2)
-
-  text({ text: `ϟ`, w: 50, y: -height/2 + 28, h: 50, align_v: hmUI.align.CENTER_V, text_size: 60, color: chargeColor }, slide2)
 
   // Slide 1: Lock/unlock controls
   locked && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
@@ -89,11 +70,8 @@ const render = (attrs) => {
   locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlockClick }, slide1)
   !locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLockClick }, slide1)
 
-  button({ x: -67, y: -150, w: 90, h: 50, text: 'BLE DEBUG', text_size: 16,
+  button({ x: 0, y: -150, w: 130, h: 50, text: 'BLE CONTROL', text_size: 15,
     click_func: function() { push({ url: 'page/ble/index' }) }
-  }, slide1)
-  button({ x: 67, y: -150, w: 90, h: 50, text: 'PASSIVE', text_size: 16,
-    click_func: function() { push({ url: 'page/passive/index' }) }
   }, slide1)
 
   console.log('RENDERED')
@@ -162,8 +140,8 @@ Page(
       render({ ...readFile(), ...{
         online: false,
       }})
-      hmUI.setScrollView(true, height, 2, true)
-      hmUI.scrollToPage(1, false)
+      // hmUI.setScrollView(true, height, 2, true)
+      // hmUI.scrollToPage(1, false)
     },
   })
 )

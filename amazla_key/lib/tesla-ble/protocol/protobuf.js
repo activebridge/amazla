@@ -1,10 +1,8 @@
-// Minimal Protobuf encoder/decoder for Tesla BLE protocol
 
 const WIRE_VARINT = 0
 const WIRE_64BIT = 1
 const WIRE_LENGTH_DELIMITED = 2
 const WIRE_32BIT = 5
-
 const encodeVarint = (value) => {
   const bytes = []
   while (value > 0x7f) {
@@ -14,12 +12,10 @@ const encodeVarint = (value) => {
   bytes.push(value & 0x7f)
   return new Uint8Array(bytes)
 }
-
 const decodeVarint = (buffer, offset) => {
   let value = 0
   let shift = 0
   let pos = offset
-
   while (pos < buffer.length) {
     const byte = buffer[pos++]
     value |= (byte & 0x7f) << shift
@@ -27,18 +23,14 @@ const decodeVarint = (buffer, offset) => {
     shift += 7
     if (shift > 35) throw new Error('Varint too long')
   }
-
   throw new Error('Unexpected end of buffer')
 }
-
 const encodeFieldKey = (fieldNumber, wireType) =>
   encodeVarint((fieldNumber << 3) | wireType)
-
 const decodeFieldKey = (buffer, offset) => {
   const { value, bytesRead } = decodeVarint(buffer, offset)
   return { fieldNumber: value >>> 3, wireType: value & 0x07, bytesRead }
 }
-
 const encodeBytes = (fieldNumber, data) => {
   const key = encodeFieldKey(fieldNumber, WIRE_LENGTH_DELIMITED)
   const length = encodeVarint(data.length)
@@ -48,7 +40,6 @@ const encodeBytes = (fieldNumber, data) => {
   result.set(data, key.length + length.length)
   return result
 }
-
 const encodeVarintField = (fieldNumber, value) => {
   const key = encodeFieldKey(fieldNumber, WIRE_VARINT)
   const val = encodeVarint(value)
@@ -57,9 +48,7 @@ const encodeVarintField = (fieldNumber, value) => {
   result.set(val, key.length)
   return result
 }
-
 const encodeEnum = (fieldNumber, value) => encodeVarintField(fieldNumber, value)
-
 const encodeFixed32 = (fieldNumber, value) => {
   const key = encodeFieldKey(fieldNumber, WIRE_32BIT)
   const result = new Uint8Array(key.length + 4)
@@ -70,7 +59,6 @@ const encodeFixed32 = (fieldNumber, value) => {
   result[key.length + 3] = (value >>> 24) & 0xff
   return result
 }
-
 const concat = (...arrays) => {
   const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0)
   const result = new Uint8Array(totalLength)
@@ -81,18 +69,14 @@ const concat = (...arrays) => {
   }
   return result
 }
-
 const decodeMessage = (buffer) => {
   const fields = {}
   let offset = 0
-
   while (offset < buffer.length) {
     const { fieldNumber, wireType, bytesRead: keyBytes } = decodeFieldKey(buffer, offset)
     offset += keyBytes
-
     let value
     let valueBytes = 0
-
     switch (wireType) {
       case WIRE_VARINT: {
         const result = decodeVarint(buffer, offset)
@@ -120,9 +104,7 @@ const decodeMessage = (buffer) => {
       default:
         throw new Error(`Unknown wire type: ${wireType}`)
     }
-
     offset += valueBytes
-
     if (fields[fieldNumber] !== undefined) {
       if (!Array.isArray(fields[fieldNumber])) fields[fieldNumber] = [fields[fieldNumber]]
       fields[fieldNumber].push(value)
@@ -130,10 +112,8 @@ const decodeMessage = (buffer) => {
       fields[fieldNumber] = value
     }
   }
-
   return fields
 }
-
 export {
   WIRE_VARINT,
   WIRE_64BIT,

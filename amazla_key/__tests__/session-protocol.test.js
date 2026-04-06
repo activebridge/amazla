@@ -323,24 +323,48 @@ describe('BLECryptoSession.generateKeyPool', () => {
     expect(a).not.toBe(b)
   })
 
-  test('generated keypair is on the P-256 curve (ECDH succeeds)', async () => {
-    // If the public key is not on the curve, ecdh() will throw
-    const { ecdh } = await import('../lib/tesla-ble/crypto/p256.js')
+  test('generated keypair is on the P-256 curve (ecdhFixed succeeds)', async () => {
+    const { ecdhFixed, bytesToBigInt } = await import('../lib/tesla-ble/crypto/p256.js')
     const raw  = Uint8Array.from(atob(bleCryptoSession.generateKeyPool(1).pool), c => c.charCodeAt(0))
     const priv = raw.slice(0, 32)
-    const pub  = raw.slice(32, 97)
 
-    // ECDH with a known second keypair; should not throw
-    function hexToBytes(hex) {
-      const b = new Uint8Array(hex.length / 2)
-      for (let i = 0; i < hex.length; i += 2) b[i/2] = parseInt(hex.substr(i,2),16)
+    // Build doublings table for BOB_PUB using BigInt (same as phone-side)
+    const BOB_PUB = '047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1'
+    const Pm = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
+    const Am = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
+    function modInvBig(a, m) {
+      let [r, old_r] = [m, ((a % m) + m) % m], [s, old_s] = [0n, 1n]
+      while (old_r !== 0n) { const q = r / old_r;[r, old_r] = [old_r, r - q * old_r];[s, old_s] = [old_s, s - q * old_s] }
+      return ((s % m) + m) % m
+    }
+    function pointAdd([x1, y1], [x2, y2]) {
+      if (x1 === 0n && y1 === 0n) return [x2, y2]
+      if (x2 === 0n && y2 === 0n) return [x1, y1]
+      if (x1 === x2) {
+        if (y1 !== y2) return [0n, 0n]
+        const lam = ((3n * x1 * x1 + Am) * modInvBig(2n * y1, Pm)) % Pm
+        const x3 = ((lam * lam - 2n * x1) % Pm + Pm) % Pm
+        return [x3, ((lam * (x1 - x3) - y1) % Pm + Pm) % Pm]
+      }
+      const lam = ((y2 - y1) * modInvBig(x2 - x1, Pm)) % Pm
+      const x3 = ((lam * lam - x1 - x2) % Pm + Pm) % Pm
+      return [x3, ((lam * (x1 - x3) - y1) % Pm + Pm) % Pm]
+    }
+    function bigToBytes(n) {
+      const hex = n.toString(16).padStart(64, '0')
+      const b = new Uint8Array(32)
+      for (let i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16)
       return b
     }
-    const bobPub = hexToBytes('047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978' +
-                              '07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1')
+    let cur = [BigInt('0x' + BOB_PUB.slice(2, 66)), BigInt('0x' + BOB_PUB.slice(66, 130))]
+    const table = []
+    for (let i = 0; i < 256; i++) {
+      table.push([bytesToBigInt(bigToBytes(cur[0])), bytesToBigInt(bigToBytes(cur[1]))])
+      if (i < 255) cur = pointAdd(cur, cur)
+    }
 
     let threw = false
-    try { ecdh(priv, bobPub) } catch (e) { threw = true; console.error(e) }
+    try { ecdhFixed(priv, table) } catch (e) { threw = true; console.error(e) }
     expect(threw).toBe(false)
   })
 }, 60000) // ECDH can take ~5s on slow machines
