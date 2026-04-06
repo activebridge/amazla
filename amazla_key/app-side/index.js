@@ -86,6 +86,12 @@ const actions = {
     return bleCrypto.buildPairMessage(params.publicKeyHex)
   },
 
+  // Verify pairing: query whitelist entry to get vehicle EC key
+  BLE_VERIFY_PAIR: async (params) => {
+    console.log('[App] Building whitelist query message for verification')
+    return bleCrypto.buildWhitelistQueryMessage(params.publicKeyHex)
+  },
+
   // Generate ephemeral P-256 keypair pool for watch passive entry.
   // Returns { success, pool } where pool is base64 flat binary (97 bytes/key).
   BLE_GENERATE_SESSION_KEYS: async ({ count = 5 }) => {
