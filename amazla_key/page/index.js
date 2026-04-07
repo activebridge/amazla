@@ -141,6 +141,19 @@ Page(BasePage({
 
     render()
     hmUI.setStatusBarVisible(false)
-    setTimeout(refreshStatus, 500)
+    
+    // Auto-establish session if pairing data exists
+    setTimeout(() => {
+      teslaSession.ensureSessionEstablished(function(result) {
+        if (result.success) {
+          console.log('[INDEX] Session established automatically')
+          refreshStatus()
+        } else {
+          console.log('[INDEX] ' + (result.error || 'Session setup failed'))
+          // Show offline status
+          setTimeout(refreshStatus, 500)
+        }
+      })
+    }, 100)
   },
 }))

@@ -636,6 +636,24 @@ class TeslaSession {
   isEstablished() {
     return this.established
   }
+  isPaired() {
+    // Check if pairing data exists (means user completed pairing flow)
+    return !!this.storage.getItem('key_pool') && !!this.storage.getItem('vehicle_ec_public_key')
+  }
+  ensureSessionEstablished(callback) {
+    // If session already established, call callback immediately
+    if (this.established) {
+      callback({ success: true })
+      return
+    }
+    // If not paired yet, return error
+    if (!this.isPaired()) {
+      callback({ success: false, error: 'Not paired - go to BLE page first' })
+      return
+    }
+    // Try to establish session
+    this.requestSessionInfo(callback)
+  }
   getStatus() {
     return {
       established: this.established,
