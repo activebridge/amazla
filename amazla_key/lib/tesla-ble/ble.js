@@ -165,8 +165,15 @@ class TeslaBLE {
         [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
       })
       
-      console.log('[BLE] Starting listener...')
-      this._ensureBLE().startListener(this.profile, (response) => {
+      // Give BLE stack time to stabilize before starting listener
+      setTimeout(() => {
+        if (!this.connected) {
+          this._cleanup()
+          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
+          return
+        }
+        console.log('[BLE] Starting listener...')
+        this._ensureBLE().startListener(this.profile, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
@@ -211,7 +218,8 @@ class TeslaBLE {
             settle({ success: true, mac })
           }
         }, 4000)
-      })
+        })
+      }, 50)
     })
   }
   disconnect() {
