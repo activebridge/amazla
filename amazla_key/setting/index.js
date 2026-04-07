@@ -4,38 +4,49 @@ import { TESLA_LOGO } from './styles.js'
 AppSettingsPage({
   build({ settingsStorage }) {
     return View({ style: MAIN }, [
-      // Tesla Logo
-      Image({
-        alt: 'Tesla',
-        src: TESLA_LOGO,
-        width: 100,
-        height: 100,
+      // Header Section
+      View({
         style: {
-          margin: '16px auto',
-          display: 'block',
-        }
-      }),
-
-      // Header
-      Text({
-        style: {
-          fontSize: '24px',
-          fontWeight: 'bold',
-          margin: '0 0 10px',
           textAlign: 'center',
-          width: '100%',
+          marginBottom: '24px',
+          paddingBottom: '16px',
+          borderBottom: '1px solid #3A3B3D',
         }
-      }, '🔐 Tesla Key Setup'),
+      }, [
+        // Tesla Logo
+        Image({
+          alt: 'Tesla',
+          src: TESLA_LOGO,
+          width: 100,
+          height: 100,
+          style: {
+            margin: '0 auto 12px',
+            display: 'block',
+          }
+        }),
 
-      Text({
-        style: {
-          fontSize: '12px',
-          color: '#999999',
-          margin: '0 0 20px',
-          textAlign: 'center',
-          width: '100%',
-        }
-      }, 'Pure Bluetooth • No Internet Required'),
+        // Header Title
+        Text({
+          style: {
+            fontSize: '28px',
+            fontWeight: 'bold',
+            margin: '0 0 8px',
+            textAlign: 'center',
+            width: '100%',
+          }
+        }, '🔐 Tesla Key Setup'),
+
+        // Subtitle
+        Text({
+          style: {
+            fontSize: '13px',
+            color: '#999999',
+            margin: '0',
+            textAlign: 'center',
+            width: '100%',
+          }
+        }, 'Pure Bluetooth • No Internet Required'),
+      ]),
 
       // Quick Start
       Text({ style: SECTION_TITLE }, '🚀 Quick Start'),
@@ -125,28 +136,29 @@ function QuickStartStep(number, title, description) {
       alignItems: 'flex-start',
       background: '#2A2B2D',
       borderRadius: '8px',
-      padding: '12px',
-      marginBottom: '8px',
-      gap: '12px',
+      padding: '16px',
+      marginBottom: '12px',
+      gap: '16px',
     }
   }, [
     Text({
       style: {
         background: '#4A90E2',
         color: '#000000',
-        width: '32px',
-        height: '32px',
+        width: '40px',
+        height: '40px',
         borderRadius: '50%',
         fontWeight: 'bold',
+        fontSize: '18px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
       }
     }, String(number)),
-    View({}, [
-      Text({ style: { fontWeight: 'bold', marginBottom: '4px' } }, title),
-      Text({ paragraph: true, style: { fontSize: '12px', color: '#CCCCCC' } }, description),
+    View({ style: { flex: 1 } }, [
+      Text({ style: { fontWeight: 'bold', fontSize: '16px', marginBottom: '6px', color: '#CCCCCC' } }, title),
+      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', lineHeight: '1.4' } }, description),
     ]),
   ])
 }
@@ -157,14 +169,16 @@ function ExpandableSection(title, content) {
     style: {
       background: '#2A2B2D',
       borderRadius: '8px',
-      padding: '12px',
-      marginBottom: '8px',
+      padding: '16px',
+      marginBottom: '12px',
       cursor: 'pointer',
     }
   }, [
     Text({
       style: {
         fontWeight: 'bold',
+        fontSize: '15px',
+        color: '#CCCCCC',
         userSelect: 'none',
         display: 'flex',
         justifyContent: 'space-between',
@@ -174,7 +188,7 @@ function ExpandableSection(title, content) {
     }, title),
     Text({
       paragraph: true,
-      style: { fontSize: '12px', color: '#999999', marginTop: '8px' }
+      style: { fontSize: '13px', color: '#999999', marginTop: '10px', lineHeight: '1.5' }
     }, content),
   ])
 }
