@@ -411,9 +411,10 @@ class TeslaSession {
     this.ephemeralPublicKey  = keypair.publicKeyBytes   // Uint8Array[65]
     this.routingAddress = generateRoutingAddress()
     const uuid = generateUUID()
+    const challenge = generateUUID()  // Generate random 16-byte challenge for SessionInfoRequest
     const sessionInfoRequest = buildSessionInfoRequest(
       this.ephemeralPublicKey,
-      null // NO challenge - matches Tesla SDK behavior
+      challenge
     )
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
