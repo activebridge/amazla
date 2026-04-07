@@ -417,7 +417,7 @@ class TeslaSession {
     const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => byteToHex(x)).join('')
     console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
     const self = this
-    teslaBLE.send(message, function sessionInfoResponseHandler(result) {
+    const sessionInfoResponseHandler = function(result) {
       if (!result.success) {
         callback({ success: false, error: result.error })
         return
@@ -425,32 +425,35 @@ class TeslaSession {
       try {
         const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
         console.log('[SESSION] Raw response hex: ' + dataHex)
-        
+
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
         const rawFields = decodeMessage(result.data)
         const fieldKeys = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(',')
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
-        if (rawFields[3] && !response.sessionInfo && !response.payload && !response.signedMessageStatus) {
-          console.log('[SESSION] Received status push (field 3 only), waiting for SessionInfo response...')
+
+        // If no sessionInfo, payload, or status — this is an intermediate ack from the vehicle.
+        // Keep the callback alive and wait for the real SessionInfo response.
+        if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
+          console.log('[SESSION] Intermediate ack (fields:[' + fieldKeys + ']), re-registering and waiting for SessionInfo...')
           teslaBLE.responseCallback = sessionInfoResponseHandler
           return
         }
-        
+
         console.log('[SESSION] RX bytes: ' + (result.data ? result.data.length : 0))
         if (response.sessionInfo) {
           if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
-            this.vehiclePublicKey = response.sessionInfo.publicKey
+            self.vehiclePublicKey = response.sessionInfo.publicKey
             console.log('[SESSION] Got vehicle public key from SessionInfo response')
-            if (!this.storage.getItem('vehicle_ec_public_key')) {
+            if (!self.storage.getItem('vehicle_ec_public_key')) {
               const keyHex = Array.from(response.sessionInfo.publicKey, x => byteToHex(x)).join('')
-              this.storage.setItem('vehicle_ec_public_key', keyHex)
+              self.storage.setItem('vehicle_ec_public_key', keyHex)
               console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
             }
           } else {
             console.log('[SESSION] SessionInfo response has no valid public key')
-            if (!this.vehiclePublicKey) { // Not already loaded
-              const keyLoaded = this.loadVehiclePublicKey()
+            if (!self.vehiclePublicKey) {
+              const keyLoaded = self.loadVehiclePublicKey()
               if (!keyLoaded) {
                 console.log('[SESSION] ❌ No vehicle public key available from storage or response')
                 console.log('[SESSION] Please complete pairing first to obtain vehicle EC key')
@@ -459,58 +462,50 @@ class TeslaSession {
               }
             }
           }
-          
-          this.epoch = response.sessionInfo.epoch
-          this.counter = response.sessionInfo.counter
-          this.clockTime = response.sessionInfo.clockTime
-          if (this.vehiclePublicKey) {
-            console.log('[SESSION] Vehicle public key length: ' + this.vehiclePublicKey.length + ' bytes')
-            const keyHex = Array.from(this.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
+
+          self.epoch = response.sessionInfo.epoch
+          self.counter = response.sessionInfo.counter
+          self.clockTime = response.sessionInfo.clockTime
+          if (self.vehiclePublicKey) {
+            console.log('[SESSION] Vehicle public key length: ' + self.vehiclePublicKey.length + ' bytes')
+            const keyHex = Array.from(self.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
             console.log('[SESSION] Vehicle public key starts with: ' + keyHex)
           } else {
             console.log('[SESSION] ERROR: vehiclePublicKey is null/undefined')
           }
-          if (!this.vehiclePublicKey || this.vehiclePublicKey.length !== 65) {
-            const actualLength = this.vehiclePublicKey ? this.vehiclePublicKey.length : 0
+          if (!self.vehiclePublicKey || self.vehiclePublicKey.length !== 65) {
+            const actualLength = self.vehiclePublicKey ? self.vehiclePublicKey.length : 0
             console.log('[SESSION] ❌ INVALID PUBLIC KEY: ' + actualLength + ' bytes, need 65')
             callback({ success: false, error: 'Invalid vehicle public key: ' + actualLength + ' bytes' })
             return
           }
-          const _ecdhTable = this.loadDoublingsTable()
+          const _ecdhTable = self.loadDoublingsTable()
           if (!_ecdhTable) {
             callback({ success: false, error: 'No ECDH table — re-pair to generate' })
             return
           }
-          const sharedSecret = ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
+          const sharedSecret = ecdhFixed(self.ephemeralPrivateKey, _ecdhTable)
           const keyMaterial = sha1(sharedSecret)
-          this.sessionKey = keyMaterial.slice(0, 16)
-          this.established = true
-          console.log('[SESSION] Established: counter=' + this.counter + ', epoch=' + bytesToHex(this.epoch).slice(0, 8))
+          self.sessionKey = keyMaterial.slice(0, 16)
+          self.established = true
+          console.log('[SESSION] Established: counter=' + self.counter + ', epoch=' + bytesToHex(self.epoch).slice(0, 8))
           callback({
             success: true,
-            counter: this.counter,
-            epoch: bytesToHex(this.epoch)
+            counter: self.counter,
+            epoch: bytesToHex(self.epoch)
           })
         } else {
-          const rawFields = decodeMessage(result.data)
           const fieldList = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(', ')
           console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
           console.log('[SESSION] Fields present: [' + fieldList + ']')
-          console.log('[SESSION] payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
-          if (rawFields[10]) {
-            console.log('[SESSION] Field 10 (payload) present - SessionInfo might be nested, but couldn\'t extract')
-          }
-          if (rawFields[6]) {
-            console.log('[SESSION] Field 6 present (status?): ' + rawFields[6].length + ' bytes')
-          }
-          
           callback({ success: false, error: 'No session info in response. Fields: [' + fieldList + ']' })
         }
       } catch (e) {
         console.log('[SESSION] Exception: ' + e.message)
         callback({ success: false, error: e.message })
       }
-    }.bind(this))
+    }
+    teslaBLE.send(message, sessionInfoResponseHandler)
   }
   buildAuthenticatedCommand(rkeAction) {
     if (!this.established) {

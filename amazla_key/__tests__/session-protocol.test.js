@@ -163,15 +163,19 @@ describe('parseSessionInfo', () => {
   })
 })
 
+function makeSessionInfoBytes(counter, clockTime) {
+  return [
+    encodeVarintField(1, counter),
+    encodeBytes(2, new Uint8Array(65).fill(0x04)),
+    encodeBytes(3, new Uint8Array(16).fill(0xee)),
+    encodeVarintField(4, clockTime),
+  ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
+}
+
 describe('parseRoutableMessage', () => {
   test('extracts payload (field 10) and sessionInfo (field 3)', () => {
     const innerPayload = new Uint8Array([0x01, 0x02, 0x03])
-    const sessionInfoBytes = [
-      encodeVarintField(1, 5),
-      encodeBytes(2, new Uint8Array(65).fill(0x04)),
-      encodeBytes(3, new Uint8Array(16).fill(0xee)),
-      encodeVarintField(4, 1234),
-    ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
+    const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
 
     const encoded = [
       encodeBytes(3, sessionInfoBytes),
@@ -185,10 +189,61 @@ describe('parseRoutableMessage', () => {
     expect(parsed.sessionInfo.clockTime).toBe(1234)
   })
 
+  test('extracts sessionInfo from field 6 (real vehicle response format)', () => {
+    // The actual Tesla vehicle sends SessionInfo in field 6, not field 3.
+    // This is the case fixed in _doSessionInfoRequest: the handler must not
+    // give up when field 3 is absent — it must also check field 6.
+    const sessionInfoBytes = makeSessionInfoBytes(99, 5678)
+    const encoded = encodeBytes(6, sessionInfoBytes)
+
+    const parsed = parseRoutableMessage(encoded)
+    expect(parsed.sessionInfo).not.toBeNull()
+    expect(parsed.sessionInfo.counter).toBe(99)
+    expect(parsed.sessionInfo.clockTime).toBe(5678)
+    expect(parsed.sessionInfo.publicKey.length).toBe(65)
+    expect(parsed.sessionInfo.epoch.length).toBe(16)
+  })
+
   test('returns null sessionInfo when field 3 absent', () => {
     const msg = encodeBytes(10, new Uint8Array([0xaa]))
     const parsed = parseRoutableMessage(msg)
     expect(parsed.sessionInfo).toBeNull()
+  })
+
+  test('intermediate ack (field 1 only) has null sessionInfo, payload, and signedMessageStatus', () => {
+    // This is the first response the vehicle sends to a session info request —
+    // an intermediate ack containing only the routing address (field 1).
+    // The handler must detect this (all three null) and re-register instead of failing.
+    // Matches the real bytes seen in logs: 0a0a18012002380142020801
+    const intermediateAck = new Uint8Array([
+      0x0a, 0x0a, 0x18, 0x01, 0x20, 0x02, 0x38, 0x01, 0x42, 0x02, 0x08, 0x01
+    ])
+    const parsed = parseRoutableMessage(intermediateAck)
+    expect(parsed.sessionInfo).toBeNull()
+    expect(parsed.payload).toBeNull()
+    expect(parsed.signedMessageStatus).toBeNull()
+    // actionStatus (field 1) IS present — that's the routing info in the ack
+    expect(parsed.actionStatus).not.toBeNull()
+  })
+
+  test('intermediate ack condition: !sessionInfo && !payload && !signedMessageStatus', () => {
+    // Verifies the exact boolean condition used in _doSessionInfoRequest to detect
+    // intermediate acks and keep the callback alive.
+    const intermediateAck = new Uint8Array([
+      0x0a, 0x0a, 0x18, 0x01, 0x20, 0x02, 0x38, 0x01, 0x42, 0x02, 0x08, 0x01
+    ])
+    const parsed = parseRoutableMessage(intermediateAck)
+    const isIntermediateAck = !parsed.sessionInfo && !parsed.payload && !parsed.signedMessageStatus
+    expect(isIntermediateAck).toBe(true)
+  })
+
+  test('real SessionInfo response (field 6) does NOT trigger intermediate ack condition', () => {
+    const sessionInfoBytes = makeSessionInfoBytes(7, 9999)
+    const encoded = encodeBytes(6, sessionInfoBytes)
+    const parsed = parseRoutableMessage(encoded)
+    const isIntermediateAck = !parsed.sessionInfo && !parsed.payload && !parsed.signedMessageStatus
+    expect(isIntermediateAck).toBe(false)
+    expect(parsed.sessionInfo).not.toBeNull()
   })
 })
 

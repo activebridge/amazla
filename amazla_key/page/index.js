@@ -142,6 +142,7 @@ Page(
       }})
       // hmUI.setScrollView(true, height, 2, true)
       // hmUI.scrollToPage(1, false)
+      hmUI.setStatusBarVisible(false)
     },
   })
 )
