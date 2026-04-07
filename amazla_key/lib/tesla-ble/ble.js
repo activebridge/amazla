@@ -229,6 +229,7 @@ class TeslaBLE {
       callback({ success: false, error: 'Not connected' })
       return
     }
+    
     // Wrap the callback to support re-queuing for multi-response commands
     const wrappedCallback = (result) => {
       if (result.success && result._requeue) {
@@ -242,6 +243,30 @@ class TeslaBLE {
       this.responseCallback = null
       callback(result)
     }
+    
+    // If GATT isn't ready yet, wait for it before sending
+    if (!this.gattReady) {
+      console.log('[BLE] Waiting for GATT profile to be ready before send()...')
+      const gattCheckInterval = setInterval(() => {
+        if (this.gattReady) {
+          clearInterval(gattCheckInterval)
+          console.log('[BLE] GATT profile ready, proceeding with send()')
+          this.responseCallback = wrappedCallback
+          this._sendMessage(_frame(data))
+        }
+      }, 10)
+      // Timeout if GATT takes too long
+      setTimeout(() => {
+        clearInterval(gattCheckInterval)
+        if (!this.gattReady) {
+          console.log('[BLE] GATT profile setup took too long (5s), proceeding anyway')
+          this.responseCallback = wrappedCallback
+          this._sendMessage(_frame(data))
+        }
+      }, 5000)
+      return
+    }
+    
     this.responseCallback = wrappedCallback
     this._sendMessage(_frame(data))
   }
