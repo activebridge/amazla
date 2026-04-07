@@ -5,6 +5,7 @@ import { onKey, KEY_SELECT, KEY_EVENT_CLICK } from '@zos/interaction'
 import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page'
 import { writeFileSync, readFileSync } from '@zos/fs'
+import { keepScreenOn } from '../../zeppify/index.js'
 
 import UI, { page, button, img, rect } from '../../pages/ui'
 import { LOCK, UNLOCK, CLOSE, OPEN } from '../../pages/styles'
@@ -141,6 +142,7 @@ Page(BasePage({
 
     render()
     hmUI.setStatusBarVisible(false)
+    keepScreenOn(true)
     
     // Auto-establish session if pairing data exists
     setTimeout(() => {
