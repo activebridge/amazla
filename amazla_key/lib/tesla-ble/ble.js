@@ -150,73 +150,63 @@ class TeslaBLE {
         console.log('[BLE] Ignoring duplicate connected callback')
         return
       }
+      setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, scheduling listener setup in 50ms...')
+      console.log('[BLE] Connected, generating profile immediately...')
       
-      if (!this.connected) {
+      // Generate profile immediately (per official ZeppOS documentation)
+      this.profile = this._ensureBLE().generateProfileObject(this.services)
+      if (!this.profile) {
+        console.log('[BLE] ✗ Profile generation failed')
         this._cleanup()
-        settle({ success: false, error: 'Connection lost during setup', attemptNumber })
+        settle({ success: false, error: 'Profile generation failed', attemptNumber })
         return
       }
+      console.log('[BLE] Profile generated, calling startListener immediately (no delay)...')
       
-      // Small 50ms delay to ensure BLE connection is stable before calling startListener
-      // Don't set setupStarted=true yet - only set it after delay completes successfully
-      setTimeout(() => {
-        if (!this.connected) {
-          console.log('[BLE] Connection lost during delay, aborting listener setup')
+      // Call startListener immediately with the generated profile
+      this._ensureBLE().startListener(this.profile, (response) => {
+        console.log('[BLE] Listener response:', JSON.stringify(response))
+        if (done) return
+        if (!response.success) {
+          this.connected = false
+          console.log('[BLE] Listener failed:', response.message)
           this._cleanup()
-          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
+          settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
           return
         }
         
-        // NOW set setupStarted = true, after we know connection is still stable
-        setupStarted = true
+        console.log('[BLE] Listener started, settling with success...')
+        settle({ success: true, mac })
         
-        // Call startListener with null profile (no attribute discovery/profile generation)
-        console.log('[BLE] Calling startListener with null profile...')
-        this._ensureBLE().startListener(null, (response) => {
-          console.log('[BLE] Listener callback fired:', JSON.stringify(response))
-          if (done) return
-          if (!response.success) {
-            this.connected = false
-            console.log('[BLE] Listener startup failed:', response.message)
-            this._cleanup()
-            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
-            return
-          }
-          
-          console.log('[BLE] Listener started successfully')
-          settle({ success: true, mac })
-          
-          // Register callbacks in background
-          this.charaValueHandler = (uuid, data, len) => {
-            console.log('[BLE] charaValueArrived:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-          this.charaNotificationHandler = (uuid, data, len) => {
-            console.log('[BLE] charaNotification:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-          
-          // Try to set MTU (optional)
-          try {
-            hmBle.mstSetMTU(247, (mtuResult) => {
-              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
-          
-          // Enable indications in background
-          console.log('[BLE] Enabling indications (CCCD=0x0002)...')
-          this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-        })
-      }, 50)
+        // Register callbacks in background (non-blocking)
+        this.charaValueHandler = (uuid, data, len) => {
+          console.log('[BLE] charaValueArrived:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+        }
+        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+        this.charaNotificationHandler = (uuid, data, len) => {
+          console.log('[BLE] charaNotification:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+        }
+        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+        
+        // Enable indications (CCCD) in background
+        console.log('[BLE] Enabling indications (CCCD)...')
+        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+        
+        // Try to set MTU (optional)
+        try {
+          hmBle.mstSetMTU(247, (mtuResult) => {
+            const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+            this._mtu = Math.max(20, negotiated)
+            console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+          })
+        } catch (e) {
+          console.log('[BLE] mstSetMTU not available:', e.message || e)
+        }
+      })
     })
   }
   disconnect() {
