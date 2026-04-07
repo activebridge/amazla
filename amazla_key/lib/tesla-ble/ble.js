@@ -159,60 +159,58 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, delaying startListener for BLE stack to settle...')
+      console.log('[BLE] Connected successfully, settling...')
       
-      // CRITICAL: Must delay startListener after physical connect.
-      // easy-ble mstBuildProfile needs time after connect() succeeds
-      // or vehicle firmware rejects the profile build and disconnects.
-      // This is different from user-level delays - this is for BLE stack initialization.
-      setTimeout(() => {
-        if (!this.connected) {
-          console.log('[BLE] Abandoned startListener (already disconnected)')
-          return
+      // NOTE: We DO NOT call startListener here.
+      // startListener triggers mstBuildProfile which the vehicle firmware rejects
+      // during session/pairing flows. GATT listeners are optional - we can send/receive
+      // messages using raw write/read operations instead.
+      // The vehicle connection is now ready for send() operations.
+      settle({ success: true, mac })
+      
+      // Optional: Set up GATT characteristics listeners in background (non-blocking)
+      // This allows us to receive unsolicited notifications from the vehicle,
+      // but it's not required for session establishment.
+      if (this._ensureBLE().on && this._ensureBLE().on.charaValueArrived) {
+        console.log('[BLE] Setting up GATT listeners in background...')
+        this.charaValueHandler = (uuid, data, len) => {
+          console.log('[BLE] charaValueArrived:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
-        console.log('[BLE] Calling startListener with raw services (BLE stack ready)...')
-        this._ensureBLE().startListener(this.services, (response) => {
-          console.log('[BLE] Listener response:', JSON.stringify(response))
-          if (done) return
-          if (!response.success) {
-            this.connected = false
-            console.log('[BLE] Listener failed:', response.message)
-            this._cleanup()
-            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
-            return
-          }
-          
-          console.log('[BLE] Listener started, settling with success...')
-          settle({ success: true, mac })
-          
-          // Register callbacks in background (non-blocking)
-          this.charaValueHandler = (uuid, data, len) => {
-            console.log('[BLE] charaValueArrived:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
+        try {
           this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-          this.charaNotificationHandler = (uuid, data, len) => {
-            console.log('[BLE] charaNotification:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
+        } catch (e) {
+          console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
+        }
+        
+        this.charaNotificationHandler = (uuid, data, len) => {
+          console.log('[BLE] charaNotification:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+        }
+        try {
           this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-          
-          // Enable indications (CCCD) in background
-          console.log('[BLE] Enabling indications (CCCD)...')
+        } catch (e) {
+          console.log('[BLE] Failed to register charaNotification:', e.message || e)
+        }
+        
+        // Try to enable indications (CCCD) in background
+        try {
+          console.log('[BLE] Enabling indications (CCCD) in background...')
           this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-          
-          // Try to set MTU (optional)
-          try {
-            hmBle.mstSetMTU(247, (mtuResult) => {
-              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
+        } catch (e) {
+          console.log('[BLE] Failed to enable CCCD:', e.message || e)
+        }
+      }
+      
+      // Try to set MTU (optional)
+      try {
+        hmBle.mstSetMTU(247, (mtuResult) => {
+          const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+          this._mtu = Math.max(20, negotiated)
+          console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
         })
-      }, 50)  // 50ms delay to let BLE stack settle after physical connect
+      } catch (e) {
+        console.log('[BLE] mstSetMTU not available:', e.message || e)
     })
   }
   disconnect() {
