@@ -1,5 +1,4 @@
 .DS_Store
-.claude
 node_modules/**
 dist/*
 npm-debug.log
@@ -14,4 +13,10 @@ selenium-debug.log
 *.ntvs*
 *.njsproj
 *.sln
-secrets.js
+
+# Jekyll
+_site/
+.jekyll-cache/
+.jekyll-metadata
+.sass-cache/
+vendor/

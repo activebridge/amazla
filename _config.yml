@@ -1,0 +1,6 @@
+title: Amazla
+description: Amazla landing site
+url: "https://amazla.app"
+baseurl: ""
+markdown: kramdown
+plugins: []

@@ -1,9 +1,0 @@
-<svg width="480" height="480" xmlns="http://www.w3.org/2000/svg">
-  <rect width="480" height="480" fill="#BCAAA4"/>
-  <!-- Dim sun -->
-  <circle cx="240" cy="180" r="60" fill="#FFE082" opacity="0.6"/>
-  <g stroke="#D7CCC8" stroke-width="10" stroke-linecap="round" fill="none">
-    <path d="M80,280 Q160,260 240,280 Q320,300 400,280"/>
-    <path d="M80,340 Q160,320 240,340 Q320,360 400,340"/>
-  </g>
-</svg>
