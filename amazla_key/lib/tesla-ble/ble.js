@@ -25,6 +25,7 @@ class TeslaBLE {
     this.mac = null
     this.profile = null
     this.responseCallback = null
+    this.pendingResponseCallbacks = []  // Queue for multi-response commands
     this.onDisconnect = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
@@ -70,6 +71,7 @@ class TeslaBLE {
     }
     this.profile = null
     this.responseCallback = null
+    this.pendingResponseCallbacks = []
     this.mac = null
     this._rxBuf = null
     this._rxExpected = 0
@@ -226,7 +228,17 @@ class TeslaBLE {
       callback({ success: false, error: 'Not connected' })
       return
     }
-    this.responseCallback = callback
+    // Wrap the callback to support re-queuing for multi-response commands
+    const wrappedCallback = (result) => {
+      if (result.success && result._requeue) {
+        // Command wants to wait for another response (e.g., lock/unlock gets status push then action response)
+        this.responseCallback = wrappedCallback
+      } else {
+        this.responseCallback = null
+      }
+      callback(result)
+    }
+    this.responseCallback = wrappedCallback
     this._sendMessage(_frame(data))
   }
   waitForNextResponse(timeout, callback) {

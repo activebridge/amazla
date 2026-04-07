@@ -543,6 +543,7 @@ class TeslaSession {
     const doSend = function() {
       try {
         const message = self.buildAuthenticatedCommand(rkeAction)
+        let gotFirstResponse = false
         teslaBLE.send(message, function(result) {
           if (!result.success) {
             callback({ success: false, error: result.error })
@@ -550,6 +551,18 @@ class TeslaSession {
           }
           try {
             const response = parseRoutableMessage(result.data)
+            
+            // Vehicle sends two responses for commands: (1) status push (field 3 only), (2) action response (field 1 + field 3/6)
+            // If we only got SessionInfo without actionStatus, re-queue to wait for the second response
+            if (!response.actionStatus && !gotFirstResponse) {
+              gotFirstResponse = true
+              console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
+              result._requeue = true  // Tell BLE to re-register callback
+              // Don't call user's callback yet, wait for the real response with actionStatus
+              return
+            }
+            
+            // This is either the first response with actionStatus, or the second response
             callback({ success: true, response })
           } catch (e) {
             callback({ success: false, error: e.message })

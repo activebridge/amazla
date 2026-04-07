@@ -125,19 +125,22 @@ const generateRoutingAddress = () => {
 }
 const parseSessionInfo = (data) => {
   const fields = decodeMessage(data)
-  const [publicKey, epoch] = !fields[2] 
-    ? [null, fields[3] ?? null]
+  // epoch must be a Uint8Array; if field is a varint (number), treat as absent
+  const asEpoch = (v) => (v instanceof Uint8Array ? v : null)
+  const [publicKey, epoch] = !fields[2]
+    ? [null, asEpoch(fields[3])]
     : fields[2].length === 65
-    ? [fields[2], fields[3] ?? null]
+    ? [fields[2], asEpoch(fields[3])]
     : fields[2].length === 16
     ? [null, fields[2]]
-    : [fields[2], fields[3] ?? null]
-  
+    : [fields[2], asEpoch(fields[3])]
+  // clockTime is a varint; if the vehicle sends it as bytes, default to 0
+  const clockTime = typeof fields[4] === 'number' ? fields[4] : 0
   return {
     counter:    fields[1] ?? 0,
     publicKey:  publicKey,
     epoch:      epoch,
-    clockTime:  fields[4] ?? 0,
+    clockTime:  clockTime,
     status:     fields[5] ?? 0,
     handle:     fields[6] ?? 0,
   }
@@ -145,13 +148,15 @@ const parseSessionInfo = (data) => {
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
   let sessionInfo = null
+  // A valid SessionInfo has either epoch bytes or a public key blob
+  const isValidSessionInfo = (si) => si && (si.epoch || si.publicKey)
   if (fields[3]) {
     try {
       sessionInfo = parseSessionInfo(fields[3])
-      if (sessionInfo && sessionInfo.epoch) {
+      if (isValidSessionInfo(sessionInfo)) {
         console.log('[SESSION] Found SessionInfo in field 3')
       } else {
-        sessionInfo = null // Invalid - no epoch
+        sessionInfo = null
       }
     } catch (e) {
     }
@@ -159,7 +164,7 @@ const parseRoutableMessage = (data) => {
   if (!sessionInfo && fields[6]) {
     try {
       sessionInfo = parseSessionInfo(fields[6])
-      if (sessionInfo && sessionInfo.epoch) {
+      if (isValidSessionInfo(sessionInfo)) {
         console.log('[SESSION] Found SessionInfo in field 6')
       } else {
         sessionInfo = null
@@ -173,7 +178,7 @@ const parseRoutableMessage = (data) => {
       if (fromVcsecFields[3]) {
         try {
           const candidate = parseSessionInfo(fromVcsecFields[3])
-          if (candidate && candidate.epoch) {
+          if (isValidSessionInfo(candidate)) {
             sessionInfo = candidate
             console.log('[SESSION] Found SessionInfo in field 10.field[3]')
           }
@@ -184,10 +189,10 @@ const parseRoutableMessage = (data) => {
         for (const fieldNum in fromVcsecFields) {
           const fieldData = fromVcsecFields[fieldNum]
           if (!fieldData || fieldData.length < 10) continue
-          
+
           try {
             const candidate = parseSessionInfo(fieldData)
-            if (candidate && candidate.epoch) {
+            if (isValidSessionInfo(candidate)) {
               sessionInfo = candidate
               console.log('[SESSION] Found SessionInfo in field 10.field[' + fieldNum + ']')
               break
@@ -203,7 +208,7 @@ const parseRoutableMessage = (data) => {
   if (!sessionInfo && fields[15]) {
     try {
       const candidate = parseSessionInfo(fields[15])
-      if (candidate && candidate.epoch) {
+      if (isValidSessionInfo(candidate)) {
         sessionInfo = candidate
         console.log('[SESSION] Found SessionInfo in field 15')
       }
@@ -386,7 +391,9 @@ const parsePairingResponse = (data) => {
 export {
   DOMAIN_VEHICLE_SECURITY,
   SIGNATURE_TYPE_PRESENT_KEY,
+  INFO_REQUEST_GET_STATUS,
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
+  parseVehicleStatus,
   KEY_ROLE_OWNER,
   KEY_FORM_FACTOR_ANDROID_DEVICE,
   OPERATIONSTATUS_OK,

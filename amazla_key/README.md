@@ -11,6 +11,21 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
+### Session Info Response Fix (✅ Complete)
+
+**Problem**: Session establishment always failed with "could not setup session" despite successful pairing.
+
+**Root cause**: The vehicle sends two BLE responses to a `SessionInfoRequest`:
+1. An intermediate ack (protobuf field 1 only — routing info)
+2. The real `SessionInfo` (field 6 — epoch, counter, vehicle public key)
+
+The handler consumed its callback on the first response and discarded the second.
+
+**Fix** (`lib/tesla-ble/session.js` → `_doSessionInfoRequest`):
+- Detect intermediate acks via `!sessionInfo && !payload && !signedMessageStatus`
+- Re-register the callback and keep waiting for the real `SessionInfo`
+- Fixed a self-reference bug: named function expression + `.bind(this)` caused the re-registered handler to lose `this` context; replaced with a closure-captured `const` using `self`
+
 ### Connection Speed Optimization - Phase 4: ECDH Precomputed Table (✅ Complete)
 
 **Problem**: Cold-start ECDH still took ~8 seconds on every first connection after cache expiry.
@@ -158,14 +173,12 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  session_keys.txt (Pool of pre-generated keypairs)              │      │
+│     │  key_pool (field in ble_settings.txt, base64-encoded binary)   │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │ [                                                           ││      │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
-│     │  │   { privateKeyHex: "...", publicKeyHex: "04..." },          ││      │
-│     │  │   ...                                                       ││      │
-│     │  │ ]                                                           ││      │
+│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                        ││      │
+│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                        ││      │
+│     │  │  ...                                                        ││      │
+│     │  │  97 bytes per key, stored as base64 string                  ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
@@ -281,6 +294,9 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │        │                                                  │                  │
 │        │  ─── SessionInfoRequest ──────────────────────►  │                  │
 │        │      { ephemeral_public_key }                    │                  │
+│        │                                                  │                  │
+│        │  ◄── Intermediate Ack ─────────────────────────  │                  │
+│        │      (routing info only, no SessionInfo yet)     │                  │
 │        │                                                  │                  │
 │        │  ◄── SessionInfo ─────────────────────────────   │                  │
 │        │      { vehicle_public_key,                       │                  │
@@ -403,6 +419,129 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Tesla BLE Command Reference
+
+All commands are sent as HMAC-signed `RoutableMessage` → `ToVCSECMessage` → `UnsignedMessage` packets over BLE after a session is established.
+
+### RKE Actions (Remote Keyless Entry)
+
+These are the core vehicle control commands, sent via `UnsignedMessage.rkeAction` (field 2).
+
+| Constant | Value | Method | Description |
+|----------|-------|--------|-------------|
+| `RKE_ACTION_UNLOCK` | 0 | `session.unlock(cb)` | Unlock all doors |
+| `RKE_ACTION_LOCK` | 1 | `session.lock(cb)` | Lock all doors |
+| `RKE_ACTION_OPEN_TRUNK` | 2 | `session.sendRKECommand(2, cb)` | Open rear trunk |
+| `RKE_ACTION_OPEN_FRUNK` | 3 | `session.sendRKECommand(3, cb)` | Open front trunk (frunk) |
+
+**Usage:**
+```javascript
+import teslaSession from './lib/tesla-ble/session.js'
+import { RKE_ACTION_OPEN_TRUNK, RKE_ACTION_OPEN_FRUNK } from './lib/tesla-ble/protocol/vcsec.js'
+
+// Convenience methods (session auto-establishes if needed):
+teslaSession.lock(result => { ... })
+teslaSession.unlock(result => { ... })
+
+// Generic RKE — for trunk / frunk:
+teslaSession.sendRKECommand(RKE_ACTION_OPEN_TRUNK, result => { ... })
+teslaSession.sendRKECommand(RKE_ACTION_OPEN_FRUNK, result => { ... })
+```
+
+### Information Requests
+
+Read-only queries sent as `UnsignedMessage.informationRequest` (field 1). No session required (unsigned).
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `INFO_REQUEST_GET_STATUS` | 0 | Vehicle status: door/closure states, lock state, sleep, user presence |
+| `INFO_REQUEST_GET_WHITELIST_INFO` | 5 | Full whitelist: all enrolled keys and their metadata |
+| `INFO_REQUEST_GET_WHITELIST_ENTRY_INFO` | 6 | Single key entry: slot, role, public key (used to fetch vehicle EC key after pairing) |
+
+**Usage:**
+```javascript
+import { buildInformationRequest, buildUnsignedMessage, buildRoutableMessage,
+         INFO_REQUEST_GET_STATUS, INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
+         DOMAIN_VEHICLE_SECURITY } from './lib/tesla-ble/protocol/vcsec.js'
+
+// Vehicle status (door/lock state):
+const req = buildInformationRequest(INFO_REQUEST_GET_STATUS)
+const msg = buildRoutableMessage({ toDomain: DOMAIN_VEHICLE_SECURITY, payload: buildUnsignedMessage({ informationRequest: req }) })
+
+// Whitelist entry info for slot 0 (fetch vehicle EC key after pairing):
+const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, null, 0)
+```
+
+**Vehicle Status response fields** (`parseVehicleStatus`):
+
+| Field | Description | Values |
+|-------|-------------|--------|
+| `closureStatuses.frontDriverDoor` | Front driver door | 0=closed, 1=open |
+| `closureStatuses.frontPassengerDoor` | Front passenger door | 0=closed, 1=open |
+| `closureStatuses.rearDriverDoor` | Rear driver door | 0=closed, 1=open |
+| `closureStatuses.rearPassengerDoor` | Rear passenger door | 0=closed, 1=open |
+| `closureStatuses.rearTrunk` | Rear trunk | 0=closed, 1=open |
+| `closureStatuses.frontTrunk` | Frunk | 0=closed, 1=open |
+| `closureStatuses.chargePort` | Charge port | 0=closed, 1=open |
+| `vehicleLockState` | Lock state | 0=unlocked, 1=locked |
+| `vehicleSleepStatus` | Sleep state | 0=awake, 1=asleep |
+| `userPresence` | Key detected | 0=absent, 1=present |
+
+### Session Management
+
+| Method | Description |
+|--------|-------------|
+| `session.requestSessionInfo(cb)` | Establish BLE session (ECDH key exchange) |
+| `session.isEstablished()` | Returns true if session is active |
+| `session.getStatus()` | Returns `{ established, counter, epoch, poolSize }` |
+| `session.reset()` | Clear session state (called on disconnect) |
+| `session.preserveForReconnect(timeoutMs)` | Cache session across short disconnects |
+| `session.restorePreservedSession()` | Restore cached session (skips ECDH) |
+
+### Pairing Operations
+
+| Operation | Description |
+|-----------|-------------|
+| `buildWhitelistOperation(pubKeyMsg)` | Add a key to the vehicle whitelist (requires NFC keycard tap) |
+| `buildUnsignedMessageWithWhitelist(op)` | Wrap whitelist operation in unsigned message (field 16) |
+| `session.requestVehiclePublicKey(cb)` | Fetch vehicle's EC public key via `GetWhitelistEntryInfo` |
+
+### Key Roles
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `KEY_ROLE_OWNER` | 2 | Full owner access |
+
+_(ROLE_SERVICE=1, ROLE_DRIVER=3 are defined in the Tesla SDK proto but not used in this app)_
+
+### Key Form Factors
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `KEY_FORM_FACTOR_ANDROID_DEVICE` | 7 | Triggers NFC keycard tap UI on car touchscreen |
+
+### Operation Status Codes
+
+Returned in `CommandStatus.operationStatus` from vehicle responses:
+
+| Code | Name | Meaning |
+|------|------|---------|
+| 0 | `OK` | Success |
+| 1 | `WAIT` | Waiting (tap keycard) |
+| 2 | `ERROR` | General error |
+| 3 | `INVALID_REQUEST` | Malformed message |
+| 4 | `INVALID_SIGNATURE` | HMAC verification failed |
+| 5 | `INVALID_TOKEN` | Session token rejected |
+| 6 | `INVALID_NONCE` | Replay detected (counter too low) |
+| 7 | `UNKNOWN_KEY` | Key not in whitelist — **also returned on successful pairing** |
+
+### Signature Types
+
+| Constant | Value | When Used |
+|----------|-------|-----------|
+| `SIGNATURE_TYPE_PRESENT_KEY` | 2 | Pairing messages (no HMAC, key not yet enrolled) |
+| `SIGNATURE_TYPE_HMAC` | 5 | All authenticated commands after session establishment |
+
 ## File Structure
 
 ```
@@ -427,7 +566,7 @@ keyfob/
 ├── app-side/
 │   ├── index.js                  # Phone service handler
 │   └── ble-crypto.js             # P-256 key generation (phone)
-└── __tests__/                    # Jest tests (107 tests)
+└── __tests__/                    # Jest tests (184 tests)
 ```
 
 ## Storage Files
@@ -597,7 +736,7 @@ zeus preview   # Preview in simulator
 ### Test
 
 ```bash
-npm test       # Run 181 Jest tests
+npm test       # Run 184 Jest tests
 ```
 
 ### Mock Mode

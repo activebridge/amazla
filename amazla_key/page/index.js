@@ -6,143 +6,141 @@ import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page'
 import { writeFileSync, readFileSync } from '@zos/fs'
 
-const readFile = () => {
-  const vehicle = readFileSync({ path: 'vehicle.txt', options: { encoding: 'utf8' } })
-  return JSON.parse(vehicle || '{}')
-}
-
-const writeFile = (data) => {
-  return writeFileSync({ path: 'vehicle.txt', data: JSON.stringify(data), options: { encoding: 'utf8' } })
-}
-
-import UI, { page, button, img, text, circle, progress } from '../../pages/ui'
-import {
-  NAME,
-  LOCK,
-  UNLOCK,
-  CHARGING,
-  ODOMETER,
-  BATTERY_LEVEL,
-  BATTERY_RANGE,
-  BATTERY,
-  CABLE,
-  level_color,
-  model,
-} from '../../pages/styles'
+import UI, { page, button, img, rect } from '../../pages/ui'
+import { LOCK, UNLOCK, CLOSE, OPEN } from '../../pages/styles'
 import vibrate from '../../pages/vibrate'
-import { getColor } from '../../pages/paint'
+
+import teslaSession from '../lib/tesla-ble/session.js'
 
 const { height } = getDeviceInfo()
 
-let isRunning = false
-let currentPage, locked = true
+var storage = {
+  data: {},
+  load: function() {
+    try {
+      var json = readFileSync({ path: 'ble_settings.txt', options: { encoding: 'utf8' } })
+      this.data = json ? JSON.parse(json) : {}
+    } catch (e) { this.data = {} }
+  },
+  save: function() {
+    try {
+      writeFileSync({ path: 'ble_settings.txt', data: JSON.stringify(this.data), options: { encoding: 'utf8' } })
+    } catch (e) {}
+  },
+  getItem: function(key) { return this.data[key] || null },
+  setItem: function(key, val) { this.data[key] = val; this.save() },
+  removeItem: function(key) { delete this.data[key]; this.save() }
+}
 
-const render = (attrs) => {
-  console.log('RENDER')
-  console.log(JSON.stringify(attrs))
+var vehicleState = {
+  locked: true,
+  df: false, dr: false, pf: false, pr: false,
+  trunkOpen: false, frunkOpen: false,
+}
 
-  let vehicle = attrs || {}
+var isRunning = false
 
-  const {
-    name = 'Connect Tesla Account',
-    battery_level = 0,
-    battery_range = '- - -',
-    isCharging = false,
-    isConnected = false,
-    locked: isLocked = true,
-    car_type = 'modely',
-    color,
-    unit = '㎖',
-  } = vehicle
-
-  locked = isLocked
-
-  const chargeColor = isCharging ? 0x00EF33 : level_color(battery_level)
-  const carColor = color ? `0x${color}` : chargeColor
-  const car = `cars/${model(car_type)}`
+const render = () => {
+  const { locked, df, dr, pf, pr, trunkOpen, frunkOpen } = vehicleState
 
   UI.reset()
   const slide1 = page(0, 0)
 
-  // Slide 1: Lock/unlock controls
-  locked && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
-  !locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' }, slide1)
-  locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlockClick }, slide1)
-  !locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLockClick }, slide1)
+  locked  && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
+  !locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' },      slide1)
+  frunkOpen && img({ w: 352, h: 460, src: 'Y_Frunk.png' },           slide1)
+  trunkOpen && img({ w: 352, h: 460, src: 'Y_Trunk.png' },           slide1)
+  pf && img({ w: 352, h: 460, src: 'Y_Right_Front_Door.png' }, slide1)
+  pr && img({ w: 352, h: 460, src: 'Y_Right_Back_Door.png' },  slide1)
+  df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' },  slide1)
+  dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' },   slide1)
 
-  button({ x: 0, y: -150, w: 130, h: 50, text: 'BLE CONTROL', text_size: 15,
-    click_func: function() { push({ url: 'page/ble/index' }) }
+  frunkOpen  && button({ ...CLOSE, y: -150, w: 200, h: 160, click_func: onFrunk }, slide1)
+  !frunkOpen && button({ ...OPEN,  y: -160, w: 200, h: 160, click_func: onFrunk }, slide1)
+  trunkOpen  && button({ ...CLOSE, y: 160,  w: 200, h: 160, click_func: onTrunk }, slide1)
+  !trunkOpen && button({ ...OPEN,  y: 150,  w: 200, h: 160, click_func: onTrunk }, slide1)
+  locked  && button({ ...LOCK,   w: 100, h: 110, click_func: onUnlock }, slide1)
+  !locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock   }, slide1)
+
+  rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
+
+  button({
+    centered: false,
+    x: 108, y: 217, w: 72, h: 36,
+    text: 'BLE', text_size: 13, color: 0x555555,
+    normal_color: 0x111111, press_color: 0x222222, radius: 6,
+    click_func: function() { push({ url: 'page/ble/index' }) },
   }, slide1)
-
-  console.log('RENDERED')
 }
 
-const handleBleCommand = (command, isLock) => {
-  if (isRunning) return hmUI.showToast({ text: 'Busy…' })
-  isRunning = true
+const applyStatus = (status) => {
+  const cs = status.closureStatuses || {}
+  vehicleState = {
+    locked:    status.vehicleLockState === 1,
+    df:        cs.frontDriverDoor    === 1,
+    dr:        cs.rearDriverDoor     === 1,
+    pf:        cs.frontPassengerDoor === 1,
+    pr:        cs.rearPassengerDoor  === 1,
+    trunkOpen: cs.rearTrunk          === 1,
+    frunkOpen: cs.frontTrunk         === 1,
+  }
+}
 
-  const method = command === 'lock' ? 'DOOR_LOCK' : 'DOOR_UNLOCK'
-  const title = isLock ? '🔒 Locking…' : '🔓 Unlocking…'
-
-  currentPage.request({ method }).then(({ error, ...props }) => {
-    isRunning = false
-    if (error) {
-      hmUI.showToast({ text: `Error: ${error}` })
-      hmUI.updateStatusBarTitle('Error')
-      console.log(`[INDEX] ${command} failed:`, error)
+const refreshStatus = () => {
+  hmUI.updateStatusBarTitle('Syncing…')
+  teslaSession.getVehicleStatus(function(result) {
+    if (result.success) {
+      applyStatus(result.status)
+      hmUI.updateStatusBarTitle('Online')
+      render()
     } else {
-      const status = isLock ? '🔒 Locked' : '🔓 Unlocked'
-      hmUI.showToast({ text: status })
-      hmUI.updateStatusBarTitle(status)
-      vibrate(24)
-      locked = isLock
-      let data = readFile()
-      data.locked = isLock
-      writeFile(data)
-      render(data)
-      console.log(`[INDEX] ${command} success`)
+      hmUI.updateStatusBarTitle('Offline')
+      console.log('[INDEX] getVehicleStatus failed:', result.error)
     }
-  }).catch(error => {
+  })
+}
+
+const sendCommand = (rkeAction, label) => {
+  if (isRunning) { hmUI.showToast({ text: 'Busy…' }); return }
+  isRunning = true
+  hmUI.updateStatusBarTitle(label + '…')
+  teslaSession.sendRKECommand(rkeAction, function(result) {
     isRunning = false
-    hmUI.showToast({ text: `Error: ${error}` })
-    console.log(`[INDEX] ${command} caught error:`, error)
+    if (result.success) {
+      vibrate(24)
+      hmUI.updateStatusBarTitle('✓ ' + label)
+      setTimeout(refreshStatus, 1000)
+    } else {
+      hmUI.updateStatusBarTitle('✗ Error')
+      hmUI.showToast({ text: result.error || 'Error' })
+    }
   })
 }
 
-const onLockClick = () => {
-  hmUI.updateStatusBarTitle('🔒 Locking…')
-  handleBleCommand('lock', true)
-}
+const onLock   = () => sendCommand(1, 'Locking')
+const onUnlock = () => sendCommand(0, 'Unlocking')
+const onTrunk  = () => sendCommand(2, 'Trunk')
+const onFrunk  = () => sendCommand(3, 'Frunk')
 
-const onUnlockClick = () => {
-  hmUI.updateStatusBarTitle('🔓 Unlocking…')
-  handleBleCommand('unlock', false)
-}
+Page(BasePage({
+  build() {
+    setWakeUpRelaunch(true)
+    setPageBrightTime(300)
 
-Page(
-  BasePage({
-    state: {},
+    storage.load()
+    teslaSession.setStorage(storage)
 
-    build() {
-      setWakeUpRelaunch(true)
-      setPageBrightTime(300)
-      currentPage = this
+    onKey({
+      callback: (key, keyEvent) => {
+        if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
+          vehicleState.locked ? onUnlock() : onLock()
+        }
+        return false
+      },
+    })
 
-      onKey({
-        callback: (key, keyEvent) => {
-          if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
-            locked ? onUnlockClick() : onLockClick()
-          }
-          return false
-        },
-      })
-
-      render({ ...readFile(), ...{
-        online: false,
-      }})
-      // hmUI.setScrollView(true, height, 2, true)
-      // hmUI.scrollToPage(1, false)
-      hmUI.setStatusBarVisible(false)
-    },
-  })
-)
+    render()
+    hmUI.setStatusBarVisible(false)
+    setTimeout(refreshStatus, 500)
+  },
+}))
