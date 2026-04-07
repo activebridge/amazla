@@ -174,6 +174,11 @@ class TeslaBLE {
           settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
           return
         }
+        // Listener started - ready to send messages immediately
+        settle({ success: true, mac })
+        console.log('[BLE] Ready to send messages')
+        
+        // Register callbacks and enable CCCD in background (don't block on completion)
         this.charaValueHandler = (uuid, data, len) => {
           console.log('[BLE] charaValueArrived:', uuid, len)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
@@ -184,31 +189,21 @@ class TeslaBLE {
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
         this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-        this.writeCompleteHandler = (chara, desc, status) => {
-          console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
-          if (done) return
-          console.log('[BLE] Requesting MTU 247...')
-          try {
-            hmBle.mstSetMTU(247, (mtuResult) => {
-              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
-          console.log('[BLE] CCCD confirmed, ready')
-          settle({ success: true, mac })
+        
+        // Try to set MTU (optional, don't block on it)
+        try {
+          hmBle.mstSetMTU(247, (mtuResult) => {
+            const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+            this._mtu = Math.max(20, negotiated)
+            console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+          })
+        } catch (e) {
+          console.log('[BLE] mstSetMTU not available:', e.message || e)
         }
-        this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
+        
+        // Enable indications in background (don't wait for confirmation)
         console.log('[BLE] Enabling indications (CCCD=0x0002)...')
         this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-        setTimeout(() => {
-          if (!done) {
-            console.log('[BLE] CCCD timeout fallback, continuing anyway')
-            settle({ success: true, mac })
-          }
-        }, 4000)
       })
     })
   }
