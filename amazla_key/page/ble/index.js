@@ -442,6 +442,11 @@ Page(BasePage({
     currentPage = this
     storage.load()
     
+    // CRITICAL: Clean up any pending operations from main page before initializing BLE here
+    console.log('[BLE-LIFECYCLE] Resetting BLE and session from main page interference')
+    teslaBleApi.reset()
+    teslaSession.reset()
+    
     if (!teslaBleApi.__blePageInit) {
       console.log('[BLE-LIFECYCLE] First initialization - calling teslaBleApi.init()')
       teslaBleApi.init(storage)
