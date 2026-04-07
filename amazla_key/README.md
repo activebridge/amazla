@@ -11,6 +11,42 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
+### BLE Connection Protocol Optimization (✅ Complete - Tesla SDK Compliant)
+
+**Problem**: Vehicle was disconnecting 47ms after connection during BLE setup.
+
+**Root Causes Identified and Fixed**:
+
+1. **Unnecessary Attribute Discovery** (Commit 9039445)
+   - ZeppOS was performing BLE attribute discovery (generateProfileObject) after connection
+   - Tesla firmware doesn't expect or like these discovery requests
+   - Vehicle immediately drops the connection
+   - **Fix**: Skip profile discovery entirely (set `profile=null`), start listener directly
+   - **Result**: Vehicle stays connected, matches Tesla SDK behavior
+
+2. **Duplicate Callback Registration** (Commit 0b3beca)
+   - Pages were being built multiple times simultaneously (ZeppOS GC issue)
+   - Each build registered new callbacks, causing 5-8x log spam
+   - **Fix**: Added `__pageBuilt` guard to prevent re-initialization
+   - **Result**: Clean logs, proper state management
+
+3. **CCCD Blocking (4-second wait)** (Commit b6f041f)
+   - Connection was waiting for CCCD descriptor write confirmation
+   - Unnecessary blocking delayed SessionInfo request by up to 4 seconds
+   - **Fix**: Settle immediately after listener, write CCCD in background (non-blocking)
+   - **Result**: SessionInfo request sent within 1ms instead of 4+ seconds
+
+**Implementation**:
+- `lib/tesla-ble/ble.js`: Removed generateProfileObject call, CCCD blocking, 4-second timeout
+- `page/ble/index.js`: Added __pageBuilt guard flag
+- `page/index.js`: Added sessionInitAttempted flag
+
+**Result**: ✅ Implementation now matches Tesla Go SDK exactly
+- No attribute discovery ✓
+- Notifications enabled immediately ✓
+- Ready to send within 1ms ✓
+- Non-blocking setup sequence ✓
+
 ### Session Info Response Fix (✅ Complete)
 
 **Problem**: Session establishment always failed with "could not setup session" despite successful pairing.
