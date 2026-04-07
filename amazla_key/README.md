@@ -4,10 +4,10 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Features
 
-- **BLE Direct Control** - Bluetooth control without internet (standalone)
-- **Passive Entry** - Auto-unlock when approaching car with app open
-- **HTTP API Control** - Lock, unlock, climate, trunk via Tesla Fleet API
-- **Vehicle Status** - Battery level, range, charging state, door status
+- **BLE Direct Control** - Bluetooth control without internet, fully standalone
+- **Vehicle Status** - Door/closure states, lock state, sleep status
+- **Session Persistence** - Cached ECDH session for instant reconnection (< 1s within 5 min)
+- **Key Pool** - Pre-generated ephemeral keypairs allow offline session establishment
 
 ## Recent Improvements (Latest)
 
@@ -111,12 +111,9 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 
 **Result**: EC key extraction works reliably; Phase 4 ECDH optimization (2× speedup) fully functional
 
-### Navigation & Menu Structure (✅ Complete)
-- **Index page is now main entry point**: Shows navigation menu with two buttons
-  - **BLE DEBUG**: Access pairing, clear stored keys, manage enrollment
-  - **PASSIVE**: Unlock/lock vehicle (main control interface)
-- **Clear button**: Removes both stored MAC address and vehicle EC key for fresh pairing
-- **HTTP temporarily disabled on index**: Focuses on BLE pairing flow
+### Navigation & UI (✅ Complete)
+- **Main page** (`page/index.js`): Vehicle control — lock/unlock/frunk/trunk buttons with live door status overlay; small **BLE** button for debug access
+- **BLE debug page** (`page/ble/index.js`): Scan, pair, clear keys, manage pool, view connection log
 
 ## Architecture Overview
 
@@ -450,7 +447,7 @@ teslaSession.sendRKECommand(RKE_ACTION_OPEN_FRUNK, result => { ... })
 
 ### Information Requests
 
-Read-only queries sent as `UnsignedMessage.informationRequest` (field 1). No session required (unsigned).
+Read-only queries sent as `UnsignedMessage.informationRequest` (field 1). Sent as HMAC-signed authenticated commands — a session must be established first.
 
 | Constant | Value | Description |
 |----------|-------|-------------|
@@ -492,6 +489,7 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 | Method | Description |
 |--------|-------------|
 | `session.requestSessionInfo(cb)` | Establish BLE session (ECDH key exchange) |
+| `session.getVehicleStatus(cb)` | Fetch door/lock/sleep status (auto-establishes session) |
 | `session.isEstablished()` | Returns true if session is active |
 | `session.getStatus()` | Returns `{ established, counter, epoch, poolSize }` |
 | `session.reset()` | Clear session state (called on disconnect) |
@@ -545,86 +543,69 @@ Returned in `CommandStatus.operationStatus` from vehicle responses:
 ## File Structure
 
 ```
-keyfob/
-├── secrets.js                    # OAuth credentials only (CLIENT_ID, CLIENT_SECRET)
+amazla_key/
 ├── page/
-│   └── index.js                  # Main UI with all controls
+│   ├── index.js                  # Main UI (lock/unlock/trunk/frunk + vehicle status)
+│   └── ble/
+│       └── index.js              # BLE debug page (scan, pair, pool management)
 ├── lib/
-│   ├── ble-service.js            # High-level BLE service
 │   └── tesla-ble/
-│       ├── ble.js                # Low-level BLE (scan, connect, send)
-│       ├── session.js            # Session management (ECDH, commands)
-│       ├── index.js              # Tesla BLE API
+│       ├── ble.js                # Low-level BLE (scan, connect, send/receive)
+│       ├── session.js            # Session management (ECDH, signing, commands)
+│       ├── index.js              # Tesla BLE API (high-level wrapper)
 │       ├── crypto/
-│       │   ├── p256.js           # P-256 elliptic curve (ECDH)
+│       │   ├── p256.js           # P-256 elliptic curve (ECDH, precomputed table)
 │       │   ├── sha256.js         # SHA-256 / SHA-1
-│       │   ├── hmac.js           # HMAC-SHA256
-│       │   └── aes-gcm.js        # AES-GCM encryption
+│       │   └── hmac.js           # HMAC-SHA256 + hex utilities
 │       └── protocol/
 │           ├── protobuf.js       # Protobuf encoding/decoding
-│           └── vcsec.js          # Tesla VCSEC message builders
-├── app-side/
-│   ├── index.js                  # Phone service handler
-│   └── ble-crypto.js             # P-256 key generation (phone)
-└── __tests__/                    # Jest tests (184 tests)
+│           └── vcsec.js          # Tesla VCSEC message builders/parsers
+└── __tests__/                    # Jest tests
 ```
 
 ## Storage Files
 
-| File | Contents | Managed By |
-|------|----------|------------|
-| `secrets.js` | OAuth credentials (CLIENT_ID, CLIENT_SECRET) | Developer (manual) |
-| `session_keys.txt` | Pool of pre-generated session keypairs | GEN POOL button (BLE DEBUG page) |
-| `ble_settings.txt` | Watch/vehicle keys, Tesla MAC address | Auto-saved during BLE pairing/sync |
-| `vehicle.txt` | Cached vehicle data | Auto-saved on API fetch |
+| File | Key | Contents | Managed By |
+|------|-----|----------|------------|
+| `ble_settings.txt` | `watch_private_key` | 32-byte enrolled private key (hex) | Phone sync |
+| `ble_settings.txt` | `watch_public_key` | 65-byte enrolled public key (hex) | Phone sync |
+| `ble_settings.txt` | `tesla_ble_mac` | Vehicle BLE MAC address | Auto-saved on scan |
+| `ble_settings.txt` | `vehicle_ec_public_key` | 65-byte vehicle EC key (hex) | Auto-saved after pairing |
+| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (base64) | Phone sync |
+| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (base64, 97 B each) | GEN POOL button |
 
 ## Setup Guide
 
-### 1. Configure OAuth Credentials in secrets.js
+### 1. Deploy to Watch & Pair with Tesla
 
-```javascript
-// OAuth credentials for Tesla API (phone app only)
-export const CLIENT_ID = 'your_client_id'
-export const CLIENT_SECRET = 'your_client_secret'
-```
+**Navigation**: Index page → BLE button
 
-### 2. Deploy to Watch & Pair with Tesla
-
-**Navigation**: Index page → BLE DEBUG button
-
-1. Open app on watch → **INDEX PAGE** (main menu)
-2. Tap **BLE DEBUG** button → Pairing interface
-3. Tap **SCAN** button → Finds Tesla vehicle by BLE MAC
-4. Tap **PAIR** button → Initiates enrollment
-5. **Tap your NFC keycard** on car's center console when prompted
-6. Watch logs show: **"Saved vehicle EC key"** (in green) ✅
-7. Pairing complete!
+1. Open app on watch → tap **BLE** button → BLE debug page
+2. Tap **SCAN** → finds Tesla vehicle by BLE MAC
+3. Tap **PAIR** → initiates enrollment
+4. **Tap your NFC keycard** on car's center console when prompted
+5. Watch logs show: **"Saved vehicle EC key"** (in green) ✅
+6. Pairing complete!
 
 **What happens**: Vehicle's 65-byte EC public key is automatically extracted from the pairing response and saved to persistent storage. This key is reused for all future session establishments.
 
-### 4. Sync Session Keys
+### 2. Sync Session Keys (phone required once)
 
-1. Still in BLE DEBUG page, tap **GEN POOL** button (needs phone connected)
-2. Phone generates 5 P-256 keypairs
-3. Keys stored on watch for offline use
-4. Repeat when keys run low
+1. Still in BLE debug page, tap **GEN POOL** button (needs phone connected)
+2. Phone generates P-256 keypairs and the ECDH doublings table
+3. Keys and table stored on watch for fully offline use
+4. Repeat when pool runs low (app auto-requests replenishment)
 
-### 5. Use!
+### 3. Use!
 
-**Navigation**: Index page → PASSIVE button
+- Open app → main page shows vehicle control (lock/unlock/frunk/trunk)
+- Commands auto-establish a BLE session when needed
+- Tap **BLE** button for debug info / re-pairing
 
-- Tap **PASSIVE** button → Main control interface
-- **CONNECT** button: Establishes BLE session with vehicle
-- **UNLOCK/LOCK/TRUNK** buttons: Send commands (works without phone)
-- **Passive entry**: Just open app and approach car
-- Session auto-establishes when needed
-
-**Connection timing** (optimized with Phase 1-3):
-- First connect: 13-14 seconds (app launch → ready)
-- Reconnect (within 5 min): <1 second (uses cached session!)
-- Commands in sequence: 1-2 seconds each (connection kept alive)
-- Failure (car off): ~10 seconds (fast feedback)
-- Multiple retries: Up to 3 attempts with adaptive timeouts
+**Connection timing**:
+- First connect: ~9-10 seconds (BLE + ECDH)
+- Reconnect within 5 min: < 1 second (cached session)
+- Commands in sequence: 1-2 seconds each (connection kept alive 60s)
 
 ### Troubleshooting
 
@@ -634,10 +615,9 @@ export const CLIENT_SECRET = 'your_client_secret'
 - Try pairing again with fresh enrollment
 
 **Need to re-pair?**
-1. Go to **BLE DEBUG** page
+1. Tap **BLE** button on main page → BLE debug page
 2. Tap **CLEAR** button (removes saved MAC and EC key)
 3. Tap **SCAN** and **PAIR** again
-4. This ensures fresh enrollment with new vehicle EC key
 
 ## Tesla SDK Protocol - Vehicle EC Key Acquisition
 

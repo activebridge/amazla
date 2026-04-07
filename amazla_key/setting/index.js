@@ -39,6 +39,7 @@ AppSettingsPage({
 
         // Subtitle
         Text({
+          paragraph: true,
           style: {
             fontSize: '13px',
             color: '#999999',

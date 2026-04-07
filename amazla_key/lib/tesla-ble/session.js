@@ -354,27 +354,30 @@ class TeslaSession {
         callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
         return
       }
-      console.log('[SESSION] Cleaning BLE state...')
-      try {
-        teslaBLE.stopScan() // Stop any running scan
-      } catch (e) {
-        console.log('[SESSION] stopScan error (ignored):', e.message || e)
+      if (teslaBLE.isConnected()) {
+        console.log('[SESSION] Disconnecting existing connection...')
+        teslaBLE.disconnect()
       }
-      teslaBLE.disconnect() // Disconnect and cleanup
-      setTimeout(function() {
-        console.log('[SESSION] Connecting to vehicle: ' + mac)
+      const doConnect = function(attempt) {
+        console.log('[SESSION] Connecting to vehicle: ' + mac + ' (attempt ' + attempt + ')')
         teslaBLE.connect(mac, function(result) {
           console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
-          
           if (!result.success) {
+            // Retry once on "disconnected during setup" — vehicle needs a moment
+            if (attempt === 1 && result.error && result.error.indexOf('disconnected during setup') !== -1) {
+              console.log('[SESSION] Vehicle dropped connection during setup, retrying in 2s...')
+              setTimeout(function() { doConnect(2) }, 2000)
+              return
+            }
             console.log('[SESSION] ✗ Connection failed: ' + (result.error || 'unknown'))
             callback({ success: false, error: 'BLE connection failed: ' + (result.error || 'unknown') })
             return
           }
-          console.log('[SESSION] ✓ Connected to vehicle, proceeding immediately')
+          console.log('[SESSION] ✓ Connected to vehicle, proceeding')
           proceedWithSession()
         })
-      }, 500)
+      }
+      doConnect(1)
     }
     
     const proceedWithSession = function() {
