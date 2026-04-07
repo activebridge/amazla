@@ -161,14 +161,9 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected successfully, settling...')
+      console.log('[BLE] Connected successfully, setting up GATT profile...')
       
-      // Settle immediately - connection is ready for send() operations
-      settle({ success: true, mac })
-      
-      // Call startListener in the background (non-blocking)
-      // This builds the GATT profile so we can write descriptors/characteristics
-      // Start immediately (synchronously) before any disconnect callbacks can fire
+      // Call startListener immediately (synchronously) - don't settle until it's ready
       console.log('[BLE] Setting up GATT profile in background...')
       this._ensureBLE().startListener(this.services, (response) => {
         if (response && response.success) {
@@ -203,8 +198,14 @@ class TeslaBLE {
           } catch (e) {
             console.log('[BLE] Failed to register charaNotification:', e.message || e)
           }
+          
+          // NOW settle - after GATT profile is ready
+          console.log('[BLE] GATT profile ready, settling connection...')
+          settle({ success: true, mac })
         } else {
           console.log('[BLE] GATT profile setup failed:', response && response.message)
+          this.connected = false
+          settle({ success: false, error: 'GATT profile setup failed', attemptNumber })
         }
       })
     })
