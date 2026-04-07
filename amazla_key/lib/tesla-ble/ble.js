@@ -161,7 +161,7 @@ class TeslaBLE {
         return
       }
       // Generate profile with generateProfileObject (required for startListener to work)
-      // Uses our hardcoded UUIDs, no explicit discovery query
+      // Pattern from official ZeppOS documentation - call immediately, no delay
       console.log('[BLE] Generating profile object...')
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
@@ -174,15 +174,9 @@ class TeslaBLE {
         return
       }
       
-      // Give BLE stack time to stabilize before starting listener
-      setTimeout(() => {
-        if (!this.connected) {
-          this._cleanup()
-          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
-          return
-        }
-        console.log('[BLE] Starting listener...')
-        this._ensureBLE().startListener(this.profile, (response) => {
+      // Start listener immediately (no delay) - per ZeppOS official example
+      console.log('[BLE] Starting listener...')
+      this._ensureBLE().startListener(this.profile, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
@@ -222,8 +216,7 @@ class TeslaBLE {
         // Enable indications in background (don't wait for confirmation)
         console.log('[BLE] Enabling indications (CCCD=0x0002)...')
         this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-        })
-      }, CONNECTION_CONFIG.stackStabilizeWait)  // 100ms delay for BLE stack stability
+      })
     })
   }
   disconnect() {
