@@ -213,7 +213,9 @@ Page(BasePage({
     hmUI.setStatusBarVisible(false)
     keepScreenOn(true)
     
+    // TEMPORARY: Disable auto-establish on main page to prevent BLE interference with BLE page
     // Auto-establish session if pairing data exists (only once per page load)
+    /*
     if (!sessionInitAttempted) {
       sessionInitAttempted = true
       setTimeout(() => {
@@ -229,5 +231,7 @@ Page(BasePage({
         })
       }, 100)
     }
+    */
+    console.log('[INDEX] TEMP: Auto-establish disabled - use BLE page only')
   },
 }))
