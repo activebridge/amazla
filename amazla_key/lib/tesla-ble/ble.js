@@ -168,51 +168,45 @@ class TeslaBLE {
       
       // Call startListener in the background (non-blocking)
       // This builds the GATT profile so we can write descriptors/characteristics
-      // We don't wait for it to complete - the connection is already usable for send()
+      // Start immediately (synchronously) before any disconnect callbacks can fire
       console.log('[BLE] Setting up GATT profile in background...')
-      setTimeout(() => {
-        if (!this.connected) {
-          console.log('[BLE] Skipped startListener (already disconnected)')
-          return
-        }
-        this._ensureBLE().startListener(this.services, (response) => {
-          if (response && response.success) {
-            console.log('[BLE] GATT profile setup complete, enabling notifications...')
-            this.gattReady = true  // Mark GATT as ready for sending
-            
-            // ONLY write descriptor AFTER profile is ready
-            try {
-              console.log('[BLE] Enabling indications (CCCD)...')
-              this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-            } catch (e) {
-              console.log('[BLE] Failed to enable CCCD:', e.message || e)
-            }
-            
-            // Register callbacks for unsolicited notifications
-            this.charaValueHandler = (uuid, data, len) => {
-              console.log('[BLE] charaValueArrived:', uuid, len)
-              if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-            }
-            try {
-              this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-            } catch (e) {
-              console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
-            }
-            
-            this.charaNotificationHandler = (uuid, data, len) => {
-              console.log('[BLE] charaNotification:', uuid, len)
-              if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-            }
-            try {
-              this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-            } catch (e) {
-              console.log('[BLE] Failed to register charaNotification:', e.message || e)
-            }
-          } else {
-            console.log('[BLE] GATT profile setup failed:', response && response.message)
+      this._ensureBLE().startListener(this.services, (response) => {
+        if (response && response.success) {
+          console.log('[BLE] GATT profile setup complete, enabling notifications...')
+          this.gattReady = true  // Mark GATT as ready for sending
+          
+          // ONLY write descriptor AFTER profile is ready
+          try {
+            console.log('[BLE] Enabling indications (CCCD)...')
+            this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+          } catch (e) {
+            console.log('[BLE] Failed to enable CCCD:', e.message || e)
           }
-        })
-      }, 0)  // No delay - start immediately to keep vehicle firmware happy
+          
+          // Register callbacks for unsolicited notifications
+          this.charaValueHandler = (uuid, data, len) => {
+            console.log('[BLE] charaValueArrived:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          try {
+            this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+          } catch (e) {
+            console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
+          }
+          
+          this.charaNotificationHandler = (uuid, data, len) => {
+            console.log('[BLE] charaNotification:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          try {
+            this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+          } catch (e) {
+            console.log('[BLE] Failed to register charaNotification:', e.message || e)
+          }
+        } else {
+          console.log('[BLE] GATT profile setup failed:', response && response.message)
+        }
+      })
     })
   }
   disconnect() {
