@@ -153,17 +153,27 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, skipping profile discovery and starting listener immediately...')
+      console.log('[BLE] Connected, setting up listener...')
       
       if (!this.connected) {
         this._cleanup()
         settle({ success: false, error: 'Connection lost during setup', attemptNumber })
         return
       }
-      // Skip generateProfileObject - it triggers attribute discovery that Tesla may reject
-      // Tesla SDK connects directly without explicit profile discovery
-      this.profile = null
-      console.log('[BLE] Starting listener without profile discovery...')
+      // Build minimal profile for startListener without attribute discovery
+      // Tesla SDK doesn't need discovery, but ZeppOS requires valid profile for startListener
+      this.profile = {
+        [TESLA_SERVICE_UUID]: {
+          [TESLA_WRITE_UUID]: { properties: 0x04 },  // WRITE_WITHOUT_RESPONSE
+          [TESLA_READ_UUID]: { 
+            properties: 0x10,  // NOTIFY
+            descriptors: {
+              '2902': { value: 0x0000 }  // CCCD
+            }
+          }
+        }
+      }
+      console.log('[BLE] Starting listener...')
       this._ensureBLE().startListener(this.profile, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
