@@ -1,5 +1,4 @@
-import { MAIN, SECTION_TITLE } from './styles.js'
-import { TESLA_LOGO } from './styles.js'
+import { MAIN, SECTION_TITLE, TESLA_LOGO } from './styles.js'
 
 AppSettingsPage({
   build({ settingsStorage }) {
@@ -11,14 +10,15 @@ AppSettingsPage({
           marginBottom: '24px',
           paddingBottom: '16px',
           borderBottom: '1px solid #3A3B3D',
+          width: '100%',
         }
       }, [
         // Tesla Logo
         Image({
           alt: 'Tesla',
           src: TESLA_LOGO,
-          width: 100,
-          height: 100,
+          width: 80,
+          height: 80,
           style: {
             margin: '0 auto 12px',
             display: 'block',
@@ -28,13 +28,14 @@ AppSettingsPage({
         // Header Title
         Text({
           style: {
-            fontSize: '28px',
+            fontSize: '24px',
             fontWeight: 'bold',
             margin: '0 0 8px',
             textAlign: 'center',
             width: '100%',
+            color: '#CCCCCC',
           }
-        }, '�� Tesla Key Setup'),
+        }, 'Tesla Key Setup'),
 
         // Subtitle
         Text({
@@ -44,12 +45,13 @@ AppSettingsPage({
             margin: '0',
             textAlign: 'center',
             width: '100%',
+            lineHeight: '1.4',
           }
         }, 'Pure Bluetooth • No Internet Required'),
       ]),
 
       // HOW TO PAIR
-      Text({ style: SECTION_TITLE }, '🔗 How to Pair'),
+      Text({ style: SECTION_TITLE }, 'How to Pair'),
       
       StepCard(1, 'Wake Tesla', 'Make sure your car is awake. Press the brake pedal, open a door, or tap a key card.'),
       StepCard(2, 'Open BLE Page', 'On your watch, go to the app and tap the BLE settings button.'),
@@ -59,31 +61,31 @@ AppSettingsPage({
       StepCard(6, 'Done!', 'Your watch is now paired! Go back to the main page and test: tap lock/unlock to control your car.'),
 
       // HOW TO USE
-      Text({ style: SECTION_TITLE }, '🎯 How to Use'),
+      Text({ style: SECTION_TITLE }, 'How to Use'),
       
       SimpleCard('Lock Your Car', 'On the main page, tap the lock button. Your car will lock immediately.'),
       SimpleCard('Unlock Your Car', 'On the main page, tap the unlock button. Your car will unlock immediately.'),
       SimpleCard('Works Offline', 'You don\'t need your phone. As long as your watch is near the car (within 30 feet), it will work.'),
 
       // HOW TO RESET
-      Text({ style: SECTION_TITLE }, '🔄 How to Reset'),
+      Text({ style: SECTION_TITLE }, 'How to Reset'),
       
-      Text({ style: { fontSize: '14px', fontWeight: 'bold', color: '#CCCCCC', marginBottom: '8px' } }, 'If pairing doesn\'t work:'),
-      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px' } }, '1. On the BLE page, tap "Clear" to remove the old pairing'),
-      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px' } }, '2. Start over from "How to Pair" step 1'),
+      Text({ style: { fontSize: '14px', fontWeight: 'bold', color: '#CCCCCC', marginBottom: '8px', marginTop: '12px' } }, 'If pairing does not work:'),
+      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px', lineHeight: '1.4' } }, '1. On the BLE page, tap "Clear" to remove the old pairing'),
+      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px', lineHeight: '1.4' } }, '2. Start over from "How to Pair" step 1'),
       
       // TROUBLESHOOTING
-      Text({ style: SECTION_TITLE }, '❓ Troubleshooting'),
+      Text({ style: SECTION_TITLE }, 'Troubleshooting'),
       
-      FAQCard('Car won\'t lock/unlock', 'Make sure the car is nearby (within 30 feet). If still not working, go to the BLE page and tap "Connect" to re-establish connection.'),
+      FAQCard('Car will not lock/unlock', 'Make sure the car is nearby (within 30 feet). If still not working, go to the BLE page and tap "Connect" to re-establish connection.'),
       FAQCard('Pairing failed', 'Make sure the car is awake and within 10 feet. Try again. If still failing, restart the car.'),
       FAQCard('Card not recognized', 'Try holding the NFC card on different spots on the steering wheel - left side or right side. Some cars are more sensitive to one side.'),
       FAQCard('Says "Session not established"', 'On the BLE page, tap "Connect" to establish the connection with your car.'),
       FAQCard('App keeps asking me to pair', 'Your car was restarted or lost connection. Just open the BLE page and tap "Connect" to get back online.'),
 
       // Footer
-      Text({ style: { fontSize: '12px', color: '#999999', margin: '24px 0 8px', textAlign: 'center' } }, '✅ Your car unlocks with a secure digital key'),
-      Text({ style: { fontSize: '12px', color: '#999999', textAlign: 'center' } }, 'No data is shared or stored anywhere'),
+      Text({ style: { fontSize: '12px', color: '#999999', margin: '24px 0 8px', textAlign: 'center' } }, 'Your car unlocks with a secure digital key'),
+      Text({ style: { fontSize: '12px', color: '#999999', textAlign: 'center', marginBottom: '16px' } }, 'No data is shared or stored anywhere'),
     ])
   },
 })
@@ -114,6 +116,7 @@ function StepCard(number, title, description) {
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
+        minWidth: '40px',
       }
     }, String(number)),
     View({ style: { flex: 1 } }, [
