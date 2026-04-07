@@ -153,33 +153,18 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, generating profile...')
+      console.log('[BLE] Connected, starting listener directly (no profile generation)...')
       
       if (!this.connected) {
         this._cleanup()
         settle({ success: false, error: 'Connection lost during setup', attemptNumber })
         return
       }
-      // Generate profile with generateProfileObject (required for startListener to work)
-      // Pattern from official ZeppOS documentation - call immediately, no delay
-      console.log('[BLE] Generating profile object...')
-      this.profile = this._ensureBLE().generateProfileObject(this.services, {
-        [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
-      })
-      console.log('[BLE] Profile generated, result:', this.profile ? 'success' : 'null')
       
-      if (!this.profile) {
-        console.log('[BLE] ⚠️ Profile generation failed')
-        this._cleanup()
-        settle({ success: false, error: 'Profile generation failed', attemptNumber })
-        return
-      }
-      
-      // Start listener immediately (no delay) - per ZeppOS official example
-      console.log('[BLE] Starting listener with profile...')
-      this._ensureBLE().startListener(this.profile, (response) => {
-        console.log('[BLE] Listener response:', JSON.stringify(response))
-        console.log('[BLE] Listener response:', JSON.stringify(response))
+      // Try startListener with null profile first - maybe generateProfileObject is the culprit
+      console.log('[BLE] Calling startListener with null (bypassing generateProfileObject)...')
+      this._ensureBLE().startListener(null, (response) => {
+        console.log('[BLE] ✓ Listener callback fired! response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
           this.connected = false
