@@ -422,9 +422,14 @@ class TeslaSession {
         callback({ success: false, error: result.error })
         return
       }
-      try {
-        const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
-        console.log('[SESSION] Raw response hex: ' + dataHex)
+       try {
+         if (!result.data) {
+           console.log('[SESSION] ERROR: result.data is null/undefined')
+           callback({ success: false, error: 'No data in response' })
+           return
+         }
+         const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
+         console.log('[SESSION] Raw response hex: ' + dataHex)
 
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
@@ -502,6 +507,7 @@ class TeslaSession {
         }
       } catch (e) {
         console.log('[SESSION] Exception: ' + e.message)
+        if (e.stack) console.log('[SESSION] Stack: ' + e.stack)
         callback({ success: false, error: e.message })
       }
     }
