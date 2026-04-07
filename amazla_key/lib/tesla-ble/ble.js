@@ -211,6 +211,7 @@ class TeslaBLE {
         })
       } catch (e) {
         console.log('[BLE] mstSetMTU not available:', e.message || e)
+      }
     })
   }
   disconnect() {
