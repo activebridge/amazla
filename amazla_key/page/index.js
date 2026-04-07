@@ -52,14 +52,24 @@ const render = () => {
   UI.reset()
   const slide1 = page(0, 0)
 
-  // If offline, show simplified UI with help
+  // Always show car state
+  locked  && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
+  !locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' },      slide1)
+  frunkOpen && img({ w: 352, h: 460, src: 'Y_Frunk.png' },           slide1)
+  trunkOpen && img({ w: 352, h: 460, src: 'Y_Trunk.png' },           slide1)
+  pf && img({ w: 352, h: 460, src: 'Y_Right_Front_Door.png' }, slide1)
+  pr && img({ w: 352, h: 460, src: 'Y_Right_Back_Door.png' },  slide1)
+  df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' },  slide1)
+  dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' },   slide1)
+
+  // If offline, show overlay with error and help
   if (connectionState.status !== 'online') {
-    rect({ w: 352, h: 460, color: 0x1a1a1a }, slide1)
+    rect({ w: 352, h: 460, color: 0x000000, alpha: 0.6 }, slide1)
     
-    const statusText = connectionState.status === 'checking' ? '⏳ Connecting...' : '❌ Connection Failed'
+    const statusText = connectionState.status === 'checking' ? 'Connecting...' : 'Connection Failed'
     button({
       centered: true, x: 0, y: 80,
-      w: 350, h: 60,
+      w: 340, h: 60,
       text: statusText, text_size: 18, color: 0xcccccc,
       normal_color: 0x222222, press_color: 0x333333, radius: 8,
     }, slide1)
@@ -77,7 +87,7 @@ const render = () => {
     button({
       centered: true, x: 0, y: 240,
       w: 280, h: 50,
-      text: '🔄 Retry', text_size: 16, color: 0xffff99,
+      text: 'Retry', text_size: 16, color: 0xffff99,
       normal_color: 0x333300, press_color: 0x444400, radius: 6,
       click_func: onRetryConnection,
     }, slide1)
@@ -86,7 +96,7 @@ const render = () => {
     button({
       centered: true, x: 0, y: 310,
       w: 280, h: 50,
-      text: '⚙️ BLE Setup', text_size: 16, color: 0x99ccff,
+      text: 'BLE Setup', text_size: 16, color: 0x99ccff,
       normal_color: 0x003366, press_color: 0x004488, radius: 6,
       click_func: onGoToBLE,
     }, slide1)
@@ -94,16 +104,7 @@ const render = () => {
     return
   }
 
-  // Normal online UI
-  locked  && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
-  !locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' },      slide1)
-  frunkOpen && img({ w: 352, h: 460, src: 'Y_Frunk.png' },           slide1)
-  trunkOpen && img({ w: 352, h: 460, src: 'Y_Trunk.png' },           slide1)
-  pf && img({ w: 352, h: 460, src: 'Y_Right_Front_Door.png' }, slide1)
-  pr && img({ w: 352, h: 460, src: 'Y_Right_Back_Door.png' },  slide1)
-  df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' },  slide1)
-  dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' },   slide1)
-
+  // When online, show full controls
   frunkOpen  && button({ ...CLOSE, y: -150, w: 200, h: 160, click_func: onFrunk }, slide1)
   !frunkOpen && button({ ...OPEN,  y: -160, w: 200, h: 160, click_func: onFrunk }, slide1)
   trunkOpen  && button({ ...CLOSE, y: 160,  w: 200, h: 160, click_func: onTrunk }, slide1)
