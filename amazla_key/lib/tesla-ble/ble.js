@@ -153,28 +153,36 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, setting up listener...')
+      console.log('[BLE] Connected, generating profile...')
       
       if (!this.connected) {
         this._cleanup()
         settle({ success: false, error: 'Connection lost during setup', attemptNumber })
         return
       }
-      // Build minimal profile for startListener without attribute discovery
-      // Tesla SDK doesn't need discovery, but ZeppOS requires valid profile for startListener
-      this.profile = {
-        [TESLA_SERVICE_UUID]: {
-          [TESLA_WRITE_UUID]: { properties: 0x04 },  // WRITE_WITHOUT_RESPONSE
-          [TESLA_READ_UUID]: { 
-            properties: 0x10,  // NOTIFY
-            descriptors: {
-              '2902': { value: 0x0000 }  // CCCD
-            }
-          }
-        }
+      // Generate profile with generateProfileObject (required for startListener to work)
+      // Uses our hardcoded UUIDs, no explicit discovery query
+      console.log('[BLE] Generating profile object...')
+      this.profile = this._ensureBLE().generateProfileObject(this.services, {
+        [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
+      })
+      
+      if (!this.profile) {
+        console.log('[BLE] ⚠️ Profile generation failed')
+        this._cleanup()
+        settle({ success: false, error: 'Profile generation failed', attemptNumber })
+        return
       }
-      console.log('[BLE] Starting listener...')
-      this._ensureBLE().startListener(this.profile, (response) => {
+      
+      // Give BLE stack time to stabilize before starting listener
+      setTimeout(() => {
+        if (!this.connected) {
+          this._cleanup()
+          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
+          return
+        }
+        console.log('[BLE] Starting listener...')
+        this._ensureBLE().startListener(this.profile, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
@@ -214,7 +222,8 @@ class TeslaBLE {
         // Enable indications in background (don't wait for confirmation)
         console.log('[BLE] Enabling indications (CCCD=0x0002)...')
         this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-      })
+        })
+      }, CONNECTION_CONFIG.stackStabilizeWait)  // 100ms delay for BLE stack stability
     })
   }
   disconnect() {
