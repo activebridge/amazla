@@ -210,6 +210,7 @@ class TeslaBLE {
           }
         })
       }, 10)  // Small delay to avoid race condition with vehicle firmware
+    })
   }
   disconnect() {
     this.connected = false
