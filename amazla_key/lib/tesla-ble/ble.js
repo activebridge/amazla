@@ -212,7 +212,7 @@ class TeslaBLE {
             console.log('[BLE] GATT profile setup failed:', response && response.message)
           }
         })
-      }, 50)  // Wait 50ms to let vehicle firmware settle after physical connect
+      }, 0)  // No delay - start immediately to keep vehicle firmware happy
     })
   }
   disconnect() {
