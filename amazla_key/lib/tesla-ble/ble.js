@@ -161,53 +161,41 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected successfully, setting up GATT profile...')
+      this.gattReady = true
+      console.log('[BLE] Connected successfully, registering handlers (no startListener)...')
       
-      // Call startListener immediately (synchronously) - don't settle until it's ready
-      console.log('[BLE] Setting up GATT profile in background...')
-      this._ensureBLE().startListener(this.services, (response) => {
-        if (response && response.success) {
-          console.log('[BLE] GATT profile setup complete, enabling notifications...')
-          this.gattReady = true  // Mark GATT as ready for sending
-          
-          // ONLY write descriptor AFTER profile is ready
-          try {
-            console.log('[BLE] Enabling indications (CCCD)...')
-            this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-          } catch (e) {
-            console.log('[BLE] Failed to enable CCCD:', e.message || e)
-          }
-          
-          // Register callbacks for unsolicited notifications
-          this.charaValueHandler = (uuid, data, len) => {
-            console.log('[BLE] charaValueArrived:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          try {
-            this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-          } catch (e) {
-            console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
-          }
-          
-          this.charaNotificationHandler = (uuid, data, len) => {
-            console.log('[BLE] charaNotification:', uuid, len)
-            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-          }
-          try {
-            this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-          } catch (e) {
-            console.log('[BLE] Failed to register charaNotification:', e.message || e)
-          }
-          
-          // NOW settle - after GATT profile is ready
-          console.log('[BLE] GATT profile ready, settling connection...')
-          settle({ success: true, mac })
-        } else {
-          console.log('[BLE] GATT profile setup failed:', response && response.message)
-          this.connected = false
-          settle({ success: false, error: 'GATT profile setup failed', attemptNumber })
-        }
-      })
+      // Register notification handlers immediately (same as pairing code - which works)
+      this.charaValueHandler = (uuid, data, len) => {
+        console.log('[BLE] charaValueArrived:', uuid, len)
+        if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+      }
+      try {
+        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+      } catch (e) {
+        console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
+      }
+      
+      this.charaNotificationHandler = (uuid, data, len) => {
+        console.log('[BLE] charaNotification:', uuid, len)
+        if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+      }
+      try {
+        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+      } catch (e) {
+        console.log('[BLE] Failed to register charaNotification:', e.message || e)
+      }
+      
+      // Enable indications immediately
+      try {
+        console.log('[BLE] Enabling indications (CCCD)...')
+        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+      } catch (e) {
+        console.log('[BLE] Failed to enable CCCD:', e.message || e)
+      }
+      
+      // Settle immediately - handlers registered and ready
+      console.log('[BLE] Handlers registered, settling connection...')
+      settle({ success: true, mac })
     })
   }
   disconnect() {
@@ -239,29 +227,6 @@ class TeslaBLE {
       callback(result)
     }
     
-    // If GATT isn't ready yet, wait for it before sending
-    if (!this.gattReady) {
-      console.log('[BLE] Waiting for GATT profile to be ready before send()...')
-      const gattCheckInterval = setInterval(() => {
-        if (this.gattReady) {
-          clearInterval(gattCheckInterval)
-          console.log('[BLE] GATT profile ready, proceeding with send()')
-          this.responseCallback = wrappedCallback
-          this._sendMessage(_frame(data))
-        }
-      }, 10)
-      // Timeout if GATT takes too long
-      setTimeout(() => {
-        clearInterval(gattCheckInterval)
-        if (!this.gattReady) {
-          console.log('[BLE] GATT profile setup took too long (5s), proceeding anyway')
-          this.responseCallback = wrappedCallback
-          this._sendMessage(_frame(data))
-        }
-      }, 5000)
-      return
-    }
-    
     this.responseCallback = wrappedCallback
     this._sendMessage(_frame(data))
   }
@@ -278,27 +243,6 @@ class TeslaBLE {
   sendAndWaitForResponse(data, callback, timeout = 30000) {
     if (!this.connected) {
       callback({ success: false, error: 'Not connected' })
-      return
-    }
-    
-    // If GATT isn't ready yet, wait for it before sending
-    if (!this.gattReady) {
-      console.log('[BLE] Waiting for GATT profile to be ready...')
-      const gattCheckInterval = setInterval(() => {
-        if (this.gattReady) {
-          clearInterval(gattCheckInterval)
-          console.log('[BLE] GATT profile ready, proceeding with send')
-          this._doSendAndWait(data, callback, timeout)
-        }
-      }, 10)
-      // Timeout if GATT takes too long
-      setTimeout(() => {
-        clearInterval(gattCheckInterval)
-        if (!this.gattReady) {
-          console.log('[BLE] GATT profile setup took too long (5s), proceeding anyway')
-          this._doSendAndWait(data, callback, timeout)
-        }
-      }, 5000)
       return
     }
     
