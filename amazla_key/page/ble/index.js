@@ -47,6 +47,7 @@ var logLines  = ['', '', '', '', '', '']
 var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
 var currentPage = null
 var activeTimers = []
+var __pageBuilt = false  // Prevent duplicate builds
 var statusDotWidget  = null
 var statusTextWidget = null
 var chkKeyWidget     = null
@@ -427,7 +428,15 @@ function onClear() {
 }
 Page(BasePage({
   build() {
-    console.log('[BLE-LIFECYCLE] build() called, __blePageInit=' + teslaBleApi.__blePageInit)
+    console.log('[BLE-LIFECYCLE] build() called, __blePageInit=' + teslaBleApi.__blePageInit + ', __pageBuilt=' + __pageBuilt)
+    
+    // Guard against duplicate builds (ZeppOS garbage collection or router issues)
+    if (__pageBuilt) {
+      console.log('[BLE-LIFECYCLE] Page already built, skipping duplicate build()')
+      return
+    }
+    __pageBuilt = true
+    
     logWidgets = []
     UI.reset()
     currentPage = this
@@ -561,6 +570,7 @@ Page(BasePage({
   },
   onDestroy() {
     console.log('[BLE-LIFECYCLE] onDestroy() called, __blePageInit=' + teslaBleApi.__blePageInit)
+    __pageBuilt = false  // Allow rebuild when page is re-created
     keepScreenOn(false)
     console.log('[BLE-LIFECYCLE] Calling teslaBleApi.reset()')
     teslaBleApi.reset()

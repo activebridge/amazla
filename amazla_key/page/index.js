@@ -45,6 +45,7 @@ var connectionState = {
 }
 
 var isRunning = false
+var sessionInitAttempted = false  // Prevent duplicate session establishment attempts
 
 const render = () => {
   const { locked, df, dr, pf, pr, trunkOpen, frunkOpen } = vehicleState
@@ -212,18 +213,21 @@ Page(BasePage({
     hmUI.setStatusBarVisible(false)
     keepScreenOn(true)
     
-    // Auto-establish session if pairing data exists
-    setTimeout(() => {
-      teslaSession.ensureSessionEstablished(function(result) {
-        if (result.success) {
-          console.log('[INDEX] Session established automatically')
-          refreshStatus()
-        } else {
-          console.log('[INDEX] ' + (result.error || 'Session setup failed'))
-          // Show offline status
-          setTimeout(refreshStatus, 500)
-        }
-      })
-    }, 100)
+    // Auto-establish session if pairing data exists (only once per page load)
+    if (!sessionInitAttempted) {
+      sessionInitAttempted = true
+      setTimeout(() => {
+        teslaSession.ensureSessionEstablished(function(result) {
+          if (result.success) {
+            console.log('[INDEX] Session established automatically')
+            refreshStatus()
+          } else {
+            console.log('[INDEX] ' + (result.error || 'Session setup failed'))
+            // Show offline status
+            setTimeout(refreshStatus, 500)
+          }
+        })
+      }, 100)
+    }
   },
 }))
