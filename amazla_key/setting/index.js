@@ -1,14 +1,27 @@
 import { MAIN, SECTION_TITLE, CARD, STEP_NUMBER, FAQ_ITEM } from './styles.js'
+import { TESLA_LOGO } from './styles.js'
 
 AppSettingsPage({
   build({ settingsStorage }) {
     return View({ style: MAIN }, [
+      // Tesla Logo
+      Image({
+        alt: 'Tesla',
+        src: TESLA_LOGO,
+        width: 100,
+        height: 100,
+        style: {
+          margin: '16px auto',
+          display: 'block',
+        }
+      }),
+
       // Header
       Text({
         style: {
           fontSize: '24px',
           fontWeight: 'bold',
-          margin: '20px 0 10px',
+          margin: '0 0 10px',
           textAlign: 'center',
           width: '100%',
         }
