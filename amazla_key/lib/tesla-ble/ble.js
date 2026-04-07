@@ -175,7 +175,15 @@ class TeslaBLE {
         }
         this._ensureBLE().startListener(this.services, (response) => {
           if (response && response.success) {
-            console.log('[BLE] GATT profile setup complete')
+            console.log('[BLE] GATT profile setup complete, enabling notifications...')
+            
+            // ONLY write descriptor AFTER profile is ready
+            try {
+              console.log('[BLE] Enabling indications (CCCD)...')
+              this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+            } catch (e) {
+              console.log('[BLE] Failed to enable CCCD:', e.message || e)
+            }
             
             // Register callbacks for unsolicited notifications
             this.charaValueHandler = (uuid, data, len) => {
@@ -197,19 +205,11 @@ class TeslaBLE {
             } catch (e) {
               console.log('[BLE] Failed to register charaNotification:', e.message || e)
             }
-            
-            // Enable indications (CCCD)
-            try {
-              console.log('[BLE] Enabling indications (CCCD)...')
-              this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-            } catch (e) {
-              console.log('[BLE] Failed to enable CCCD:', e.message || e)
-            }
           } else {
             console.log('[BLE] GATT profile setup failed:', response && response.message)
           }
         })
-      }, 10)  // Small delay to avoid race condition with vehicle firmware
+      }, 50)  // Wait 50ms to let vehicle firmware settle after physical connect
     })
   }
   disconnect() {
