@@ -109,6 +109,12 @@ class TeslaBLE {
     const attemptLabel = `${attemptNumber + 1}/${CONNECTION_CONFIG.maxAttempts}`
     
     console.log('[BLE] Connecting to: ' + mac + ' (attempt ' + attemptLabel + ', ' + timeoutMs + 'ms timeout)')
+    
+    // CRITICAL: Must disconnect first to clear any lingering BLE state
+    // If previous connection attempt left the BLE object in a partial state,
+    // the vehicle firmware might reject the new connection
+    this.disconnect()
+    
     const timeout = setTimeout(() => {
       if (done) return
       done = true
@@ -124,7 +130,7 @@ class TeslaBLE {
       callback(result)
     }
     this._ensureBLE().connect(mac, (result) => {
-      console.log('[BLE] Connect callback fired:', JSON.stringify(result))
+      console.log('[BLE] Connect callback fired:', JSON.stringify(result), 'done=' + done, 'setupStarted=' + setupStarted)
       if (done) {
         if (!result.connected) {
           this.connected = false
