@@ -150,7 +150,6 @@ class TeslaBLE {
         console.log('[BLE] Ignoring duplicate connected callback')
         return
       }
-      setupStarted = true
       this.connected = true
       this.mac = mac
       console.log('[BLE] Connected, scheduling listener setup in 50ms...')
@@ -162,7 +161,7 @@ class TeslaBLE {
       }
       
       // Small 50ms delay to ensure BLE connection is stable before calling startListener
-      // This prevents the vehicle from seeing unstable connection state
+      // Don't set setupStarted=true yet - only set it after delay completes successfully
       setTimeout(() => {
         if (!this.connected) {
           console.log('[BLE] Connection lost during delay, aborting listener setup')
@@ -170,6 +169,9 @@ class TeslaBLE {
           settle({ success: false, error: 'Connection lost before listener', attemptNumber })
           return
         }
+        
+        // NOW set setupStarted = true, after we know connection is still stable
+        setupStarted = true
         console.log('[BLE] Calling startListener with null (no profile generation)...')
         this._ensureBLE().startListener(null, (response) => {
           console.log('[BLE] ✓ Listener callback fired! response:', JSON.stringify(response))
