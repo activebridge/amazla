@@ -17,7 +17,9 @@ import {
   generateUUID,
   generateRoutingAddress,
   buildInformationRequest,
+  parseVehicleStatus,
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
+  INFO_REQUEST_GET_STATUS,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
@@ -592,6 +594,38 @@ class TeslaSession {
   }
   sendRKECommand(action, callback) {
     this.sendCommand(action, callback)
+  }
+  getVehicleStatus(callback) {
+    if (!this.established) {
+      callback({ success: false, error: 'Session not established' })
+      return
+    }
+    const infoRequest = buildInformationRequest(INFO_REQUEST_GET_STATUS)
+    const message = buildRoutableMessage({
+      toDomain: DOMAIN_VEHICLE_SECURITY,
+      routingAddress: this.routingAddress,
+      informationRequest: infoRequest,
+      uuid: generateUUID()
+    })
+    const self = this
+    teslaBLE.send(message, function(result) {
+      if (!result.success) {
+        callback({ success: false, error: result.error })
+        return
+      }
+      try {
+        if (!result.data) {
+          callback({ success: false, error: 'No data in vehicle status response' })
+          return
+        }
+        const response = parseRoutableMessage(result.data)
+        const vehicleStatus = parseVehicleStatus(response.payload)
+        callback({ success: true, status: vehicleStatus })
+      } catch (e) {
+        console.log('[SESSION] getVehicleStatus error: ' + e.message)
+        callback({ success: false, error: e.message })
+      }
+    })
   }
   lock(callback) {
     this.sendCommand(RKE_ACTION_LOCK, callback)
