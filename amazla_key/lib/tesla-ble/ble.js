@@ -133,10 +133,10 @@ class TeslaBLE {
         return
       }
       if (!result.connected) {
-        console.log('[BLE] ⚠️ Vehicle disconnected! result:', JSON.stringify(result))
+        console.log('[BLE] ⚠️ Vehicle disconnected during setup=' + setupStarted, JSON.stringify(result))
         this.connected = false
         if (setupStarted) {
-          console.log('[BLE] Disconnect during setup, settling immediately')
+          console.log('[BLE] ✗ DISCONNECT DURING PROFILE/LISTENER SETUP')
           this._cleanup()
           settle({ success: false, error: 'Vehicle disconnected during setup', attemptNumber })
           return
@@ -166,6 +166,7 @@ class TeslaBLE {
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
       })
+      console.log('[BLE] Profile generated, result:', this.profile ? 'success' : 'null')
       
       if (!this.profile) {
         console.log('[BLE] ⚠️ Profile generation failed')
@@ -175,8 +176,9 @@ class TeslaBLE {
       }
       
       // Start listener immediately (no delay) - per ZeppOS official example
-      console.log('[BLE] Starting listener...')
+      console.log('[BLE] Starting listener with profile...')
       this._ensureBLE().startListener(this.profile, (response) => {
+        console.log('[BLE] Listener response:', JSON.stringify(response))
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
