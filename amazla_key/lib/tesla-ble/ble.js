@@ -161,58 +161,55 @@ class TeslaBLE {
       this.mac = mac
       console.log('[BLE] Connected successfully, settling...')
       
-      // NOTE: We DO NOT call startListener here.
-      // startListener triggers mstBuildProfile which the vehicle firmware rejects
-      // during session/pairing flows. GATT listeners are optional - we can send/receive
-      // messages using raw write/read operations instead.
-      // The vehicle connection is now ready for send() operations.
+      // Settle immediately - connection is ready for send() operations
       settle({ success: true, mac })
       
-      // Optional: Set up GATT characteristics listeners in background (non-blocking)
-      // This allows us to receive unsolicited notifications from the vehicle,
-      // but it's not required for session establishment.
-      if (this._ensureBLE().on && this._ensureBLE().on.charaValueArrived) {
-        console.log('[BLE] Setting up GATT listeners in background...')
-        this.charaValueHandler = (uuid, data, len) => {
-          console.log('[BLE] charaValueArrived:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+      // Call startListener in the background (non-blocking)
+      // This builds the GATT profile so we can write descriptors/characteristics
+      // We don't wait for it to complete - the connection is already usable for send()
+      console.log('[BLE] Setting up GATT profile in background...')
+      setTimeout(() => {
+        if (!this.connected) {
+          console.log('[BLE] Skipped startListener (already disconnected)')
+          return
         }
-        try {
-          this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-        } catch (e) {
-          console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
-        }
-        
-        this.charaNotificationHandler = (uuid, data, len) => {
-          console.log('[BLE] charaNotification:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-        }
-        try {
-          this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-        } catch (e) {
-          console.log('[BLE] Failed to register charaNotification:', e.message || e)
-        }
-        
-        // Try to enable indications (CCCD) in background
-        try {
-          console.log('[BLE] Enabling indications (CCCD) in background...')
-          this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-        } catch (e) {
-          console.log('[BLE] Failed to enable CCCD:', e.message || e)
-        }
-      }
-      
-      // Try to set MTU (optional)
-      try {
-        hmBle.mstSetMTU(247, (mtuResult) => {
-          const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-          this._mtu = Math.max(20, negotiated)
-          console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+        this._ensureBLE().startListener(this.services, (response) => {
+          if (response && response.success) {
+            console.log('[BLE] GATT profile setup complete')
+            
+            // Register callbacks for unsolicited notifications
+            this.charaValueHandler = (uuid, data, len) => {
+              console.log('[BLE] charaValueArrived:', uuid, len)
+              if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+            }
+            try {
+              this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+            } catch (e) {
+              console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
+            }
+            
+            this.charaNotificationHandler = (uuid, data, len) => {
+              console.log('[BLE] charaNotification:', uuid, len)
+              if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+            }
+            try {
+              this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+            } catch (e) {
+              console.log('[BLE] Failed to register charaNotification:', e.message || e)
+            }
+            
+            // Enable indications (CCCD)
+            try {
+              console.log('[BLE] Enabling indications (CCCD)...')
+              this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+            } catch (e) {
+              console.log('[BLE] Failed to enable CCCD:', e.message || e)
+            }
+          } else {
+            console.log('[BLE] GATT profile setup failed:', response && response.message)
+          }
         })
-      } catch (e) {
-        console.log('[BLE] mstSetMTU not available:', e.message || e)
-      }
-    })
+      }, 10)  // Small delay to avoid race condition with vehicle firmware
   }
   disconnect() {
     this.connected = false
