@@ -1,4 +1,4 @@
-import { MAIN, SECTION_TITLE, CARD, STEP_NUMBER, FAQ_ITEM } from './styles.js'
+import { MAIN, SECTION_TITLE } from './styles.js'
 import { TESLA_LOGO } from './styles.js'
 
 AppSettingsPage({
@@ -34,7 +34,7 @@ AppSettingsPage({
             textAlign: 'center',
             width: '100%',
           }
-        }, '🔐 Tesla Key Setup'),
+        }, '�� Tesla Key Setup'),
 
         // Subtitle
         Text({
@@ -48,87 +48,47 @@ AppSettingsPage({
         }, 'Pure Bluetooth • No Internet Required'),
       ]),
 
-      // Quick Start
-      Text({ style: SECTION_TITLE }, '🚀 Quick Start'),
+      // HOW TO PAIR
+      Text({ style: SECTION_TITLE }, '🔗 How to Pair'),
       
-      QuickStartStep(1, 'Open Tesla Key App', 'Tap watch face to launch the app'),
-      QuickStartStep(2, 'Go to BLE Settings', 'Tap the "BLE" button on main screen'),
-      QuickStartStep(3, 'Pair with Tesla', 'Tap Pair → Hold NFC card on steering wheel → Confirm'),
-      QuickStartStep(4, "You're Ready!", '20 digital keys synced to your watch'),
+      StepCard(1, 'Wake Tesla', 'Make sure your car is awake. Press the brake pedal, open a door, or tap a key card.'),
+      StepCard(2, 'Open BLE Page', 'On your watch, go to the app and tap the BLE settings button.'),
+      StepCard(3, 'Start Pairing', 'Tap the "Pair" button on the BLE page.'),
+      StepCard(4, 'Use Your NFC Card', 'Hold your Tesla NFC card on the steering wheel trim (left or right side). Hold it there for 2-3 seconds.'),
+      StepCard(5, 'Confirm on Tesla', 'Tesla will ask "Allow this device?" on the center screen. Tap "Confirm" with your finger or key card.'),
+      StepCard(6, 'Done!', 'Your watch is now paired! Go back to the main page and test: tap lock/unlock to control your car.'),
 
-      // How It Works
-      Text({ style: SECTION_TITLE }, '💡 How It Works'),
+      // HOW TO USE
+      Text({ style: SECTION_TITLE }, '🎯 How to Use'),
       
-      ExpandableSection('📱 Phone Syncs Key to Watch', 
-        'Generate key on phone → Send to watch → Watch receives 20-key pool via Bluetooth. All done locally, no internet needed.'),
-      ExpandableSection('⌚ Watch Works Offline', 
-        'After pairing, watch works without phone. Each lock/unlock uses one key. When pool gets low, watch auto-syncs more keys from phone when nearby.'),
-      ExpandableSection('🚗 Vehicle Authenticates Commands', 
-        'Vehicle verifies signature on each command. Vehicle checks if key is in whitelist. Vehicle only accepts commands from your watch.'),
+      SimpleCard('Lock Your Car', 'On the main page, tap the lock button. Your car will lock immediately.'),
+      SimpleCard('Unlock Your Car', 'On the main page, tap the unlock button. Your car will unlock immediately.'),
+      SimpleCard('Works Offline', 'You don\'t need your phone. As long as your watch is near the car (within 30 feet), it will work.'),
 
-      // Pairing Details
-      Text({ style: SECTION_TITLE }, '🔗 Detailed Pairing'),
+      // HOW TO RESET
+      Text({ style: SECTION_TITLE }, '🔄 How to Reset'),
       
-      Text({ style: { fontWeight: 'bold', margin: '12px 0 8px' } }, '⚡ Before You Start:'),
-      Text({ paragraph: true }, '• Tesla must be AWAKE (press brake, open door, or tap key)'),
-      Text({ paragraph: true }, '• Watch must be within 10 meters of vehicle'),
-      Text({ paragraph: true }, '• Both watch and vehicle must be powered'),
-
-      Text({ style: { fontWeight: 'bold', margin: '12px 0 8px' } }, '📋 Pairing Steps:'),
-      Text({ paragraph: true }, '1. Go to app → BLE Page → Tap "Clear"'),
-      Text({ paragraph: true }, '2. Tap "Pair" (watch scans for Tesla)'),
-      Text({ paragraph: true }, '3. Hold NFC card on STEERING WHEEL TRIM'),
-      Text({ paragraph: true }, '4. Tesla shows "Allow Device?" → Tap "Confirm"'),
-      Text({ paragraph: true }, '5. Wait 10 seconds for sync'),
-      Text({ paragraph: true }, '6. You see "✅ Session established"'),
-      Text({ paragraph: true }, '7. Go back to main page'),
-      Text({ paragraph: true }, '8. Test: Tap lock/unlock → car locks/unlocks'),
-
-      // Usage
-      Text({ style: SECTION_TITLE }, '🎮 Usage Modes'),
+      Text({ style: { fontSize: '14px', fontWeight: 'bold', color: '#CCCCCC', marginBottom: '8px' } }, 'If pairing doesn\'t work:'),
+      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px' } }, '1. On the BLE page, tap "Clear" to remove the old pairing'),
+      Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', marginBottom: '12px' } }, '2. Start over from "How to Pair" step 1'),
       
-      Text({ style: { fontWeight: 'bold', margin: '12px 0 8px' } }, '🏠 From Main Page (Easiest)'),
-      Text({ paragraph: true }, '• Navigate to vehicle view'),
-      Text({ paragraph: true }, '• Tap lock button to LOCK'),
-      Text({ paragraph: true }, '• Tap unlock button to UNLOCK'),
-      Text({ paragraph: true }, '• Works anywhere within Bluetooth range'),
-
-      Text({ style: { fontWeight: 'bold', margin: '12px 0 8px' } }, '🔧 Manual Pairing (BLE Page)'),
-      Text({ paragraph: true }, '• "Clear" - Remove old pairing'),
-      Text({ paragraph: true }, '• "Pair" - Scan for Tesla, tap NFC card'),
-      Text({ paragraph: true }, '• "Connect" - Establish BLE session'),
-
-      // Troubleshooting
-      Text({ style: SECTION_TITLE }, '🆘 Troubleshooting'),
+      // TROUBLESHOOTING
+      Text({ style: SECTION_TITLE }, '❓ Troubleshooting'),
       
-      ExpandableSection('❌ Connection Failed', 
-        'Restart Tesla (press brake, then power button). Ensure watch is within 10m. Check Tesla Bluetooth is enabled. Try pairing again.'),
-      ExpandableSection('📡 Offline Status', 
-        'Vehicle is too far away (out of range). Wake vehicle (tap steering wheel). Click "Retry" button on main page.'),
-      ExpandableSection('🔑 Key Pool Empty', 
-        'Bring watch near phone. Phone app automatically detects low pool and syncs 15 new keys in background. No action needed.'),
-      ExpandableSection('📱 NFC Card Not Recognized', 
-        'Hold card on STEERING WHEEL TRIM (not dashboard). Try different spots. Wait 2-3 seconds for reader to detect.'),
-      ExpandableSection('⏱️ Session Timeout', 
-        'On BLE page: click "Connect" button again to re-establish session. Then try lock/unlock command again.'),
+      FAQCard('Car won\'t lock/unlock', 'Make sure the car is nearby (within 30 feet). If still not working, go to the BLE page and tap "Connect" to re-establish connection.'),
+      FAQCard('Pairing failed', 'Make sure the car is awake and within 10 feet. Try again. If still failing, restart the car.'),
+      FAQCard('Card not recognized', 'Try holding the NFC card on different spots on the steering wheel - left side or right side. Some cars are more sensitive to one side.'),
+      FAQCard('Says "Session not established"', 'On the BLE page, tap "Connect" to establish the connection with your car.'),
+      FAQCard('App keeps asking me to pair', 'Your car was restarted or lost connection. Just open the BLE page and tap "Connect" to get back online.'),
 
-      // Key Sync Info
-      Text({ style: { fontWeight: 'bold', margin: '16px 0 8px' } }, '📱 Need to Sync Keys?'),
-      Text({ paragraph: true }, 'If key pool runs low (< 5 keys), bring watch near phone. Phone app automatically detects this and syncs 15 new keys. You don\'t need to do anything—it happens automatically!'),
-
-      // Privacy & Footer
-      Text({ style: { fontWeight: 'bold', margin: '16px 0 8px', color: '#90EE90' } }, '🔐 Privacy & Security'),
-      Text({ paragraph: true }, '✅ All communication is LOCAL Bluetooth'),
-      Text({ paragraph: true }, '✅ No data collected or sent anywhere'),
-      Text({ paragraph: true }, '✅ No internet required after pairing'),
-      Text({ paragraph: true }, '✅ Your vehicle and keys stay under your control'),
-
-      Text({ style: { fontSize: '12px', color: '#999999', margin: '16px 0', textAlign: 'center' } }, 'Version 1.0 • April 2026'),
+      // Footer
+      Text({ style: { fontSize: '12px', color: '#999999', margin: '24px 0 8px', textAlign: 'center' } }, '✅ Your car unlocks with a secure digital key'),
+      Text({ style: { fontSize: '12px', color: '#999999', textAlign: 'center' } }, 'No data is shared or stored anywhere'),
     ])
   },
 })
 
-function QuickStartStep(number, title, description) {
+function StepCard(number, title, description) {
   return View({
     style: {
       display: 'flex',
@@ -163,32 +123,30 @@ function QuickStartStep(number, title, description) {
   ])
 }
 
-function ExpandableSection(title, content) {
-  const stateKey = `expanded_${title.replace(/\W/g, '_')}`
+function SimpleCard(title, description) {
   return View({
     style: {
       background: '#2A2B2D',
       borderRadius: '8px',
       padding: '16px',
       marginBottom: '12px',
-      cursor: 'pointer',
     }
   }, [
-    Text({
-      style: {
-        fontWeight: 'bold',
-        fontSize: '15px',
-        color: '#CCCCCC',
-        userSelect: 'none',
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        width: '100%',
-      }
-    }, title),
-    Text({
-      paragraph: true,
-      style: { fontSize: '13px', color: '#999999', marginTop: '10px', lineHeight: '1.5' }
-    }, content),
+    Text({ style: { fontWeight: 'bold', fontSize: '15px', marginBottom: '8px', color: '#CCCCCC' } }, title),
+    Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', lineHeight: '1.4' } }, description),
+  ])
+}
+
+function FAQCard(question, answer) {
+  return View({
+    style: {
+      background: '#2A2B2D',
+      borderRadius: '8px',
+      padding: '16px',
+      marginBottom: '12px',
+    }
+  }, [
+    Text({ style: { fontWeight: 'bold', fontSize: '14px', marginBottom: '8px', color: '#FF6B6B' } }, question),
+    Text({ paragraph: true, style: { fontSize: '13px', color: '#999999', lineHeight: '1.4' } }, answer),
   ])
 }
