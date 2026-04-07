@@ -153,7 +153,7 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, starting listener directly (no profile generation)...')
+      console.log('[BLE] Connected, scheduling listener setup in 50ms...')
       
       if (!this.connected) {
         this._cleanup()
@@ -161,49 +161,58 @@ class TeslaBLE {
         return
       }
       
-      // Try startListener with null profile first - maybe generateProfileObject is the culprit
-      console.log('[BLE] Calling startListener with null (bypassing generateProfileObject)...')
-      this._ensureBLE().startListener(null, (response) => {
-        console.log('[BLE] ✓ Listener callback fired! response:', JSON.stringify(response))
-        if (done) return
-        if (!response.success) {
-          this.connected = false
-          console.log('[BLE] Listener failed:', response.message)
+      // Small 50ms delay to ensure BLE connection is stable before calling startListener
+      // This prevents the vehicle from seeing unstable connection state
+      setTimeout(() => {
+        if (!this.connected) {
+          console.log('[BLE] Connection lost during delay, aborting listener setup')
           this._cleanup()
-          settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
+          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
           return
         }
-        // Listener started - ready to send messages immediately
-        settle({ success: true, mac })
-        console.log('[BLE] Ready to send messages')
-        
-        // Register callbacks and enable CCCD in background (don't block on completion)
-        this.charaValueHandler = (uuid, data, len) => {
-          console.log('[BLE] charaValueArrived:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-        }
-        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-        this.charaNotificationHandler = (uuid, data, len) => {
-          console.log('[BLE] charaNotification:', uuid, len)
-          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
-        }
-        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-        
-        // Try to set MTU (optional, don't block on it)
-        try {
-          hmBle.mstSetMTU(247, (mtuResult) => {
-            const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
-            this._mtu = Math.max(20, negotiated)
-            console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
-          })
-        } catch (e) {
-          console.log('[BLE] mstSetMTU not available:', e.message || e)
-        }
-        
-        // Enable indications in background (don't wait for confirmation)
-        console.log('[BLE] Enabling indications (CCCD=0x0002)...')
-        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-      })
+        console.log('[BLE] Calling startListener with null (no profile generation)...')
+        this._ensureBLE().startListener(null, (response) => {
+          console.log('[BLE] ✓ Listener callback fired! response:', JSON.stringify(response))
+          if (done) return
+          if (!response.success) {
+            this.connected = false
+            console.log('[BLE] Listener failed:', response.message)
+            this._cleanup()
+            settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
+            return
+          }
+          // Listener started - ready to send messages immediately
+          settle({ success: true, mac })
+          console.log('[BLE] Ready to send messages')
+          
+          // Register callbacks and enable CCCD in background (don't block on completion)
+          this.charaValueHandler = (uuid, data, len) => {
+            console.log('[BLE] charaValueArrived:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+          this.charaNotificationHandler = (uuid, data, len) => {
+            console.log('[BLE] charaNotification:', uuid, len)
+            if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+          }
+          this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+          
+          // Try to set MTU (optional, don't block on it)
+          try {
+            hmBle.mstSetMTU(247, (mtuResult) => {
+              const negotiated = (mtuResult && mtuResult.mtu) ? mtuResult.mtu - 3 : 20
+              this._mtu = Math.max(20, negotiated)
+              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+            })
+          } catch (e) {
+            console.log('[BLE] mstSetMTU not available:', e.message || e)
+          }
+          
+          // Enable indications in background (don't wait for confirmation)
+          console.log('[BLE] Enabling indications (CCCD=0x0002)...')
+          this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+        })
+      }, 50)
     })
   }
   disconnect() {
