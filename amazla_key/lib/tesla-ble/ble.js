@@ -232,10 +232,13 @@ class TeslaBLE {
     const wrappedCallback = (result) => {
       if (result.success && result._requeue) {
         // Command wants to wait for another response (e.g., lock/unlock gets status push then action response)
+        // Don't call user callback, just re-register for next response
+        console.log('[BLE] Re-queuing callback for multi-response command')
         this.responseCallback = wrappedCallback
-      } else {
-        this.responseCallback = null
+        return
       }
+      // Normal flow: clear callback and call user's callback with result
+      this.responseCallback = null
       callback(result)
     }
     this.responseCallback = wrappedCallback
