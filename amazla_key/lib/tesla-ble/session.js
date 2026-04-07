@@ -51,6 +51,7 @@ class TeslaSession {
     this.established = false
     this.preserved = null
     this.replenishingPool = false
+    this.connectingPromise = null // Guard against duplicate connection attempts
   }
   preserveForReconnect(timeoutMs) {
     this.preserved = {
@@ -651,8 +652,20 @@ class TeslaSession {
       callback({ success: false, error: 'Not paired - go to BLE page first' })
       return
     }
-    // Try to establish session
-    this.requestSessionInfo(callback)
+    // If already connecting, add callback to pending list instead of creating duplicate connection
+    if (this.connectingPromise) {
+      // Connection in progress, reuse it
+      this.connectingPromise.then(() => callback({ success: this.established }))
+      return
+    }
+    // Create a promise for the connection attempt to prevent duplicates
+    this.connectingPromise = new Promise((resolve) => {
+      this.requestSessionInfo((result) => {
+        this.connectingPromise = null  // Clear flag when done
+        callback(result)
+        resolve()
+      })
+    })
   }
   getStatus() {
     return {
