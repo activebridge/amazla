@@ -30,6 +30,7 @@ class TeslaBLE {
     this.writeCompleteHandler = null
     this.charaValueHandler = null
     this.charaNotificationHandler = null
+    this.gattReady = false  // Track if startListener completed
     this._lastResponseData = null
     this._lastResponseTime = 0
     this._rxBuf = null
@@ -73,6 +74,7 @@ class TeslaBLE {
     this.responseCallback = null
     this.pendingResponseCallbacks = []
     this.mac = null
+    this.gattReady = false
     this._rxBuf = null
     this._rxExpected = 0
     this._mtu = 20
@@ -176,6 +178,7 @@ class TeslaBLE {
         this._ensureBLE().startListener(this.services, (response) => {
           if (response && response.success) {
             console.log('[BLE] GATT profile setup complete, enabling notifications...')
+            this.gattReady = true  // Mark GATT as ready for sending
             
             // ONLY write descriptor AFTER profile is ready
             try {
@@ -257,6 +260,32 @@ class TeslaBLE {
       callback({ success: false, error: 'Not connected' })
       return
     }
+    
+    // If GATT isn't ready yet, wait for it before sending
+    if (!this.gattReady) {
+      console.log('[BLE] Waiting for GATT profile to be ready...')
+      const gattCheckInterval = setInterval(() => {
+        if (this.gattReady) {
+          clearInterval(gattCheckInterval)
+          console.log('[BLE] GATT profile ready, proceeding with send')
+          this._doSendAndWait(data, callback, timeout)
+        }
+      }, 10)
+      // Timeout if GATT takes too long
+      setTimeout(() => {
+        clearInterval(gattCheckInterval)
+        if (!this.gattReady) {
+          console.log('[BLE] GATT profile setup took too long (5s), proceeding anyway')
+          this._doSendAndWait(data, callback, timeout)
+        }
+      }, 5000)
+      return
+    }
+    
+    this._doSendAndWait(data, callback, timeout)
+  }
+  
+  _doSendAndWait(data, callback, timeout) {
     const responseTimeout = setTimeout(() => {
       console.log('[BLE] Response timeout')
       this.responseCallback = null
