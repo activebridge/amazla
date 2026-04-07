@@ -153,20 +153,12 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, generating profile immediately...')
+      console.log('[BLE] Connected, calling startListener with raw services (no profile generation)...')
       
-      // Generate profile immediately (per official ZeppOS documentation)
-      this.profile = this._ensureBLE().generateProfileObject(this.services)
-      if (!this.profile) {
-        console.log('[BLE] ✗ Profile generation failed')
-        this._cleanup()
-        settle({ success: false, error: 'Profile generation failed', attemptNumber })
-        return
-      }
-      console.log('[BLE] Profile generated, calling startListener immediately (no delay)...')
-      
-      // Call startListener immediately with the generated profile
-      this._ensureBLE().startListener(this.profile, (response) => {
+      // Pass services directly without generating profile first
+      // easy-ble will build profile internally in mstBuildProfile
+      // This skips the extra step and might avoid triggering vehicle disconnect
+      this._ensureBLE().startListener(this.services, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
