@@ -153,27 +153,18 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      console.log('[BLE] Connected, setting up profile immediately...')
+      console.log('[BLE] Connected, skipping profile discovery and starting listener immediately...')
       
       if (!this.connected) {
         this._cleanup()
         settle({ success: false, error: 'Connection lost during setup', attemptNumber })
         return
       }
-      console.log('[BLE] Generating profile...')
-      this.profile = this._ensureBLE().generateProfileObject(this.services, {
-        [TESLA_WRITE_UUID]: { value: 0x04 },  // WRITE_WITHOUT_RESPONSE
-      })
-      
-      // Give BLE stack time to stabilize before starting listener
-      setTimeout(() => {
-        if (!this.connected) {
-          this._cleanup()
-          settle({ success: false, error: 'Connection lost before listener', attemptNumber })
-          return
-        }
-        console.log('[BLE] Starting listener...')
-        this._ensureBLE().startListener(this.profile, (response) => {
+      // Skip generateProfileObject - it triggers attribute discovery that Tesla may reject
+      // Tesla SDK connects directly without explicit profile discovery
+      this.profile = null
+      console.log('[BLE] Starting listener without profile discovery...')
+      this._ensureBLE().startListener(this.profile, (response) => {
         console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
@@ -218,8 +209,7 @@ class TeslaBLE {
             settle({ success: true, mac })
           }
         }, 4000)
-        })
-      }, 50)
+      })
     })
   }
   disconnect() {
