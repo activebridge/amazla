@@ -445,9 +445,9 @@ class TeslaSession {
         console.log('[SESSION] Raw fields in response: [' + fieldKeys + ']')
 
         // If no sessionInfo, payload, or status — this is an intermediate ack from the vehicle.
-        // Keep the callback alive and wait for the real SessionInfo response.
+        // Signal _requeue so wrappedCallback re-registers sessionInfoResponseHandler for the real response.
         if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
-          console.log('[SESSION] Intermediate ack (fields:[' + fieldKeys + ']), re-registering and waiting for SessionInfo...')
+          console.log('[SESSION] Intermediate ack (fields:[' + fieldKeys + ']), waiting for SessionInfo...')
           teslaBLE.responseCallback = sessionInfoResponseHandler
           return
         }

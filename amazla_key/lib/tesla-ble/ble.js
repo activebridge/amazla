@@ -1,5 +1,4 @@
 import { BLEMaster } from "@silver-zepp/easy-ble"
-import * as hmBle from "@zos/ble"
 const TESLA_SERVICE_UUID = "00000211-b2d1-43f0-9b88-960cebf8b91e"
 const TESLA_WRITE_UUID = "00000212-b2d1-43f0-9b88-960cebf8b91e"
 const TESLA_READ_UUID = "00000213-b2d1-43f0-9b88-960cebf8b91e"
@@ -8,7 +7,6 @@ const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   timeouts: [5000, 8000, 10000],
   maxAttempts: 3,
-  stackStabilizeWait: 100,  // Reduced from 2000ms - Tesla SDK has no delay
   retryDelayMs: 2000,
 }
 const _frame = (data) => {
@@ -161,41 +159,90 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      this.gattReady = true
-      console.log('[BLE] Connected successfully, registering handlers (no startListener)...')
-      
-      // Register notification handlers immediately (same as pairing code - which works)
-      this.charaValueHandler = (uuid, data, len) => {
-        console.log('[BLE] charaValueArrived:', uuid, len)
-        if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+      console.log('[BLE] Connected, building GATT profile (pair=false, no discovery)...')
+
+      // Build a profile with pair:false — provides Tesla characteristic UUIDs directly
+      // without triggering GATT attribute discovery (which disconnects Tesla firmware).
+      const macBytes = mac.split(':').map(function(b) { return parseInt(b, 16) })
+      const macAB = new Uint8Array(macBytes).buffer
+      const connectId = this._ensureBLE().get.connectionID()
+      const profileObject = {
+        pair: false,
+        id: connectId,
+        profile: 'TeslaVCSEC',
+        dev: macAB,
+        len: 1,
+        list: [{
+          uuid: true,
+          size: 1,
+          len: 1,
+          list: [{
+            uuid: TESLA_SERVICE_UUID,
+            permission: 0,
+            len1: 2,
+            len2: 2,
+            list: [
+              { uuid: TESLA_WRITE_UUID, permission: 32, desc: 0, len: 0 },
+              { uuid: TESLA_READ_UUID,  permission: 32, desc: 1, len: 1,
+                list: [{ uuid: '2902', permission: 32 }] }
+            ]
+          }]
+        }]
       }
-      try {
-        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
-      } catch (e) {
-        console.log('[BLE] Failed to register charaValueArrived:', e.message || e)
+
+      const self = this
+
+      const setupHandlers = function() {
+        self.charaValueHandler = function(uuid, data, len) {
+          console.log('[BLE] charaValueArrived:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) self._handleResponse(data, len)
+        }
+        self.charaNotificationHandler = function(uuid, data, len) {
+          console.log('[BLE] charaNotification:', uuid, len)
+          if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) self._handleResponse(data, len)
+        }
+        try { self._ensureBLE().on.charaValueArrived(self.charaValueHandler) }
+        catch (e) { console.log('[BLE] charaValueArrived reg failed:', e.message || e) }
+        try { self._ensureBLE().on.charaNotification(self.charaNotificationHandler) }
+        catch (e) { console.log('[BLE] charaNotification reg failed:', e.message || e) }
+
+        // Register descWriteComplete BEFORE writing CCCD.
+        // Without this, easy-ble's QueueManager polls for the write-complete flag every
+        // 100ms and times out after 5000ms — blocking SessionInfoRequest by 5 seconds.
+        try { self._ensureBLE().on.descWriteComplete(function(_c, _d, status) {
+          console.log('[BLE] CCCD write complete, status:', status)
+        }) } catch (e) { console.log('[BLE] descWriteComplete reg failed:', e.message || e) }
+
+        // Enable indications (0x0200). Queue will unblock promptly once vehicle responds.
+        try {
+          console.log('[BLE] Enabling CCCD (indications)...')
+          self._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+        } catch (e) { console.log('[BLE] CCCD failed:', e.message || e) }
+
+        console.log('[BLE] Handlers registered, settling connection...')
+        settle({ success: true, mac })
       }
-      
-      this.charaNotificationHandler = (uuid, data, len) => {
-        console.log('[BLE] charaNotification:', uuid, len)
-        if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
+
+      const applyGATTReady = function(listenerResult, profileLabel) {
+        if (done) return
+        if (!listenerResult.success) {
+          if (profileLabel === 'pair:false') {
+            // Fallback: null profile — ZeppOS assigns a profile_pid without GATT discovery
+            console.log('[BLE] pair:false failed (' + listenerResult.message + '), trying null profile fallback...')
+            self._ensureBLE().startListener(null, function(r) { applyGATTReady(r, 'null') })
+          } else {
+            console.log('[BLE] GATT profile setup failed (' + profileLabel + '):', listenerResult.message, listenerResult.code)
+            self._cleanup()
+            settle({ success: false, error: 'GATT setup failed: ' + (listenerResult.message || listenerResult.code) })
+          }
+          return
+        }
+        console.log('[BLE] GATT profile ready (' + profileLabel + '), registering handlers...')
+        self.gattReady = true
+        setupHandlers()
       }
-      try {
-        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
-      } catch (e) {
-        console.log('[BLE] Failed to register charaNotification:', e.message || e)
-      }
-      
-      // Enable indications immediately
-      try {
-        console.log('[BLE] Enabling indications (CCCD)...')
-        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
-      } catch (e) {
-        console.log('[BLE] Failed to enable CCCD:', e.message || e)
-      }
-      
-      // Settle immediately - handlers registered and ready
-      console.log('[BLE] Handlers registered, settling connection...')
-      settle({ success: true, mac })
+
+      this._ensureBLE().startListener(profileObject, function(r) { applyGATTReady(r, 'pair:false') })
     })
   }
   disconnect() {

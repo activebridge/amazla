@@ -11,41 +11,55 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
-### BLE Connection Protocol Optimization (✅ Complete - Tesla SDK Compliant)
+### BLE GATT Setup & CCCD Queue Fix (⚠️ Needs Testing)
 
-**Problem**: Vehicle was disconnecting 47ms after connection during BLE setup.
+**Problem**: Session establishment always fails — vehicle never receives `SessionInfoRequest`.
 
 **Root Causes Identified and Fixed**:
 
-1. **Unnecessary Attribute Discovery** (Commit 9039445)
-   - ZeppOS was performing BLE attribute discovery (generateProfileObject) after connection
-   - Tesla firmware doesn't expect or like these discovery requests
-   - Vehicle immediately drops the connection
-   - **Fix**: Skip profile discovery entirely (set `profile=null`), start listener directly
-   - **Result**: Vehicle stays connected, matches Tesla SDK behavior
+1. **`startListener()` removed — profile_pid never set** (Commit cd46780 broke it)
+   - The easy-ble library requires `startListener()` to call `mstBuildProfile()`, which sets
+     `device.profile_pid` in its internal device map
+   - Without `profile_pid`, all `write.characteristic()` calls silently succeed without sending any BLE packet
+   - All `on.*()` handler registrations throw TypeError (caught silently)
+   - **Fix**: Restored `startListener()` with `pair: false` profile — provides Tesla characteristic
+     UUIDs directly without triggering GATT attribute discovery (which Tesla firmware rejects at 47ms)
+   - Connection now settles only after `startListener` callback confirms GATT is ready
 
-2. **Duplicate Callback Registration** (Commit 0b3beca)
-   - Pages were being built multiple times simultaneously (ZeppOS GC issue)
-   - Each build registered new callbacks, causing 5-8x log spam
-   - **Fix**: Added `__pageBuilt` guard to prevent re-initialization
-   - **Result**: Clean logs, proper state management
+2. **CCCD write blocked the queue for 5 seconds** (newly identified bug)
+   - `write.descriptor()` goes through easy-ble's `QueueManager`, which polls every 100ms for a
+     write-complete flag set by `on.descWriteComplete()`
+   - That handler was never registered → queue timed out after 5000ms before unblocking
+   - `SessionInfoRequest` was queued behind CCCD and waited 5 seconds — by then the vehicle
+     may have already disconnected from lack of activity
+   - **Fix**: Register `on.descWriteComplete` handler before writing CCCD so the flag is set promptly
 
-3. **CCCD Blocking (4-second wait)** (Commit b6f041f)
-   - Connection was waiting for CCCD descriptor write confirmation
-   - Unnecessary blocking delayed SessionInfo request by up to 4 seconds
-   - **Fix**: Settle immediately after listener, write CCCD in background (non-blocking)
-   - **Result**: SessionInfo request sent within 1ms instead of 4+ seconds
+3. **No fallback if `pair:false` is rejected by ZeppOS** (untested firmware edge case)
+   - Some ZeppOS firmware versions may not accept a `pair:false` profile for a non-bonded device
+   - **Fix**: Added automatic fallback to `startListener(null, ...)` — ZeppOS assigns a `profile_pid`
+     without any GATT discovery
 
-**Implementation**:
-- `lib/tesla-ble/ble.js`: Removed generateProfileObject call, CCCD blocking, 4-second timeout
-- `page/ble/index.js`: Added __pageBuilt guard flag
-- `page/index.js`: Added sessionInitAttempted flag
+**Implementation** (`lib/tesla-ble/ble.js`):
+```
+connect() flow:
+  physical BLE connect
+    → startListener(pair:false profile)    ← prevents GATT discovery
+      → [fallback] startListener(null)     ← if pair:false rejected
+        → on.descWriteComplete registered  ← allows queue to unblock
+          → write.descriptor(CCCD 0x0200) ← enable indications
+            → settle({success:true})       ← caller ready
+```
 
-**Result**: ✅ Implementation now matches Tesla Go SDK exactly
-- No attribute discovery ✓
-- Notifications enabled immediately ✓
-- Ready to send within 1ms ✓
-- Non-blocking setup sequence ✓
+**Expected log sequence** (success path):
+```
+[BLE] Connected, building GATT profile (pair=false, no discovery)...
+[BLE] GATT profile ready (pair:false), registering handlers...
+[BLE] CCCD write complete, status: 0
+[BLE] Handlers registered, settling connection...
+[BLE] TX ... bytes (single write)          ← should appear within <500ms
+[SESSION] TX request...
+[SESSION] Established: counter=...
+```
 
 ### Session Info Response Fix (✅ Complete)
 
@@ -575,6 +589,40 @@ Returned in `CommandStatus.operationStatus` from vehicle responses:
 |----------|-------|-----------|
 | `SIGNATURE_TYPE_PRESENT_KEY` | 2 | Pairing messages (no HMAC, key not yet enrolled) |
 | `SIGNATURE_TYPE_HMAC` | 5 | All authenticated commands after session establishment |
+
+## Protocol Verification vs Tesla Go SDK
+
+Our implementation was cross-referenced against the official [Tesla vehicle-command Go SDK](https://github.com/teslamotors/vehicle-command).
+
+> **Important distinction**: The Go SDK uses the newer `universal_message` protocol (for internet/Fleet API commands). Our implementation uses the older **VCSEC BLE protocol** (`vcsec.proto`) — the same protocol used by physical key fobs. These are distinct protocols with different protobuf schemas. The Go SDK's signing approach (`SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` from `signatures.proto`) does **not** apply to VCSEC BLE commands.
+
+### Protocol Compatibility Matrix
+
+| Aspect | Our JS implementation | Tesla Go SDK | Status |
+|--------|----------------------|--------------|--------|
+| Service UUID (`0x0211`) | ✅ Match | — | ✅ |
+| Write char UUID (`0x0212`) | ✅ Match | — | ✅ |
+| Read/Indicate char UUID (`0x0213`) | ✅ Match | — | ✅ |
+| Message framing | 2-byte big-endian length header | 2-byte big-endian length header | ✅ Match |
+| Max message size | 1024 bytes (validated on receive) | 1024 bytes | ✅ Match |
+| SessionInfoRequest | ephemeral pubkey only, no challenge | ephemeral pubkey only | ✅ Match |
+| Session key derivation | `SHA1(shared_x)[:16]` | `SHA1(shared_x)[:16]` | ✅ Match |
+| RX reassembly timeout | 1000ms per chunk | 1 second per chunk | ✅ Match |
+| HMAC signature type | `SIGNATURE_TYPE_HMAC = 5` (vcsec.proto) | N/A (different proto) | ✅ Correct for VCSEC |
+| HMAC computation | `HMAC-SHA256(sessionKey, messageBytes)` | N/A (different proto) | ✅ Correct for VCSEC |
+| CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
+| GATT discovery | Skipped via `pair:false` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
+| Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (see below) |
+| MTU negotiation | None (hardcoded 20 B) | `ExchangeMTU()` before first write | ⚠️ Missing |
+| Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
+
+### MTU Optimization Opportunity
+
+The Go SDK calls `ExchangeMTU()` after connecting, allowing chunks up to ~244 bytes (the ZeppOS BLE maximum minus 3 bytes overhead). Our implementation uses the BLE minimum of 20 bytes.
+
+**Impact**: A 70-byte `SessionInfoRequest` is sent in 4 chunks (20 + 20 + 20 + 10) instead of 1.
+
+**Not a correctness issue** — the vehicle correctly reassembles chunked messages — but adds unnecessary round-trips. Fix would be to call `hmBle.mstExchangeMTU(connectId, maxMTU)` after connection and before `startListener`.
 
 ## File Structure
 
