@@ -256,9 +256,13 @@ class BLECryptoSession {
         if (i < 255) current = p256PointAdd(current, current)
       }
 
-      let str = ''
-      for (let i = 0; i < tableBytes.length; i++) str += String.fromCharCode(tableBytes[i])
-      return { success: true, table: btoa(str) }
+      // Convert to hex instead of base64 to avoid messaging OOM
+      // Hex is 2x size but chunks better
+      let hex = ''
+      for (let i = 0; i < tableBytes.length; i++) {
+        hex += ('0' + tableBytes[i].toString(16)).slice(-2)
+      }
+      return { success: true, table: hex }
     } catch (e) {
       return { success: false, error: e.message }
     }

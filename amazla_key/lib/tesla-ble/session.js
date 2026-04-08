@@ -32,7 +32,6 @@ const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
-    this.DEBUG_VEHICLE_PUBLIC_KEY = null // Set this to a Uint8Array[65] to test with hardcoded key
     this.onPoolLow = null // Callback when pool gets low - receives callback(count) to request from phone
     this.reset()
   }
@@ -223,16 +222,19 @@ class TeslaSession {
   }
   loadDoublingsTable() {
     try {
-      const b64 = this.storage.getItem('vehicle_doublings_table')
-      if (!b64) {
+      const hex = this.storage.getItem('vehicle_doublings_table')
+      if (!hex) {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-      const decoded = typeof atob !== 'undefined' ? atob(b64) : this._base64Decode(b64)
-      const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
-      if (raw.length !== 256 * 64) {
-        console.log('[SESSION] Doublings table wrong size: ' + raw.length + ' bytes (need 16384)')
+      // Convert hex to bytes
+      if (hex.length !== 256 * 64 * 2) {
+        console.log('[SESSION] Doublings table wrong size: ' + hex.length + ' hex chars (need 32768)')
         return null
+      }
+      const raw = new Uint8Array(256 * 64)
+      for (let i = 0; i < raw.length; i++) {
+        raw[i] = parseInt(hex.substr(i * 2, 2), 16)
       }
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
@@ -407,6 +409,7 @@ class TeslaSession {
       callback({ success: false, error: 'Key pool empty — sync from phone (GEN POOL)' })
       return
     }
+    console.log('[SESSION] Popped ephemeral key, pool remaining: ' + this.getPoolSize())
     this.ephemeralPrivateKey = keypair.privateKeyBytes  // Uint8Array[32]
     this.ephemeralPublicKey  = keypair.publicKeyBytes   // Uint8Array[65]
     this.routingAddress = generateRoutingAddress()
@@ -478,6 +481,14 @@ class TeslaSession {
           self.epoch = response.sessionInfo.epoch
           self.counter = response.sessionInfo.counter
           self.clockTime = response.sessionInfo.clockTime
+          
+          // Log epoch safely
+          if (self.epoch && self.epoch.length > 0) {
+            console.log('[SESSION] Epoch: ' + bytesToHex(self.epoch).slice(0, 8))
+          } else {
+            console.log('[SESSION] Epoch: <null or empty>')
+          }
+          
           if (self.vehiclePublicKey) {
             console.log('[SESSION] Vehicle public key length: ' + self.vehiclePublicKey.length + ' bytes')
             const keyHex = Array.from(self.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
@@ -496,15 +507,19 @@ class TeslaSession {
             callback({ success: false, error: 'No ECDH table — re-pair to generate' })
             return
           }
+          console.log('[SESSION] Starting ECDH (precomputed table)...')
+          const _ecdhStart = Date.now()
           const sharedSecret = ecdhFixed(self.ephemeralPrivateKey, _ecdhTable)
+          console.log('[SESSION] ECDH done in ' + (Date.now() - _ecdhStart) + 'ms')
           const keyMaterial = sha1(sharedSecret)
           self.sessionKey = keyMaterial.slice(0, 16)
           self.established = true
-          console.log('[SESSION] Established: counter=' + self.counter + ', epoch=' + bytesToHex(self.epoch).slice(0, 8))
+          const epochHex = self.epoch ? bytesToHex(self.epoch).slice(0, 8) : 'null'
+          console.log('[SESSION] ✓ Established: counter=' + self.counter + ', epoch=' + epochHex)
           callback({
             success: true,
             counter: self.counter,
-            epoch: bytesToHex(self.epoch)
+            epoch: self.epoch ? bytesToHex(self.epoch) : ''
           })
         } else {
           const fieldList = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(', ')
@@ -556,28 +571,35 @@ class TeslaSession {
     const doSend = function() {
       try {
         const message = self.buildAuthenticatedCommand(rkeAction)
-        let gotFirstResponse = false
+        
+        // Track if we received the first response (status push)
+        self._waitingForSecondResponse = false
+        
+        // Use BLE layer's wrapper to handle multi-response  
         teslaBLE.send(message, function(result) {
           if (!result.success) {
+            self._waitingForSecondResponse = false
             callback({ success: false, error: result.error })
             return
           }
           try {
             const response = parseRoutableMessage(result.data)
             
-            // Vehicle sends two responses for commands: (1) status push (field 3 only), (2) action response (field 1 + field 3/6)
-            // If we only got SessionInfo without actionStatus, re-queue to wait for the second response
-            if (!response.actionStatus && !gotFirstResponse) {
-              gotFirstResponse = true
+            // Vehicle sends two responses: (1) status push (SessionInfo only), (2) action response (with actionStatus)
+            if (!response.actionStatus && !self._waitingForSecondResponse) {
+              self._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
-              result._requeue = true  // Tell BLE to re-register callback
-              // Don't call user's callback yet, wait for the real response with actionStatus
+              // Pass _requeue back through result so BLE wrapper re-registers callback
+              result._requeue = true
+              callback(result)
               return
             }
             
-            // This is either the first response with actionStatus, or the second response
+            // This is the real response with actionStatus, or we already got first response
+            self._waitingForSecondResponse = false
             callback({ success: true, response })
           } catch (e) {
+            self._waitingForSecondResponse = false
             callback({ success: false, error: e.message })
           }
         })

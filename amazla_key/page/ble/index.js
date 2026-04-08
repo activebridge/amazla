@@ -395,6 +395,7 @@ function onLock() {
   addLog('Locking...', 0xffcc00)
   teslaSession.setStorage(storage)
   teslaSession.lock(function(result) {
+    if (result._requeue) return  // Internal requeue - don't show UI feedback yet
     if (result.success) {
       updateStatus('LOCKED', 0x00cc44)
       addLog('✓ Locked', 0x44ff44)
@@ -408,6 +409,7 @@ function onUnlock() {
   addLog('Unlocking...', 0xffcc00)
   teslaSession.setStorage(storage)
   teslaSession.unlock(function(result) {
+    if (result._requeue) return  // Internal requeue - don't show UI feedback yet
     if (result.success) {
       updateStatus('UNLOCKED', 0x00cc44)
       addLog('✓ Unlocked', 0x44ff44)

@@ -45,7 +45,6 @@ var connectionState = {
 }
 
 var isRunning = false
-var sessionInitAttempted = false  // Prevent duplicate session establishment attempts
 
 const render = () => {
   const { locked, df, dr, pf, pr, trunkOpen, frunkOpen } = vehicleState
@@ -213,25 +212,5 @@ Page(BasePage({
     hmUI.setStatusBarVisible(false)
     keepScreenOn(true)
     
-    // TEMPORARY: Disable auto-establish on main page to prevent BLE interference with BLE page
-    // Auto-establish session if pairing data exists (only once per page load)
-    /*
-    if (!sessionInitAttempted) {
-      sessionInitAttempted = true
-      setTimeout(() => {
-        teslaSession.ensureSessionEstablished(function(result) {
-          if (result.success) {
-            console.log('[INDEX] Session established automatically')
-            refreshStatus()
-          } else {
-            console.log('[INDEX] ' + (result.error || 'Session setup failed'))
-            // Show offline status
-            setTimeout(refreshStatus, 500)
-          }
-        })
-      }, 100)
-    }
-    */
-    console.log('[INDEX] TEMP: Auto-establish disabled - use BLE page only')
   },
 }))

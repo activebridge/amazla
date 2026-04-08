@@ -178,9 +178,9 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │   │  (ZeppOS)   │  Sync   │  (Android)  │         │     (Vehicle)       │    │
 │   │             │         │             │         │                     │    │
 │   └──────┬──────┘         └─────────────┘         └──────────┬──────────┘    │
-│          │                                                    │              │
-│          │              Direct BLE Connection                 │              │
-│          └────────────────────────────────────────────────────┘              │
+│          │                                                   │               │
+│          │              Direct BLE Connection                │               │
+│          └───────────────────────────────────────────────────┘               │
 │                                                                              │
 │   Phone needed ONLY for:          Watch handles:                             │
 │   • Initial key generation        • BLE communication                        │
@@ -204,7 +204,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ════════════════════════════════════                                        │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  ble_settings.txt (watch storage)                              │      │
+│     │  ble_settings.txt (watch storage)                               │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
 │     │  │ watch_private_key: "abc123..." (32 bytes / 64 hex chars)    ││      │
 │     │  │ watch_public_key:  "04def..." (65 bytes / 130 hex chars)    ││      │
@@ -220,10 +220,10 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool (field in ble_settings.txt, base64-encoded binary)   │      │
+│     │  key_pool (field in ble_settings.txt, base64-encoded binary)    │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                        ││      │
-│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                        ││      │
+│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
+│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
 │     │  │  ...                                                        ││      │
 │     │  │  97 bytes per key, stored as base64 string                  ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
