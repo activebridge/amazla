@@ -259,42 +259,58 @@ describe('generateRoutingAddress', () => {
   })
 })
 
-// ── key pool binary format ──────────────────────────────────────────────────
+// ── key pool hex format ────────────────────────────────────────────────────
+// After optimization the pool is stored as a plain hex string: N×194 chars
+// (64 hex chars for 32-byte private key + 130 hex chars for 65-byte public key).
+// No base64, no decode step — pool size is O(1) from string length alone.
 
-describe('Key pool binary format (97 bytes/key: 32 priv + 65 pub)', () => {
-  // Reproduce the pop/size logic from session.js for testing without @zos/storage
+describe('Key pool hex format (194 hex chars/key: 64 priv + 130 pub)', () => {
+  function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, '0')).join('') }
+  function hexToBytes(h) {
+    const b = new Uint8Array(h.length / 2)
+    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
+    return b
+  }
+
   function makePool(keys) {
-    // keys: array of { priv: Uint8Array[32], pub: Uint8Array[65] }
-    const buf = new Uint8Array(keys.length * 97)
-    for (let i = 0; i < keys.length; i++) {
-      buf.set(keys[i].priv, i * 97)
-      buf.set(keys[i].pub,  i * 97 + 32)
-    }
-    return btoa(String.fromCharCode.apply(null, buf))
+    return keys.map(k => bytesToHex(k.priv) + bytesToHex(k.pub)).join('')
   }
 
-  function poolSize(b64) {
-    if (!b64) return 0
-    return (atob(b64).length / 97) | 0
+  function poolSize(hex) {
+    if (!hex) return 0
+    return (hex.length / 194) | 0
   }
 
-  function popKey(b64) {
-    if (!b64) return null
-    const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-    if (raw.length < 97) return null
+  function popKey(hex) {
+    if (!hex || hex.length < 194) return null
     return {
-      priv: raw.slice(0, 32),
-      pub:  raw.slice(32, 97),
-      remaining: raw.length > 97 ? btoa(String.fromCharCode.apply(null, raw.slice(97))) : null
+      priv:      hexToBytes(hex.slice(0, 64)),
+      pub:       hexToBytes(hex.slice(64, 194)),
+      remaining: hex.slice(194) || null,
     }
   }
 
-  test('pool with 3 keys has size 3', () => {
-    const keys = Array.from({ length: 3 }, (_, i) => ({
+  test('pool string length is keys.length × 194', () => {
+    const keys = Array.from({ length: 5 }, (_, i) => ({
       priv: new Uint8Array(32).fill(i + 1),
       pub:  new Uint8Array(65).fill(i + 0x10),
     }))
-    expect(poolSize(makePool(keys))).toBe(3)
+    expect(makePool(keys).length).toBe(5 * 194)
+  })
+
+  test('poolSize is O(1) — derived from string length, no decode', () => {
+    const keys = Array.from({ length: 7 }, (_, i) => ({
+      priv: new Uint8Array(32).fill(i + 1),
+      pub:  new Uint8Array(65).fill(i + 0x10),
+    }))
+    const hex = makePool(keys)
+    expect(poolSize(hex)).toBe(7)
+    expect(hex.length / 194).toBeCloseTo(7, 5) // exact — no rounding
+  })
+
+  test('poolSize of empty string or null is 0', () => {
+    expect(poolSize('')).toBe(0)
+    expect(poolSize(null)).toBe(0)
   })
 
   test('pop returns first key (priv 32 bytes, pub 65 bytes)', () => {
@@ -314,16 +330,21 @@ describe('Key pool binary format (97 bytes/key: 32 priv + 65 pub)', () => {
       priv: new Uint8Array(32).fill(i + 1),
       pub:  new Uint8Array(65).fill(i + 0x10),
     }))
-    const b64    = makePool(keys)
-    const result = popKey(b64)
+    const hex    = makePool(keys)
+    const result = popKey(hex)
     expect(poolSize(result.remaining)).toBe(2)
   })
 
-  test('pop from single-key pool leaves empty (null remaining)', () => {
+  test('pop from single-key pool leaves null remaining', () => {
     const key = { priv: new Uint8Array(32).fill(0x01), pub: new Uint8Array(65).fill(0x04) }
     const result = popKey(makePool([key]))
     expect(result.remaining).toBeNull()
     expect(poolSize(result.remaining)).toBe(0)
+  })
+
+  test('pop from empty pool returns null', () => {
+    expect(popKey('')).toBeNull()
+    expect(popKey(null)).toBeNull()
   })
 
   test('pop preserves key bytes exactly', () => {
@@ -337,6 +358,24 @@ describe('Key pool binary format (97 bytes/key: 32 priv + 65 pub)', () => {
     expect(Array.from(result.priv)).toEqual(Array.from(priv))
     expect(Array.from(result.pub)).toEqual(Array.from(pub))
   })
+
+  test('second pop returns second key, not first', () => {
+    const keys = [
+      { priv: new Uint8Array(32).fill(0x11), pub: new Uint8Array(65).fill(0x22) },
+      { priv: new Uint8Array(32).fill(0x33), pub: new Uint8Array(65).fill(0x44) },
+      { priv: new Uint8Array(32).fill(0x55), pub: new Uint8Array(65).fill(0x66) },
+    ]
+    const first  = popKey(makePool(keys))
+    const second = popKey(first.remaining)
+    expect(second.priv[0]).toBe(0x33)
+    expect(second.pub[0]).toBe(0x44)
+    expect(poolSize(second.remaining)).toBe(1)
+  })
+
+  test('pool is valid hex (only 0-9a-f characters)', () => {
+    const keys = [{ priv: new Uint8Array(32).fill(0xab), pub: new Uint8Array(65).fill(0xcd) }]
+    expect(makePool(keys)).toMatch(/^[0-9a-f]+$/)
+  })
 })
 
 // ── generateKeyPool (phone side) ───────────────────────────────────────────
@@ -349,27 +388,27 @@ describe('BLECryptoSession.generateKeyPool', () => {
     expect(result.pool.length).toBeGreaterThan(0)
   })
 
-  test('generates correct number of keys (default 5)', () => {
-    const result = bleCryptoSession.generateKeyPool(5)
-    const raw = Uint8Array.from(atob(result.pool), c => c.charCodeAt(0))
-    expect(raw.length).toBe(5 * 97)
+  test('generates correct number of keys (default 5) — hex length = 5 × 194', () => {
+    expect(bleCryptoSession.generateKeyPool(5).pool.length).toBe(5 * 194)
   })
 
-  test('generates correct number of keys (count=1)', () => {
-    const raw = Uint8Array.from(atob(bleCryptoSession.generateKeyPool(1).pool), c => c.charCodeAt(0))
-    expect(raw.length).toBe(97)
+  test('generates correct number of keys (count=1) — hex length = 194', () => {
+    expect(bleCryptoSession.generateKeyPool(1).pool.length).toBe(194)
   })
 
-  test('private key is 32 non-zero bytes', () => {
-    const raw = Uint8Array.from(atob(bleCryptoSession.generateKeyPool(1).pool), c => c.charCodeAt(0))
-    const priv = raw.slice(0, 32)
-    const allZero = priv.every(b => b === 0)
-    expect(allZero).toBe(false)
+  test('pool is a valid hex string (only 0-9a-f)', () => {
+    expect(bleCryptoSession.generateKeyPool(3).pool).toMatch(/^[0-9a-f]+$/)
   })
 
-  test('public key starts with 0x04 (uncompressed point)', () => {
-    const raw = Uint8Array.from(atob(bleCryptoSession.generateKeyPool(1).pool), c => c.charCodeAt(0))
-    expect(raw[32]).toBe(0x04)  // first byte of pub = uncompressed prefix
+  test('private key is first 64 hex chars (32 bytes), non-zero', () => {
+    const pool = bleCryptoSession.generateKeyPool(1).pool
+    expect(pool.slice(0, 64)).not.toBe('0'.repeat(64))
+  })
+
+  test('public key is chars 64–194, starts with 04 (uncompressed point)', () => {
+    const pool = bleCryptoSession.generateKeyPool(1).pool
+    expect(pool.slice(64, 66)).toBe('04')
+    expect(pool.slice(64, 194).length).toBe(130)
   })
 
   test('each call generates different keys', () => {
@@ -380,8 +419,9 @@ describe('BLECryptoSession.generateKeyPool', () => {
 
   test('generated keypair is on the P-256 curve (ecdhFixed succeeds)', async () => {
     const { ecdhFixed, bytesToBigInt } = await import('../lib/tesla-ble/crypto/p256.js')
-    const raw  = Uint8Array.from(atob(bleCryptoSession.generateKeyPool(1).pool), c => c.charCodeAt(0))
-    const priv = raw.slice(0, 32)
+    const pool = bleCryptoSession.generateKeyPool(1).pool
+    const priv = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) priv[i] = parseInt(pool.slice(i * 2, i * 2 + 2), 16)
 
     // Build doublings table for BOB_PUB using BigInt (same as phone-side)
     const BOB_PUB = '047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1'
@@ -423,3 +463,106 @@ describe('BLECryptoSession.generateKeyPool', () => {
     expect(threw).toBe(false)
   })
 }, 60000) // ECDH can take ~5s on slow machines
+
+// ── loadDoublingsTable parsing ─────────────────────────────────────────────
+// Tests the parsing logic in isolation (no storage dependency).
+
+describe('loadDoublingsTable parsing logic', () => {
+  function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, '0')).join('') }
+  function hexToBytes(h) {
+    const b = new Uint8Array(h.length / 2)
+    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
+    return b
+  }
+
+  // Reproduce the table-building logic from loadDoublingsTable for unit testing
+  function parseDoublingsTable(hex) {
+    if (!hex || hex.length !== 256 * 64 * 2) return null
+    const raw = new Uint8Array(256 * 64)
+    for (let i = 0; i < raw.length; i++) raw[i] = parseInt(hex.substr(i * 2, 2), 16)
+    const { bytesToBigInt } = { bytesToBigInt: (bytes) => {
+      const r = new Uint32Array(8)
+      for (let i = 0; i < 8; i++) {
+        const idx = 28 - i * 4
+        r[i] = (bytes[idx] << 24) | (bytes[idx+1] << 16) | (bytes[idx+2] << 8) | bytes[idx+3]
+      }
+      return r
+    }}
+    const table = []
+    for (let i = 0; i < 256; i++) {
+      table.push([
+        bytesToBigInt(raw.slice(i * 64,      i * 64 + 32)),
+        bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64)),
+      ])
+    }
+    return table
+  }
+
+  function makeTableHex(entries) {
+    // entries: array of 256 {x: Uint8Array[32], y: Uint8Array[32]}
+    const raw = new Uint8Array(256 * 64)
+    for (let i = 0; i < 256; i++) {
+      raw.set(entries[i].x, i * 64)
+      raw.set(entries[i].y, i * 64 + 32)
+    }
+    return bytesToHex(raw)
+  }
+
+  const DUMMY_ENTRIES = Array.from({ length: 256 }, (_, i) => ({
+    x: new Uint8Array(32).fill(i & 0xff),
+    y: new Uint8Array(32).fill((i + 1) & 0xff),
+  }))
+
+  test('valid hex (32768 chars) parses to 256 entries', () => {
+    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
+    expect(table).not.toBeNull()
+    expect(table.length).toBe(256)
+  })
+
+  test('each entry is [Uint32Array(8), Uint32Array(8)]', () => {
+    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
+    for (const [x, y] of table) {
+      expect(x).toBeInstanceOf(Uint32Array)
+      expect(x.length).toBe(8)
+      expect(y).toBeInstanceOf(Uint32Array)
+      expect(y.length).toBe(8)
+    }
+  })
+
+  test('null input → null', () => {
+    expect(parseDoublingsTable(null)).toBeNull()
+  })
+
+  test('wrong length hex → null', () => {
+    expect(parseDoublingsTable('aabb')).toBeNull()
+    expect(parseDoublingsTable('a'.repeat(32767))).toBeNull()
+    expect(parseDoublingsTable('a'.repeat(32769))).toBeNull()
+  })
+
+  test('empty string → null', () => {
+    expect(parseDoublingsTable('')).toBeNull()
+  })
+
+  test('first entry x-coord bytes are preserved exactly', () => {
+    const x0 = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) x0[i] = i
+    const entries = DUMMY_ENTRIES.map((e, i) => i === 0 ? { x: x0, y: e.y } : e)
+    const table = parseDoublingsTable(makeTableHex(entries))
+    // Reconstruct bytes from Uint32Array and compare
+    const recovered = new Uint8Array(32)
+    for (let i = 0; i < 8; i++) {
+      const idx = 28 - i * 4
+      recovered[idx]   = (table[0][0][i] >>> 24) & 0xff
+      recovered[idx+1] = (table[0][0][i] >>> 16) & 0xff
+      recovered[idx+2] = (table[0][0][i] >>>  8) & 0xff
+      recovered[idx+3] =  table[0][0][i]          & 0xff
+    }
+    expect(Array.from(recovered)).toEqual(Array.from(x0))
+  })
+
+  test('last entry (index 255) is parsed correctly', () => {
+    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
+    // entry 255: x = fill(255 & 0xff = 0xff), y = fill(256 & 0xff = 0x00)
+    expect(table[255][0][0]).not.toBe(0) // x is non-zero (all 0xff bytes)
+  })
+})

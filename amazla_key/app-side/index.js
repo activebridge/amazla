@@ -93,7 +93,7 @@ const actions = {
   },
 
   // Generate ephemeral P-256 keypair pool for watch passive entry.
-  // Returns { success, pool } where pool is base64 flat binary (97 bytes/key).
+  // Returns { success, pool } where pool is a hex string (194 hex chars/key: 64 priv + 130 pub).
   BLE_GENERATE_SESSION_KEYS: async ({ count = 5 }) => {
     console.log('[App] Generating key pool, count:', count)
     const result = bleCrypto.generateKeyPool(count)

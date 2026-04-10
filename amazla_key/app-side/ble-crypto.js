@@ -208,11 +208,12 @@ class BLECryptoSession {
   }
 
   // Generate N ephemeral P-256 keypairs for watch key pool.
-  // Returns flat binary: N * 97 bytes (32 priv + 65 pub), base64-encoded.
-  // Watch stores this directly in LocalStorage('key_pool') and pops one per session.
+  // Returns hex string: N × 194 hex chars (64 priv + 130 pub per key).
+  // Consistent with all other binary storage in the codebase (no base64).
+  // Watch stores this directly and pops one key (194 chars) per session.
   generateKeyPool(count) {
     const n = count || 5
-    const buf = new Uint8Array(n * 97)
+    let pool = ''
 
     for (let i = 0; i < n; i++) {
       // Generate random 32-byte scalar in [1, n-1]
@@ -229,15 +230,14 @@ class BLECryptoSession {
       pubBytes.set(bigIntToBytes32(pt[0]), 1)
       pubBytes.set(bigIntToBytes32(pt[1]), 33)
 
-      buf.set(privBytes, i * 97)
-      buf.set(pubBytes,  i * 97 + 32)
+      pool += bytesToHex(privBytes) + bytesToHex(pubBytes)
     }
 
-    return { success: true, pool: btoa(String.fromCharCode.apply(null, buf)) }
+    return { success: true, pool }
   }
 
   // Precompute doublings table for vehicle's fixed public key.
-  // Returns base64-encoded binary: 256 entries × 64 bytes (32x + 32y) = 16384 bytes.
+  // Returns hex string: 256 entries × 64 bytes = 16384 bytes = 32768 hex chars.
   // Phone does this once during pairing; watch stores it for fast fixed-base ECDH.
   buildDoublingsTable(vehiclePubKeyHex) {
     try {

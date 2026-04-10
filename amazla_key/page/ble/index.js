@@ -97,11 +97,8 @@ function updateChecklist() {
   var mac      = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
   var poolSize = 0
   try {
-    var poolB64 = storage.getItem('key_pool')
-    if (poolB64) {
-      var decoded = typeof atob !== 'undefined' ? atob(poolB64) : poolB64
-      poolSize = Math.floor(decoded.length / 97)
-    }
+    var poolHex = storage.getItem('key_pool')
+    if (poolHex) poolSize = (poolHex.length / 194) | 0
   } catch (e) {}
   if (chkKeyWidget)   chkKeyWidget.setProperty(hmUI.prop.TEXT,
     (watchKey ? '✓' : '✗') + ' KEY:' + (watchKey ? watchKey.slice(2, 10) : '--------'))

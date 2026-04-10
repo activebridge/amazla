@@ -28,7 +28,6 @@ function byteToHex(byte) {
   const hex = byte.toString(16)
   return hex.length === 1 ? '0' + hex : hex
 }
-const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
@@ -50,8 +49,9 @@ class TeslaSession {
     this.established = false
     this.preserved = null
     this.replenishingPool = false
-    this.connectingPromise = null // Guard against duplicate connection attempts
-    this.pendingCallbacks = null // Queue for concurrent ensureSessionEstablished calls
+    this._connecting = false   // guard against duplicate connection attempts
+    this.pendingCallbacks = null
+    this._doublingsTable = null // cached after first parse; invalidated on reset
   }
   preserveForReconnect(timeoutMs) {
     this.preserved = {
@@ -99,38 +99,28 @@ class TeslaSession {
   }
   popKeyFromPool() {
     try {
-      const b64 = this.storage.getItem('key_pool')
-      if (!b64) {
+      const hex = this.storage.getItem('key_pool')
+      if (!hex || hex.length < 194) {
         if (this.onPoolLow && !this.replenishingPool) {
           this.replenishingPool = true
           this.onPoolLow(15)
         }
         return null
       }
-      const decoded = typeof atob !== 'undefined' ? atob(b64) : this._base64Decode(b64)
-      const raw = Uint8Array.from(decoded, function(c) { return c.charCodeAt(0) })
-      if (raw.length < 97) {
-        if (this.onPoolLow && !this.replenishingPool) {
-          this.replenishingPool = true
-          this.onPoolLow(15)
-        }
-        return null
-      }
-      const priv = raw.slice(0, 32)
-      const pub  = raw.slice(32, 97)
-      const rest = raw.slice(97)
-      const poolSize = Math.floor(rest.length / 97)
-      
-      rest.length > 0 
-        ? this.storage.setItem('key_pool', typeof btoa !== 'undefined' ? btoa(String.fromCharCode.apply(null, rest)) : this._base64Encode(rest))
+      const priv = hexToBytes(hex.slice(0, 64))
+      const pub  = hexToBytes(hex.slice(64, 194))
+      const rest = hex.slice(194)
+      const poolSize = (rest.length / 194) | 0
+
+      rest.length > 0
+        ? this.storage.setItem('key_pool', rest)
         : this.storage.removeItem('key_pool')
-      
-      // Trigger replenishment when pool gets low
+
       if (poolSize < 5 && this.onPoolLow && !this.replenishingPool) {
         this.replenishingPool = true
         this.onPoolLow(15)
       }
-      
+
       return { privateKeyBytes: priv, publicKeyBytes: pub }
     } catch (e) {
       console.log('[Session] popKeyFromPool error:', e.message)
@@ -140,62 +130,14 @@ class TeslaSession {
   completePoolReplenishment() {
     this.replenishingPool = false
   }
-  _base64Encode(bytes) {
-    let result = ''
-    let i = 0
-    
-    while (i < bytes.length) {
-      const b1 = bytes[i++]
-      const b2 = i < bytes.length ? bytes[i++] : 0
-      const b3 = i < bytes.length ? bytes[i++] : 0
-      
-      result += BASE64_CHARS[b1 >> 2]
-      result += BASE64_CHARS[((b1 & 3) << 4) | (b2 >> 4)]
-      result += i - 2 < bytes.length ? BASE64_CHARS[((b2 & 15) << 2) | (b3 >> 6)] : '='
-      result += i - 1 < bytes.length ? BASE64_CHARS[b3 & 63] : '='
-    }
-    
-    return result
-  }
   getPoolSize() {
     try {
-      const b64 = this.storage.getItem('key_pool')
-      if (!b64) {
-        console.log('[Session] getPoolSize: no pool data')
-        return 0
-      }
-      console.log('[Session] getPoolSize: b64 length =', b64.length)
-      const decoded = typeof atob === 'undefined' 
-        ? (console.log('[Session] ERROR: atob is not defined!'), this._base64Decode(b64))
-        : atob(b64)
-      console.log('[Session]', typeof atob === 'undefined' ? 'Manual' : 'atob', 'decode: length =', decoded.length)
-      return (decoded.length / 97) | 0
+      const hex = this.storage.getItem('key_pool')
+      return hex ? (hex.length / 194) | 0 : 0
     } catch (e) {
       console.log('[Session] getPoolSize error:', e.message)
       return 0
     }
-  }
-  _base64Decode(b64) {
-    let result = ''
-    let bits = 0
-    let bitCount = 0
-    
-    for (let i = 0; i < b64.length; i++) {
-      if (b64[i] === '=') break
-      const val = BASE64_CHARS.indexOf(b64[i])
-      if (val === -1) continue
-      
-      bits = (bits << 6) | val
-      bitCount += 6
-      
-      if (bitCount >= 8) {
-        bitCount -= 8
-        result += String.fromCharCode((bits >> bitCount) & 0xFF)
-        bits &= (1 << bitCount) - 1
-      }
-    }
-    
-    return result
   }
   setPrivateKey(privateKeyHex, publicKeyHex) {
     this.enrolledPrivateKey = hexToBytes(privateKeyHex)
@@ -221,21 +163,19 @@ class TeslaSession {
     }
   }
   loadDoublingsTable() {
+    if (this._doublingsTable) return this._doublingsTable
     try {
       const hex = this.storage.getItem('vehicle_doublings_table')
       if (!hex) {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-      // Convert hex to bytes
       if (hex.length !== 256 * 64 * 2) {
         console.log('[SESSION] Doublings table wrong size: ' + hex.length + ' hex chars (need 32768)')
         return null
       }
       const raw = new Uint8Array(256 * 64)
-      for (let i = 0; i < raw.length; i++) {
-        raw[i] = parseInt(hex.substr(i * 2, 2), 16)
-      }
+      for (let i = 0; i < raw.length; i++) raw[i] = parseInt(hex.substr(i * 2, 2), 16)
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
           if (raw[i] !== this.vehiclePublicKey[1 + i] || raw[32 + i] !== this.vehiclePublicKey[33 + i]) {
@@ -250,7 +190,7 @@ class TeslaSession {
                     bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64))])
       }
       console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries, 16 KB)')
-      console.log('[SESSION] ECDH will use fast path: ~128 additions, 0 doublings')
+      this._doublingsTable = table
       return table
     } catch (e) {
       console.log('[SESSION] loadDoublingsTable error: ' + e.message)
@@ -355,10 +295,6 @@ class TeslaSession {
       if (!mac) {
         callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
         return
-      }
-      if (teslaBLE.isConnected()) {
-        console.log('[SESSION] Disconnecting existing connection...')
-        teslaBLE.disconnect()
       }
       const doConnect = function(attempt) {
         console.log('[SESSION] Connecting to vehicle: ' + mac + ' (attempt ' + attempt + ')')
@@ -679,27 +615,19 @@ class TeslaSession {
       return
     }
     // If already connecting, queue callback instead of creating duplicate connection
-    if (this.connectingPromise) {
-      // Connection in progress, add to pending callbacks
+    if (this._connecting) {
       this.pendingCallbacks = this.pendingCallbacks || []
       this.pendingCallbacks.push(callback)
       return
     }
-    // Initialize pending callbacks array
+    this._connecting = true
     this.pendingCallbacks = [callback]
-    
-    // Create a promise for the connection attempt to prevent duplicates
-    this.connectingPromise = new Promise((resolve) => {
-      this.requestSessionInfo((result) => {
-        this.connectingPromise = null
-        
-        // Call all pending callbacks with the result
-        const callbacks = this.pendingCallbacks || [callback]
-        this.pendingCallbacks = null
-        callbacks.forEach(cb => cb(result))
-        
-        resolve()
-      })
+
+    this.requestSessionInfo((result) => {
+      this._connecting = false
+      const callbacks = this.pendingCallbacks
+      this.pendingCallbacks = null
+      callbacks.forEach(cb => cb(result))
     })
   }
   getStatus() {
