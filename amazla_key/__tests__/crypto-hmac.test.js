@@ -1,7 +1,7 @@
 // HMAC-SHA256, SHA-256, and SHA-1 correctness tests
 // Vectors verified against Node.js crypto module and RFC 3174 / RFC 4231
 
-import { hmacSha256, hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/hmac.js'
+import { hmacSha256, createKeyedHmac, hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/hmac.js'
 import { sha1, sha256 } from '../lib/tesla-ble/crypto/sha256.js'
 
 describe('SHA-256', () => {
@@ -178,5 +178,64 @@ describe('HMAC-SHA256', () => {
     const key  = new Uint8Array(16).fill(0x55)
     const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
     expect(bytesToHex(hmacSha256(key, data))).toBe(bytesToHex(hmacSha256(key, data)))
+  })
+})
+
+describe('createKeyedHmac', () => {
+  // RFC 4231 TC1 — keyed form matches one-shot form
+  test('TC1: matches hmacSha256 output', () => {
+    const key  = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    const data = new Uint8Array([0x48, 0x69, 0x20, 0x54, 0x68, 0x65, 0x72, 0x65])
+    const hmac = createKeyedHmac(key)
+    expect(bytesToHex(hmac(data))).toBe(
+      'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7'
+    )
+  })
+
+  // RFC 4231 TC2 — keyed form matches one-shot form
+  test('TC2: matches hmacSha256 output', () => {
+    const key = new Uint8Array([0x4a, 0x65, 0x66, 0x65])
+    const s = 'what do ya want for nothing?'
+    const data = new Uint8Array(s.length)
+    for (let i = 0; i < s.length; i++) data[i] = s.charCodeAt(i)
+    const hmac = createKeyedHmac(key)
+    expect(bytesToHex(hmac(data))).toBe(
+      '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843'
+    )
+  })
+
+  // Simulates session key use: 16-byte key, multiple calls (one per command)
+  test('16-byte session key: repeated calls return correct independent results', () => {
+    const key  = new Uint8Array(16).fill(0xab)
+    const msg1 = new Uint8Array([1, 2, 3, 4])
+    const msg2 = new Uint8Array([5, 6, 7, 8])
+    const hmac = createKeyedHmac(key)
+    const r1a = bytesToHex(hmac(msg1))
+    const r1b = bytesToHex(hmac(msg1)) // same message, second call
+    const r2  = bytesToHex(hmac(msg2))
+    // Repeated calls on same message must be identical
+    expect(r1a).toBe(r1b)
+    // Different messages must differ
+    expect(r1a).not.toBe(r2)
+    // Must match one-shot hmacSha256
+    expect(r1a).toBe(bytesToHex(hmacSha256(key, msg1)))
+    expect(r2).toBe(bytesToHex(hmacSha256(key, msg2)))
+  })
+
+  // Two instances with different keys must not interfere
+  test('two instances with different keys are independent', () => {
+    const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+    const hmac1 = createKeyedHmac(new Uint8Array(16).fill(0x01))
+    const hmac2 = createKeyedHmac(new Uint8Array(16).fill(0x02))
+    const r1 = bytesToHex(hmac1(data))
+    const r2 = bytesToHex(hmac2(data))
+    expect(r1).not.toBe(r2)
+    expect(r1).toBe(bytesToHex(hmacSha256(new Uint8Array(16).fill(0x01), data)))
+    expect(r2).toBe(bytesToHex(hmacSha256(new Uint8Array(16).fill(0x02), data)))
+  })
+
+  test('returns 32 bytes', () => {
+    const hmac = createKeyedHmac(new Uint8Array(16).fill(0x01))
+    expect(hmac(new Uint8Array([1, 2, 3])).length).toBe(32)
   })
 })

@@ -27,6 +27,29 @@ function hmacSha256(key, message) {
   outerData.set(innerHash, BLOCK_SIZE)
   return sha256(outerData)
 }
+function createKeyedHmac(key) {
+  const keyBytes = toBytes(key)
+  const paddedKey = new Uint8Array(BLOCK_SIZE)
+  if (keyBytes.length > BLOCK_SIZE) paddedKey.set(sha256(keyBytes))
+  else paddedKey.set(keyBytes)
+  const innerPad = new Uint8Array(BLOCK_SIZE)
+  const outerPad = new Uint8Array(BLOCK_SIZE)
+  for (let i = 0; i < BLOCK_SIZE; i++) {
+    innerPad[i] = paddedKey[i] ^ 0x36
+    outerPad[i] = paddedKey[i] ^ 0x5c
+  }
+  return function(message) {
+    const messageBytes = toBytes(message)
+    const innerData = new Uint8Array(BLOCK_SIZE + messageBytes.length)
+    innerData.set(innerPad)
+    innerData.set(messageBytes, BLOCK_SIZE)
+    const innerHash = sha256(innerData)
+    const outerData = new Uint8Array(BLOCK_SIZE + 32)
+    outerData.set(outerPad)
+    outerData.set(innerHash, BLOCK_SIZE)
+    return sha256(outerData)
+  }
+}
 function toBytes(data) {
   if (data instanceof Uint8Array) {
     return data
@@ -70,5 +93,5 @@ function concatBytes(...arrays) {
   }
   return result
 }
-export { hmacSha256, toBytes, bytesToHex, hexToBytes, concatBytes }
+export { hmacSha256, createKeyedHmac, toBytes, bytesToHex, hexToBytes, concatBytes }
 export default hmacSha256
