@@ -220,12 +220,12 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool (field in ble_settings.txt, base64-encoded binary)    │      │
+│     │  key_pool (field in ble_settings.txt, hex string)               │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
-│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
+│     │  │  [ key0_priv(32B/64 hex) | key0_pub(65B/130 hex) ]          ││      │
+│     │  │  [ key1_priv(32B/64 hex) | key1_pub(65B/130 hex) ]          ││      │
 │     │  │  ...                                                        ││      │
-│     │  │  97 bytes per key, stored as base64 string                  ││      │
+│     │  │  194 hex chars per key                                      ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
@@ -624,6 +624,36 @@ The Go SDK calls `ExchangeMTU()` after connecting, allowing chunks up to ~244 by
 
 **Not a correctness issue** — the vehicle correctly reassembles chunked messages — but adds unnecessary round-trips. Fix would be to call `hmBle.mstExchangeMTU(connectId, maxMTU)` after connection and before `startListener`.
 
+## Potential BLE Improvements
+
+### 1. Replace `@silver-zepp/easy-ble` with direct `@zos/ble` calls (~22 KB source saved)
+
+`lib/tesla-ble/ble.js` currently depends on `@silver-zepp/easy-ble` (26 KB minified), which wraps the native `@zos/ble` module with `BLEMaster`, `QueueManager`, and write/read helper classes. Only a small subset of that surface is used.
+
+**Why it matters**: ZeppOS QuickJS compiles ~2× source→bytecode. The full module graph loaded at startup (session.js + vcsec.js + ble.js + easy-ble + p256.js + sha256.js + protobuf.js + hmac.js) is ~104 KB source → ~200 KB bytecode — right at the OOM threshold. Removing easy-ble and replacing it with a thin direct wrapper (~4–5 KB) would save ~21–22 KB source / ~42–44 KB bytecode.
+
+**What easy-ble provides that we use**:
+- `BLEMaster.scan()` / `stopScan()` → wraps `mstStartScan` / `mstStopScan`
+- `BLEMaster.connect()` / `disconnect()` → wraps `mstConnect`
+- `startListener()` → calls `mstBuildProfile`, registers `mstOnPrepare`
+- `on.charaValueArrived()` → wraps `mstOnCharaValueArrived`
+- `on.charaNotification()` → wraps `mstOnCharaNotification`
+- `on.descWriteComplete()` → wraps `mstOnDescWriteComplete`
+- `write.characteristicWithoutResponse()` → wraps `mstWriteCharacteristicWithoutResponse`
+- `write.descriptor()` → wraps `mstWriteDescriptor` + unblocks via `QueueManager`
+
+**What we'd need to write**: ~50 lines of direct `mst*` calls plus a simple write-queue (poll on `descWriteComplete` flag, ~30 lines). No complex abstractions needed.
+
+### 2. MTU Negotiation (~3× fewer write chunks)
+
+The current implementation uses hardcoded 20-byte BLE chunks (the minimum). The Tesla Go SDK calls `ExchangeMTU()` after connecting, which allows chunks up to ~244 bytes on ZeppOS.
+
+**Impact**: A 70-byte `SessionInfoRequest` is currently sent in 4 chunks (20+20+20+10). With MTU negotiation it would send in 1 chunk.
+
+**Fix**: Call `hmBle.mstSetMTU(connectId, 244)` (already imported — used once in `ble.js`) after connection and before `startListener`. Then use the negotiated MTU as the chunk size in `send()`.
+
+**Note**: Not a correctness issue — the vehicle correctly reassembles chunked messages — but reduces round-trips and connection setup time.
+
 ## File Structure
 
 ```
@@ -655,8 +685,8 @@ amazla_key/
 | `ble_settings.txt` | `watch_public_key` | 65-byte enrolled public key (hex) | Phone sync |
 | `ble_settings.txt` | `tesla_ble_mac` | Vehicle BLE MAC address | Auto-saved on scan |
 | `ble_settings.txt` | `vehicle_ec_public_key` | 65-byte vehicle EC key (hex) | Auto-saved after pairing |
-| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (base64) | Phone sync |
-| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (base64, 97 B each) | GEN POOL button |
+| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (hex, 32768 chars) | Phone sync |
+| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (hex, 194 chars/key) | GEN POOL button |
 
 ## Setup Guide
 
