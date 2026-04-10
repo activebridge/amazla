@@ -199,6 +199,13 @@ Page(BasePage({
     storage.load()
     teslaSession.setStorage(storage)
 
+    if (!storage.getItem('tesla_ble_mac') ||
+        !storage.getItem('vehicle_ec_public_key') ||
+        !storage.getItem('vehicle_doublings_table')) {
+      push({ url: 'page/wizard/index' })
+      return
+    }
+
     onKey({
       callback: (key, keyEvent) => {
         if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {

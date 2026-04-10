@@ -1,26 +1,96 @@
+import { BG } from './bg.js'
+import { TESLA_LOGO } from './logo.js'
+
+export { TESLA_LOGO }
+
+export const BODY = {
+  position: 'relative',
+  display: 'flex',
+  flexWrap: 'wrap',
+  flexDirection: 'column',
+  alignItems: 'stretch',
+  fontFamily: 'Circular,Helvetica,Arial,sans-serif',
+  fontSize: '14px',
+  fontWeight: '400',
+  minHeight: '100vh',
+  backgroundImage: `linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.5)), url('${BG}')`,
+  backgroundSize: 'cover',
+  backgroundPosition: 'center',
+  backgroundAttachment: 'fixed',
+  backdropFilter: 'blur(3px)',
+  overflowY: 'hidden',
+}
+
 export const MAIN = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  width: '100%',
+  margin: '0 auto',
+  overflowY: 'auto',
+  maxHeight: '100vh',
+  padding: '5%',
+  maxWidth: '500px',
+}
+
+export const CARD = {
   position: 'relative',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'stretch',
-  minHeight: '100vh',
-  maxWidth: '100%',
-  fontFamily: 'Circular,Helvetica,Arial,sans-serif',
-  fontSize: '16px',
-  fontWeight: '400',
-  gap: '0',
   padding: '20px',
-  background: '#1D1E1F',
-  overflowY: 'auto',
-  overflowX: 'hidden',
+  color: 'white',
+  gap: '12px',
+  marginBottom: '16px',
+  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)',
+  backdropFilter: 'blur(20px)',
+  borderRadius: '16px',
+  border: '1px solid rgba(255, 255, 255, 0.25)',
+  background: 'rgba(255, 255, 255, 0.15)',
+  width: '100%',
+}
+
+export const STEP_BADGE = {
+  background: 'rgba(255, 255, 255, 0.9)',
+  color: '#1a1a2e',
+  width: '36px',
+  height: '36px',
+  borderRadius: '50%',
+  fontWeight: 'bold',
+  fontSize: '16px',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+  minWidth: '36px',
+  textAlign: 'center',
+  lineHeight: '36px',
 }
 
 export const SECTION_TITLE = {
-  fontSize: '18px',
-  fontWeight: 'bold',
-  color: '#CCCCCC',
-  margin: '20px 0 12px',
+  fontSize: '13px',
+  fontWeight: '700',
+  color: 'rgba(255, 255, 255, 0.6)',
+  letterSpacing: '1.5px',
+  textTransform: 'uppercase',
+  margin: '24px 0 10px',
   textAlign: 'left',
+  width: '100%',
 }
 
-export const TESLA_LOGO = 'data:image/png;base64,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'
+export const HEADER = {
+  fontSize: '28px',
+  color: 'white',
+  textShadow: '0 2px 12px rgba(0, 0, 0, 0.4)',
+  fontWeight: '700',
+  marginBottom: '4px',
+  textAlign: 'center',
+}
+
+export const SUBHEADER = {
+  fontSize: '13px',
+  color: 'rgba(255, 255, 255, 0.65)',
+  textAlign: 'center',
+  marginBottom: '24px',
+}
+
