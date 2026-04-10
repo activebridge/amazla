@@ -56,6 +56,26 @@ export const createPairingController = function(page, storage, onState, onSucces
   function start() {
     cancelled = false
     teslaBleApi.reset()
+
+    var ecKey  = storage.getItem('vehicle_ec_public_key')
+    var table  = storage.getItem('vehicle_doublings_table')
+    var mac    = storage.getItem('tesla_ble_mac') || teslaBleApi.savedMAC
+
+    // EC key already fetched but table is missing — skip pairing entirely
+    if (ecKey && !table) {
+      onState('verifying')
+      computeTableAndPool(ecKey)
+      return
+    }
+
+    // Key may already be enrolled — skip pairing, just verify
+    if (mac && storage.getItem('watch_public_key') && !ecKey) {
+      onState('connecting')
+      doConnect(mac, 0, doVerify)
+      return
+    }
+
+    // Full flow
     onState('connecting')
     ensureWatchKey()
   }
@@ -204,6 +224,39 @@ export const createPairingController = function(page, storage, onState, onSucces
       })
   }
 
+  // Compute doublings table and generate key pool from a known EC key hex string.
+  // Called from doVerify() after fetching the key, or directly on retry when the
+  // EC key is already saved but the table is missing.
+  function computeTableAndPool(ecKeyHex) {
+    if (cancelled) return
+    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: ecKeyHex } })
+      .then(function(r) {
+        if (cancelled) return
+        if (!r.success || !r.table) {
+          onError('Failed to compute session table. Please try again.')
+          throw new Error('handled')
+        }
+        try {
+          storage.setItem('vehicle_doublings_table', r.table)
+        } catch (e) {
+          onError('Failed to save session table. Check watch storage.')
+          throw new Error('handled')
+        }
+        return page.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+      })
+      .then(function(r) {
+        if (cancelled) return
+        if (r && r.success && r.pool) {
+          try { storage.setItem('key_pool', r.pool) } catch (e) {}
+        }
+        onSuccess()
+      })
+      .catch(function(e) {
+        if (e.message === 'handled') return
+        if (!cancelled) onError('Setup failed: ' + (e.message || '?'))
+      })
+  }
+
   // Step 4: verify enrollment, fetch vehicle EC key, compute table, generate pool
   function doVerify() {
     if (cancelled) return
@@ -260,32 +313,7 @@ export const createPairingController = function(page, storage, onState, onSucces
             return
           }
 
-          page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: ecKeyHex } })
-            .then(function(r) {
-              if (cancelled) return
-              if (!r.success || !r.table) {
-                onError('Failed to compute session table. Please try again.')
-                throw new Error('handled')
-              }
-              try {
-                storage.setItem('vehicle_doublings_table', r.table)
-              } catch (e) {
-                onError('Failed to save session table. Check watch storage.')
-                throw new Error('handled')
-              }
-              return page.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
-            })
-            .then(function(r) {
-              if (cancelled) return
-              if (r && r.success && r.pool) {
-                try { storage.setItem('key_pool', r.pool) } catch (e) {}
-              }
-              onSuccess()
-            })
-            .catch(function(e) {
-              if (e.message === 'handled') return
-              if (!cancelled) onError('Setup failed: ' + (e.message || '?'))
-            })
+          computeTableAndPool(ecKeyHex)
         }
 
         teslaBLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)
