@@ -18,6 +18,55 @@ describe('SHA-256', () => {
     )
   })
 
+  // 55 bytes fits exactly in one block (55+1+0+8=64); 56 bytes spills into two blocks
+  test('55-byte input — single block boundary (NIST)', () => {
+    const input = new Uint8Array(55).fill(0x61)
+    expect(bytesToHex(sha256(input))).toBe(
+      '9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318'
+    )
+  })
+
+  // NIST FIPS 180-4 multi-block vector — exercises processBlock called twice
+  test('56-byte input — two blocks (NIST)', () => {
+    const s = 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'
+    const input = new Uint8Array(s.length)
+    for (let i = 0; i < s.length; i++) input[i] = s.charCodeAt(i)
+    expect(bytesToHex(sha256(input))).toBe(
+      '248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1'
+    )
+  })
+
+  // Exercises processBlock called multiple times — catches _W state leakage between blocks
+  test('large input — many blocks', () => {
+    const input = new Uint8Array(1000).fill(0x61) // 1000 × 'a'
+    expect(bytesToHex(sha256(input))).toBe(
+      '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3'
+    )
+  })
+
+  // Catches _W leakage between successive calls (key risk of module-scope buffer reuse)
+  test('back-to-back calls return independent correct results', () => {
+    const a = new Uint8Array([0x61, 0x62, 0x63])
+    const b = new Uint8Array([0x64, 0x65, 0x66])
+    const hashA = bytesToHex(sha256(a))
+    const hashB = bytesToHex(sha256(b))
+    expect(hashA).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+    expect(hashB).toBe('cb8379ac2098aa165029e3938a51da0bcecfc008fd6795f401178647f96c5b34')
+  })
+
+  test('string input matches Uint8Array input', () => {
+    const asString = 'abc'
+    const asBytes  = new Uint8Array([0x61, 0x62, 0x63])
+    expect(bytesToHex(sha256(asString))).toBe(bytesToHex(sha256(asBytes)))
+  })
+
+  test('ArrayBuffer input', () => {
+    const buf = new Uint8Array([0x61, 0x62, 0x63]).buffer
+    expect(bytesToHex(sha256(buf))).toBe(
+      'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+    )
+  })
+
   test('returns 32 bytes', () => {
     expect(sha256(new Uint8Array([1, 2, 3])).length).toBe(32)
   })
@@ -42,11 +91,35 @@ describe('SHA-1', () => {
     expect(bytesToHex(sha1(input))).toBe('a9993e364706816aba3e25717850c26c9cd0d89d')
   })
 
-  test('"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"', () => {
+  test('"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" — multi-block', () => {
     const s = 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq'
     const input = new Uint8Array(s.length)
     for (let i = 0; i < s.length; i++) input[i] = s.charCodeAt(i)
     expect(bytesToHex(sha1(input))).toBe('84983e441c3bd26ebaae4aa1f95129e5e54670f1')
+  })
+
+  test('large input — many blocks', () => {
+    const input = new Uint8Array(1000).fill(0x61)
+    expect(bytesToHex(sha1(input))).toBe('291e9a6c66994949b57ba5e650361e98fc36b1ba')
+  })
+
+  // Catches _W1 state leakage between successive calls
+  test('back-to-back calls return independent correct results', () => {
+    const a = new Uint8Array([0x61, 0x62, 0x63])
+    const b = new Uint8Array([0x64, 0x65, 0x66])
+    expect(bytesToHex(sha1(a))).toBe('a9993e364706816aba3e25717850c26c9cd0d89d')
+    expect(bytesToHex(sha1(b))).toBe('589c22335a381f122d129225f5c0ba3056ed5811')
+  })
+
+  test('string input matches Uint8Array input', () => {
+    const asString = 'abc'
+    const asBytes  = new Uint8Array([0x61, 0x62, 0x63])
+    expect(bytesToHex(sha1(asString))).toBe(bytesToHex(sha1(asBytes)))
+  })
+
+  test('ArrayBuffer input', () => {
+    const buf = new Uint8Array([0x61, 0x62, 0x63]).buffer
+    expect(bytesToHex(sha1(buf))).toBe('a9993e364706816aba3e25717850c26c9cd0d89d')
   })
 
   test('returns 20 bytes', () => {
