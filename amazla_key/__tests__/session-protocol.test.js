@@ -260,42 +260,47 @@ describe('generateRoutingAddress', () => {
 })
 
 // ── key pool hex format ────────────────────────────────────────────────────
-// After optimization the pool is stored as a plain hex string: N×194 chars
-// (64 hex chars for 32-byte private key + 130 hex chars for 65-byte public key).
-// No base64, no decode step — pool size is O(1) from string length alone.
+// Key pool is now stored as binary string: N×97 bytes per key
+// (32 bytes for private key + 65 bytes for public key).
+// Binary format reduces storage by 50% vs hex, direct byte slicing on pop.
 
-describe('Key pool hex format (194 hex chars/key: 64 priv + 130 pub)', () => {
-  function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, '0')).join('') }
-  function hexToBytes(h) {
-    const b = new Uint8Array(h.length / 2)
-    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
+describe('Key pool binary format (97 bytes/key: 32 priv + 65 pub)', () => {
+  function bytesToBinaryString(b) {
+    let s = ''
+    for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i])
+    return s
+  }
+  
+  function binaryStringToBytes(s) {
+    const b = new Uint8Array(s.length)
+    for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xff
     return b
   }
 
   function makePool(keys) {
-    return keys.map(k => bytesToHex(k.priv) + bytesToHex(k.pub)).join('')
+    return keys.map(k => bytesToBinaryString(k.priv) + bytesToBinaryString(k.pub)).join('')
   }
 
-  function poolSize(hex) {
-    if (!hex) return 0
-    return (hex.length / 194) | 0
+  function poolSize(data) {
+    if (!data) return 0
+    return (data.length / 97) | 0
   }
 
-  function popKey(hex) {
-    if (!hex || hex.length < 194) return null
+  function popKey(data) {
+    if (!data || data.length < 97) return null
     return {
-      priv:      hexToBytes(hex.slice(0, 64)),
-      pub:       hexToBytes(hex.slice(64, 194)),
-      remaining: hex.slice(194) || null,
+      priv:      binaryStringToBytes(data.slice(0, 32)),
+      pub:       binaryStringToBytes(data.slice(32, 97)),
+      remaining: data.slice(97) || null,
     }
   }
 
-  test('pool string length is keys.length × 194', () => {
+  test('pool string length is keys.length × 97', () => {
     const keys = Array.from({ length: 5 }, (_, i) => ({
       priv: new Uint8Array(32).fill(i + 1),
       pub:  new Uint8Array(65).fill(i + 0x10),
     }))
-    expect(makePool(keys).length).toBe(5 * 194)
+    expect(makePool(keys).length).toBe(5 * 97)
   })
 
   test('poolSize is O(1) — derived from string length, no decode', () => {
@@ -303,9 +308,9 @@ describe('Key pool hex format (194 hex chars/key: 64 priv + 130 pub)', () => {
       priv: new Uint8Array(32).fill(i + 1),
       pub:  new Uint8Array(65).fill(i + 0x10),
     }))
-    const hex = makePool(keys)
-    expect(poolSize(hex)).toBe(7)
-    expect(hex.length / 194).toBeCloseTo(7, 5) // exact — no rounding
+    const data = makePool(keys)
+    expect(poolSize(data)).toBe(7)
+    expect(data.length / 97).toBeCloseTo(7, 5) // exact — no rounding
   })
 
   test('poolSize of empty string or null is 0', () => {
@@ -372,13 +377,17 @@ describe('Key pool hex format (194 hex chars/key: 64 priv + 130 pub)', () => {
     expect(poolSize(second.remaining)).toBe(1)
   })
 
-  test('pool is valid hex (only 0-9a-f characters)', () => {
+  test('pool is valid binary (all char codes 0-255)', () => {
     const keys = [{ priv: new Uint8Array(32).fill(0xab), pub: new Uint8Array(65).fill(0xcd) }]
-    expect(makePool(keys)).toMatch(/^[0-9a-f]+$/)
+    const pool = makePool(keys)
+    for (let i = 0; i < pool.length; i++) {
+      expect(pool.charCodeAt(i)).toBeGreaterThanOrEqual(0)
+      expect(pool.charCodeAt(i)).toBeLessThanOrEqual(255)
+    }
   })
 })
 
-// ── generateKeyPool (phone side) ───────────────────────────────────────────
+// ── generateKeyPool (phone side, binary format) ────────────────────────
 
 describe('BLECryptoSession.generateKeyPool', () => {
   test('returns success=true and a pool string', () => {
@@ -388,27 +397,36 @@ describe('BLECryptoSession.generateKeyPool', () => {
     expect(result.pool.length).toBeGreaterThan(0)
   })
 
-  test('generates correct number of keys (default 5) — hex length = 5 × 194', () => {
-    expect(bleCryptoSession.generateKeyPool(5).pool.length).toBe(5 * 194)
+  test('generates correct number of keys (default 5) — binary length = 5 × 97', () => {
+    expect(bleCryptoSession.generateKeyPool(5).pool.length).toBe(5 * 97)
   })
 
-  test('generates correct number of keys (count=1) — hex length = 194', () => {
-    expect(bleCryptoSession.generateKeyPool(1).pool.length).toBe(194)
+  test('generates correct number of keys (count=1) — binary length = 97', () => {
+    expect(bleCryptoSession.generateKeyPool(1).pool.length).toBe(97)
   })
 
-  test('pool is a valid hex string (only 0-9a-f)', () => {
-    expect(bleCryptoSession.generateKeyPool(3).pool).toMatch(/^[0-9a-f]+$/)
+  test('pool is a valid binary string (all char codes 0-255)', () => {
+    const pool = bleCryptoSession.generateKeyPool(3).pool
+    for (let i = 0; i < pool.length; i++) {
+      const code = pool.charCodeAt(i)
+      expect(code).toBeGreaterThanOrEqual(0)
+      expect(code).toBeLessThanOrEqual(255)
+    }
   })
 
-  test('private key is first 64 hex chars (32 bytes), non-zero', () => {
+  test('private key is first 32 bytes, non-zero', () => {
     const pool = bleCryptoSession.generateKeyPool(1).pool
-    expect(pool.slice(0, 64)).not.toBe('0'.repeat(64))
+    const priv = new Uint8Array(32)
+    for (let i = 0; i < 32; i++) priv[i] = pool.charCodeAt(i)
+    expect(priv.some(b => b !== 0)).toBe(true)
   })
 
-  test('public key is chars 64–194, starts with 04 (uncompressed point)', () => {
+  test('public key is bytes 32–97, starts with 04 (uncompressed point)', () => {
     const pool = bleCryptoSession.generateKeyPool(1).pool
-    expect(pool.slice(64, 66)).toBe('04')
-    expect(pool.slice(64, 194).length).toBe(130)
+    const pub = new Uint8Array(65)
+    for (let i = 0; i < 65; i++) pub[i] = pool.charCodeAt(32 + i)
+    expect(pub[0]).toBe(0x04)
+    expect(pub.length).toBe(65)
   })
 
   test('each call generates different keys', () => {

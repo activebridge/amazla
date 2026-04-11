@@ -1,12 +1,14 @@
 import bleCryptoSession, {
   hexToBytes,
   bytesToHex,
+  bytesToBinaryString,
 } from '../app-side/ble-crypto.js'
 
 import { decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
 
 // Pre-computed test key (P-256, uncompressed)
 const TEST_PUBLIC_KEY_HEX = '042a5cee5e1a40fcd2e695cdd00cf6a36755290fc8fe1c956d51ce3450a83f55166c8d9255eb99fdcf99a28f1f96abae79b33b38242e243944a8e88b0cf29e2f7e'
+const TEST_PUBLIC_KEY_BINARY = bytesToBinaryString(hexToBytes(TEST_PUBLIC_KEY_HEX))
 
 describe('BLE Crypto Helpers', () => {
   describe('hexToBytes', () => {
@@ -50,17 +52,20 @@ describe('BLE Crypto Helpers', () => {
 describe('BLECryptoSession', () => {
   describe('buildPairMessage', () => {
     test('builds valid pairing message', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
 
       expect(result.success).toBe(true)
-      expect(result.messageHex).toBeDefined()
-      expect(typeof result.messageHex).toBe('string')
-      expect(result.messageHex.length).toBeGreaterThan(100)
+      expect(result.message).toBeDefined()
+      expect(typeof result.message).toBe('string')
+      expect(result.message.length).toBeGreaterThan(50)
     })
 
     test('message does not include length prefix (added by BLE send)', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = new Uint8Array(result.message.length)
+      for (let i = 0; i < result.message.length; i++) {
+        messageBytes[i] = result.message.charCodeAt(i)
+      }
 
       // Message should NOT have length prefix - that's added by teslaBLE.send()
       // Message is ToVCSECMessage { signedMessage (field 1, wire type 2) }
@@ -69,8 +74,11 @@ describe('BLECryptoSession', () => {
     })
 
     test('uses SIGNATURE_TYPE_PRESENT_KEY (no routing address needed)', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = new Uint8Array(result.message.length)
+      for (let i = 0; i < result.message.length; i++) {
+        messageBytes[i] = result.message.charCodeAt(i)
+      }
 
       const toVcsec = decodeMessage(messageBytes)
       const signedMsg = decodeMessage(toVcsec[1])
@@ -80,8 +88,11 @@ describe('BLECryptoSession', () => {
     test('internal structure: ToVCSECMessage > SignedMessage(f2/f3) > UnsignedMessage > WhitelistOp(f5) > PermissionChange(keyRole=OWNER)', async () => {
       const { decodeMessage } = await import('../lib/tesla-ble/protocol/protobuf.js')
 
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_HEX)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = new Uint8Array(result.message.length)
+      for (let i = 0; i < result.message.length; i++) {
+        messageBytes[i] = result.message.charCodeAt(i)
+      }
 
       // ToVCSECMessage { field 1 = SignedMessage }
       const toVcsec = decodeMessage(messageBytes)
@@ -121,11 +132,87 @@ describe('BLECryptoSession', () => {
 
   describe('buildWhitelistQueryMessage', () => {
     test('builds valid whitelist query message', () => {
-      const result = bleCryptoSession.buildWhitelistQueryMessage(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildWhitelistQueryMessage(TEST_PUBLIC_KEY_BINARY)
 
       expect(result.success).toBe(true)
-      expect(result.messageHex).toBeDefined()
-      expect(typeof result.messageHex).toBe('string')
+      expect(result.message).toBeDefined()
+      expect(typeof result.message).toBe('string')
+    })
+  })
+
+  describe('buildDoublingsTable', () => {
+    test('returns ArrayBuffer of correct size (256 × 64 = 16384 bytes)', () => {
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      expect(result.success).toBe(true)
+      expect(result.buffer).toBeInstanceOf(ArrayBuffer)
+      expect(result.buffer.byteLength).toBe(16384)
+    })
+
+    test('no longer returns hex string', () => {
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      expect(result.table).toBeUndefined()
+    })
+
+    test('entry 0 matches vehicle key x and y coordinates', () => {
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const bytes = new Uint8Array(result.buffer)
+
+      // Input key: 04 || x(32) || y(32), strip 04 prefix
+      const xHex = TEST_PUBLIC_KEY_HEX.slice(2, 66)
+      const yHex = TEST_PUBLIC_KEY_HEX.slice(66, 130)
+
+      // Entry 0: bytes[0..31] = x, bytes[32..63] = y
+      for (let i = 0; i < 32; i++) {
+        expect(bytes[i]).toBe(parseInt(xHex.substr(i * 2, 2), 16))
+        expect(bytes[32 + i]).toBe(parseInt(yHex.substr(i * 2, 2), 16))
+      }
+    })
+
+    test('all 256 entries are distinct (no repeated points)', () => {
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const bytes = new Uint8Array(result.buffer)
+      const seen = new Set()
+      for (let i = 0; i < 256; i++) {
+        // Use first 8 bytes of each x as fingerprint — sufficient for distinctness
+        const key = Array.from(bytes.subarray(i * 64, i * 64 + 8)).join(',')
+        expect(seen.has(key)).toBe(false)
+        seen.add(key)
+      }
+    })
+
+    test('deterministic — same key produces same buffer', () => {
+      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const r2 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      expect(new Uint8Array(r1.buffer)).toEqual(new Uint8Array(r2.buffer))
+    })
+
+    test('different vehicle keys produce different tables', () => {
+      // Flip one byte in the key to get a different (invalid but distinct) point
+      const altKey = TEST_PUBLIC_KEY_HEX.slice(0, 2) + 'ff' + TEST_PUBLIC_KEY_HEX.slice(4)
+      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const r2 = bleCryptoSession.buildDoublingsTable(altKey)
+      // At least entry 0 x-bytes must differ
+      expect(new Uint8Array(r1.buffer, 0, 32)).not.toEqual(new Uint8Array(r2.buffer, 0, 32))
+    })
+
+    test('invalid key length returns error', () => {
+      const result = bleCryptoSession.buildDoublingsTable('deadbeef')
+      expect(result.success).toBe(false)
+      expect(result.error).toBeDefined()
+    })
+
+    test('each entry is 64 bytes: 32-byte x then 32-byte y (big-endian)', () => {
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      // Verify non-zero x and y for all entries (no point-at-infinity)
+      const bytes = new Uint8Array(result.buffer)
+      for (let i = 0; i < 256; i++) {
+        const xSlice = bytes.subarray(i * 64, i * 64 + 32)
+        const ySlice = bytes.subarray(i * 64 + 32, i * 64 + 64)
+        const xAllZero = xSlice.every(b => b === 0)
+        const yAllZero = ySlice.every(b => b === 0)
+        expect(xAllZero).toBe(false)
+        expect(yAllZero).toBe(false)
+      }
     })
   })
 })

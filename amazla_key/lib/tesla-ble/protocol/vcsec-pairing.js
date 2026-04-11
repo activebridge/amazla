@@ -87,9 +87,7 @@ const parsePairingResponse = (data) => {
       if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
         vehiclePublicKey = wlEntryInfo.publicKey
         dbg.vehiclePublicKeyFound = true
-        const pubKeyHex = Array.from(vehiclePublicKey.slice(0, 8), x => x.toString(16).padStart(2, '0')).join('')
-        dbg.vehiclePublicKeyStart = pubKeyHex
-        console.log('[VCSEC] ✓ Extracted vehicle EC key from field 17: ' + pubKeyHex + '... (65 bytes)')
+        console.log('[VCSEC] ✓ Extracted vehicle EC key from field 17 (65 bytes)')
       } else {
         dbg.vehiclePublicKeyFound = false
         if (fields[17]) {

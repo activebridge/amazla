@@ -287,8 +287,7 @@ class TeslaBLE {
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)
-    const chunkHex = Array.from(chunk.slice(0, Math.min(20, chunk.length)), x => x.toString(16).padStart(2, '0')).join('')
-    console.log('[BLE] RX notification: ' + chunk.length + ' bytes, hex=' + chunkHex + (chunk.length > 20 ? '...' : ''))
+    console.log('[BLE] RX notification: ' + chunk.length + ' bytes')
     
     if (!this.responseCallback) {
       console.log('[BLE] No response callback, ignoring')

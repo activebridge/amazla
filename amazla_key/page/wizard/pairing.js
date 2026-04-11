@@ -1,11 +1,6 @@
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
-
-function hexToBytes(hex) {
-  var bytes = new Uint8Array(hex.length / 2)
-  for (var i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
-  return bytes
-}
+import { binaryStringToBytes } from '../../lib/tesla-ble/crypto/binary-utils.js'
 
 function decodeRawFields(data) {
   var fields = {}, offset = 0
@@ -96,11 +91,11 @@ export const createPairingController = function(page, storage, onState, onSucces
     page.request({ method: 'BLE_SYNC_KEYS', params: { forceNew: false } })
       .then(function(result) {
         if (cancelled) return
-        if (!result.success || !result.publicKeyHex) {
+        if (!result.success || !result.publicKeyBinary) {
           onError('Key generation failed')
           return
         }
-        storage.setItem('watch_public_key', result.publicKeyHex)
+        storage.setItem('watch_public_key', result.publicKeyBinary)
         scanAndConnect()
       })
       .catch(function(e) {
@@ -154,14 +149,14 @@ export const createPairingController = function(page, storage, onState, onSucces
     var watchKey = storage.getItem('watch_public_key')
     if (!watchKey) { onError('No watch key. Please try again.'); return }
 
-    page.request({ method: 'BLE_PAIR', params: { publicKeyHex: watchKey } })
+    page.request({ method: 'BLE_PAIR', params: { publicKeyBinary: watchKey } })
       .then(function(result) {
         if (cancelled) return
         if (!result.success) {
           onError('Pair request failed: ' + (result.error || '?'))
           return
         }
-        var msgBytes = hexToBytes(result.messageHex)
+        var msgBytes = binaryStringToBytes(result.message)
         var sawTapRequired = false
 
         // Prompt user to tap NFC card while we wait for the vehicle's first response
@@ -268,14 +263,14 @@ export const createPairingController = function(page, storage, onState, onSucces
     var watchKey = storage.getItem('watch_public_key')
     if (!watchKey) { onError('No watch key'); return }
 
-    page.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyHex: watchKey } })
+    page.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: watchKey } })
       .then(function(result) {
         if (cancelled) return
         if (!result.success) {
           onError('Verify failed: ' + (result.error || '?'))
           return
         }
-        var msgBytes = hexToBytes(result.messageHex)
+        var msgBytes = binaryStringToBytes(result.message)
 
         function handleQueryResponse(r, attempt) {
           if (cancelled) return

@@ -2,6 +2,8 @@
 // Builds VCSEC protobuf messages for pairing (key enrollment) only.
 // Also generates ephemeral P-256 keypair pools for watch-side passive entry.
 
+import { bytesToHex, bytesToBinaryString, hexToBytes, binaryStringToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
+
 // ============================================
 // P-256 keypair generation (BigInt, phone-side only)
 // ============================================
@@ -107,22 +109,6 @@ function concat(...arrays) {
 }
 
 // ============================================
-// Utilities
-// ============================================
-
-function hexToBytes(hex) {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
-  }
-  return bytes
-}
-
-function bytesToHex(bytes) {
-  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
-}
-
-// ============================================
 // Tesla VCSEC Protocol Constants
 // ============================================
 
@@ -170,8 +156,9 @@ function buildToVCSECMessage(signedMessage) {
 class BLECryptoSession {
   // Build pairing message: enrolls our public key into the Tesla whitelist.
   // Wire format: ToVCSECMessage > SignedMessage(PRESENT_KEY) > UnsignedMessage > WhitelistOperation
-  buildPairMessage(publicKeyHex) {
-    const publicKeyBytes = hexToBytes(publicKeyHex)
+  // Returns binary string instead of hex for 50% transport reduction
+  buildPairMessage(publicKeyBinary) {
+    const publicKeyBytes = binaryStringToBytes(publicKeyBinary)
 
     // PublicKey { PublicKeyRaw (field 1) = 65 bytes }
     const publicKeyMsg = buildPublicKey(publicKeyBytes)
@@ -201,16 +188,17 @@ class BLECryptoSession {
       signatureType: SIGNATURE_TYPE_PRESENT_KEY
     })
 
+    const messageBytes = buildToVCSECMessage(signedMsg)
     return {
       success: true,
-      messageHex: bytesToHex(buildToVCSECMessage(signedMsg))
+      message: bytesToBinaryString(messageBytes)
     }
   }
 
   // Generate N ephemeral P-256 keypairs for watch key pool.
-  // Returns hex string: N × 194 hex chars (64 priv + 130 pub per key).
-  // Consistent with all other binary storage in the codebase (no base64).
-  // Watch stores this directly and pops one key (194 chars) per session.
+  // Returns binary string: N × 97 bytes per key (32 priv + 65 pub).
+  // Binary format: 50% storage reduction vs hex, direct byte slicing on watch.
+  // Watch stores this directly and pops one key (97 bytes) per session.
   generateKeyPool(count) {
     const n = count || 5
     let pool = ''
@@ -230,15 +218,16 @@ class BLECryptoSession {
       pubBytes.set(bigIntToBytes32(pt[0]), 1)
       pubBytes.set(bigIntToBytes32(pt[1]), 33)
 
-      pool += bytesToHex(privBytes) + bytesToHex(pubBytes)
+      // Store as binary string (97 bytes per key: 32 priv + 65 pub)
+      pool += bytesToBinaryString(privBytes) + bytesToBinaryString(pubBytes)
     }
 
     return { success: true, pool }
   }
 
   // Precompute doublings table for vehicle's fixed public key.
-  // Returns hex string: 256 entries × 64 bytes = 16384 bytes = 32768 hex chars.
-  // Phone does this once during pairing; watch stores it for fast fixed-base ECDH.
+  // Returns ArrayBuffer: 256 entries × 64 bytes = 16384 bytes.
+  // Phone does this once during pairing; watch stores it as binary for fast fixed-base ECDH.
   buildDoublingsTable(vehiclePubKeyHex) {
     try {
       if (vehiclePubKeyHex.length !== 130) {
@@ -256,13 +245,7 @@ class BLECryptoSession {
         if (i < 255) current = p256PointAdd(current, current)
       }
 
-      // Convert to hex instead of base64 to avoid messaging OOM
-      // Hex is 2x size but chunks better
-      let hex = ''
-      for (let i = 0; i < tableBytes.length; i++) {
-        hex += ('0' + tableBytes[i].toString(16)).slice(-2)
-      }
-      return { success: true, table: hex }
+      return { success: true, buffer: tableBytes.buffer }
     } catch (e) {
       return { success: false, error: e.message }
     }
@@ -272,7 +255,8 @@ class BLECryptoSession {
   // Wire format: ToVCSECMessage > SignedMessage(PRESENT_KEY) > UnsignedMessage(InformationRequest)
   // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,
   //               FromVCSECMessage { commandStatus (field 4) } if not enrolled.
-  buildWhitelistQueryMessage(publicKeyHex) {
+  // Returns binary string instead of hex for 50% transport reduction
+  buildWhitelistQueryMessage(publicKeyBinary) {
     // InformationRequest { type (field 1) = GET_WHITELIST_ENTRY_INFO(6), slot (field 4) = 0 }
     // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE, verified from vcsec.proto InformationRequestType enum
     // Use slot=0 to fetch first/only enrolled key (Tesla SDK uses slot, not publicKey)
@@ -290,9 +274,10 @@ class BLECryptoSession {
       signatureType: SIGNATURE_TYPE_PRESENT_KEY
     })
 
+    const messageBytes = buildToVCSECMessage(signedMsg)
     return {
       success: true,
-      messageHex: bytesToHex(buildToVCSECMessage(signedMsg))
+      message: bytesToBinaryString(messageBytes)
     }
   }
 
@@ -305,7 +290,7 @@ class BLECryptoSession {
       let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
       if (k === 0n) k = 1n
       const privBytes = bigIntToBytes32(k)
-      const privKeyHex = bytesToHex(privBytes)
+      const privKeyBinary = bytesToBinaryString(privBytes)
 
       // Compute public key: k * G → uncompressed 04 || x || y (65 bytes)
       const pt = p256ScalarMul(k, [P256_GX, P256_GY])
@@ -313,13 +298,13 @@ class BLECryptoSession {
       pubBytes[0] = 0x04
       pubBytes.set(bigIntToBytes32(pt[0]), 1)
       pubBytes.set(bigIntToBytes32(pt[1]), 33)
-      const pubKeyHex = bytesToHex(pubBytes)
+      const pubKeyBinary = bytesToBinaryString(pubBytes)
 
       console.log('[BLE] Generated new enrolled key pair')
       return {
         success: true,
-        publicKeyHex: pubKeyHex,
-        privateKeyHex: privKeyHex
+        publicKeyBinary: pubKeyBinary,
+        privateKeyBinary: privKeyBinary
       }
     } catch (e) {
       return { success: false, error: e.message }
@@ -330,4 +315,4 @@ class BLECryptoSession {
 const bleCryptoSession = new BLECryptoSession()
 
 export default bleCryptoSession
-export { hexToBytes, bytesToHex }
+export { hexToBytes, bytesToHex, bytesToBinaryString, binaryStringToBytes }

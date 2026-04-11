@@ -1,7 +1,7 @@
 // Pairing Flow Tests
 // Tests for the complete Tesla BLE pairing flow with mocked BLE layer
 
-import { hexToBytes, bytesToHex } from '../app-side/ble-crypto.js'
+import { hexToBytes, bytesToHex, bytesToBinaryString } from '../app-side/ble-crypto.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import {
   parsePairingResponse,
@@ -13,6 +13,7 @@ import {
 // Test keys (same format as secrets.js)
 const TEST_PRIVATE_KEY = 'ec00d429c82dcf2bea3e4485da9ed75e84347741393786b4a48e02554eadb88f'
 const TEST_PUBLIC_KEY = '04f4d912cb840b7f9eb974847a5566e886add14357c3f85df255e7397a98a13463b6b5d8ed03aa720fc6d7c721e7319e0b627f18f84199852fca23897b32710ece'
+const TEST_PUBLIC_KEY_BINARY = bytesToBinaryString(hexToBytes(TEST_PUBLIC_KEY))
 
 // Mock Tesla BLE responses (protobuf encoded)
 // These simulate what Tesla sends back via BLE notifications
@@ -68,19 +69,35 @@ function buildErrorResponse(faultCode = 1) {
   return buildMockFromVCSECResponse(OPERATIONSTATUS_ERROR, faultCode)
 }
 
+// Helper: convert binary message to bytes
+function binaryMessageToBytes(binaryMsg) {
+  const bytes = new Uint8Array(binaryMsg.length)
+  for (let i = 0; i < binaryMsg.length; i++) {
+    bytes[i] = binaryMsg.charCodeAt(i)
+  }
+  return bytes
+}
+
+// Helper: get hex string from binary message for testing
+function binaryToHexString(binaryMsg) {
+  return Array.from(binaryMessageToBytes(binaryMsg))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+}
+
 describe('Pairing Message Building', () => {
   describe('buildPairMessage', () => {
     test('builds valid pairing message with test public key', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
 
       expect(result.success).toBe(true)
-      expect(result.messageHex).toBeDefined()
-      expect(typeof result.messageHex).toBe('string')
+      expect(result.message).toBeDefined()
+      expect(typeof result.message).toBe('string')
     })
 
     test('message contains public key bytes', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      const messageHex = result.messageHex
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageHex = binaryToHexString(result.message)
 
       // The public key (without 04 prefix for some encodings, or full) should appear in message
       // At minimum, the X coordinate should be present
@@ -89,16 +106,16 @@ describe('Pairing Message Building', () => {
     })
 
     test('message starts with ToVCSECMessage field 1', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = binaryMessageToBytes(result.message)
 
       // ToVCSECMessage { signedMessage (field 1, wire type 2) } = (1 << 3) | 2 = 0x0A
       expect(messageBytes[0]).toBe(0x0A)
     })
 
     test('uses SIGNATURE_TYPE_PRESENT_KEY — no RoutableMessage wrapper', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = binaryMessageToBytes(result.message)
       // Pairing uses ToVCSECMessage (0x0A = field 1, wire type 2), not RoutableMessage
       expect(messageBytes[0]).toBe(0x0A)
     })
@@ -108,7 +125,7 @@ describe('Pairing Message Building', () => {
     test('accepts 65-byte uncompressed key (130 hex chars)', () => {
       expect(TEST_PUBLIC_KEY.length).toBe(130)
 
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
       expect(result.success).toBe(true)
     })
 
@@ -226,7 +243,7 @@ describe('Pairing Flow State Machine', () => {
   describe('Happy path', () => {
     test('flow: send request -> WAIT -> tap card -> OK (with whitelistOperationStatus)', () => {
       // Step 1: Build and send pair message
-      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
       expect(pairResult.success).toBe(true)
 
       // Step 2: Receive WAIT response
@@ -242,7 +259,7 @@ describe('Pairing Flow State Machine', () => {
 
     test('commandStatus operationStatus=OK without whitelistOperationStatus returns pending', () => {
       // Per Tesla SDK: not terminal without whitelistOperationStatus — doPair() keeps waiting
-      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
       expect(pairResult.success).toBe(true)
 
       const parsed = parsePairingResponse(buildOkResponse())
@@ -252,7 +269,7 @@ describe('Pairing Flow State Machine', () => {
 
   describe('Error scenarios', () => {
     test('immediate ERROR response', () => {
-      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const pairResult = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
       expect(pairResult.success).toBe(true)
 
       const errorResponse = buildErrorResponse(1)
@@ -263,7 +280,7 @@ describe('Pairing Flow State Machine', () => {
 
     test('WAIT then ERROR (keycard rejected)', () => {
       // Build message
-      bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
 
       // Receive WAIT
       const waitResponse = buildWaitResponse()
@@ -316,11 +333,11 @@ describe('BLE Service Mock Integration', () => {
       mockTeslaBLE._connected = true
 
       // Build the message
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
       expect(result.success).toBe(true)
 
       // Simulate sending
-      const messageBytes = hexToBytes(result.messageHex)
+      const messageBytes = binaryMessageToBytes(result.message)
       mockTeslaBLE.sendAndWaitForResponse(messageBytes, (response) => {
         // This would be called with Tesla's response
       }, 15000)
@@ -345,8 +362,8 @@ describe('Message Byte Format', () => {
   describe('Length prefix handling', () => {
     test('pairing message does NOT include length prefix', () => {
       // The 2-byte length prefix is added by teslaBLE.send(), not buildPairMessage()
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = binaryMessageToBytes(result.message)
 
       // First byte should be protobuf field key, not length
       // ToVCSECMessage { signedMessage (field 1, wire type 2) } = (1 << 3) | 2 = 0x0A
@@ -354,8 +371,8 @@ describe('Message Byte Format', () => {
     })
 
     test('simulates adding length prefix before send', () => {
-      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-      const messageBytes = hexToBytes(result.messageHex)
+      const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+      const messageBytes = binaryMessageToBytes(result.message)
 
       // This is what teslaBLE.send() does
       const length = messageBytes.length
@@ -395,8 +412,8 @@ describe('Message Byte Format', () => {
 
 describe('WhitelistOperation Structure', () => {
   test('message contains WhitelistOperation (field 16 of UnsignedMessage)', () => {
-    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-    const messageHex = result.messageHex
+    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+    const messageHex = binaryToHexString(result.message)
 
     // Field 16 with wire type 2 = (16 << 3) | 2 = 130 = 0x82 (needs varint encoding: 0x82 0x01)
     // Look for this pattern in the message
@@ -404,9 +421,9 @@ describe('WhitelistOperation Structure', () => {
   })
 
   test('message contains metadataForKey at field 6 of WhitelistOperation', () => {
-    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-    const messageBytes = hexToBytes(result.messageHex)
-    const messageHex = result.messageHex
+    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+    const messageBytes = binaryMessageToBytes(result.message)
+    const messageHex = binaryToHexString(result.message)
 
     // vcsec.proto: WhitelistOperation.metadataForKey = field 6, wire type 2
     // Field key = (6 << 3) | 2 = 50 = 0x32
@@ -426,8 +443,8 @@ describe('Key Form Factor', () => {
     // KEY_FORM_FACTOR_ANDROID_DEVICE = 7
     // This triggers the key-card-tap confirmation UI on the car's touchscreen.
     // CLOUD_KEY (9) bypasses the UI and uses Tesla cloud verification instead.
-    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY)
-    const messageHex = result.messageHex
+    const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
+    const messageHex = binaryToHexString(result.message)
 
     // Form factor 7 is encoded as varint 0x07 after field key 0x08
     // KeyMetadata { keyFormFactor (field 1) = 7 } = 0x08 0x07

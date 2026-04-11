@@ -4,6 +4,7 @@ import { keepScreenOn } from '../../../zeppify/index.js'
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
+import { binaryStringToBytes } from '../../lib/tesla-ble/crypto/binary-utils.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 
@@ -28,11 +29,6 @@ var storage = {
   getItem: function(key) { return this.data[key] || null },
   setItem: function(key, val) { this.data[key] = val; this.save() },
   removeItem: function(key) { delete this.data[key]; this.save() }
-}
-function hexToBytes(hex) {
-  var bytes = new Uint8Array(hex.length / 2)
-  for (var i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
-  return bytes
 }
 function dumpHex(bytes, n) {
   if (!bytes) return 'null'
@@ -97,13 +93,13 @@ function updateChecklist() {
   var mac      = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
   var poolSize = 0
   try {
-    var poolHex = storage.getItem('key_pool')
-    if (poolHex) poolSize = (poolHex.length / 194) | 0
+    var poolBinary = storage.getItem('key_pool')
+    if (poolBinary) poolSize = (poolBinary.length / 97) | 0
   } catch (e) {}
   if (chkKeyWidget)   chkKeyWidget.setProperty(hmUI.prop.TEXT,
-    (watchKey ? '✓' : '✗') + ' KEY:' + (watchKey ? watchKey.slice(2, 10) : '--------'))
+    (watchKey ? '✓' : '✗') + ' KEY:' + (watchKey ? watchKey.length : '---') + 'b')
   if (chkECWidget)    chkECWidget.setProperty(hmUI.prop.TEXT,
-    (ecKey ? '✓' : '✗') + ' EC:' + (ecKey ? ecKey.slice(2, 10) : '--------'))
+    (ecKey ? '✓' : '✗') + ' EC:' + (ecKey ? ecKey.length : '---') + 'b')
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT,
     (hasTable ? '✓' : '✗') + ' TABLE')
   if (chkPoolWidget)  chkPoolWidget.setProperty(hmUI.prop.TEXT,
@@ -126,7 +122,7 @@ function doPair() {
     addLog('No watch key - GENKEY first', 0xff4444)
     return
   }
-  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyHex: watchKey } })
+  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyBinary: watchKey } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
@@ -134,7 +130,7 @@ function doPair() {
         addLog('Pair msg err: ' + (result.error || '?'), 0xff4444)
         return
       }
-      var msgBytes = hexToBytes(result.messageHex)
+      var msgBytes = binaryStringToBytes(result.message)
       addLog('TX[' + msgBytes.length + ']:' + dumpHex(msgBytes, 6), 0xaaaaaa)
       var sawTapRequired = false
       teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
@@ -205,7 +201,7 @@ function doVerify() {
   updateStatus('QUERYING...', 0xffcc00)
   var watchKey = storage.getItem('watch_public_key')
   if (!watchKey) { addLog('No watch key', 0xff4444); return }
-  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyHex: watchKey } })
+  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: watchKey } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
@@ -213,7 +209,7 @@ function doVerify() {
         addLog('Query err: ' + (result.error || '?'), 0xff4444)
         return
       }
-      var msgBytes = hexToBytes(result.messageHex)
+      var msgBytes = binaryStringToBytes(result.message)
       function handleQueryResponse(r, attempt) {
         if (!r.success) {
           state = 'IDLE'
@@ -306,8 +302,8 @@ function onGenKey() {
   addLog('Generating keys...', 0xffcc00)
   currentPage.request({ method: 'BLE_SYNC_KEYS', params: { forceNew: true } })
     .then(function(result) {
-      if (result.success && result.publicKeyHex) {
-        storage.setItem('watch_public_key', result.publicKeyHex)
+      if (result.success && result.publicKeyBinary) {
+        storage.setItem('watch_public_key', result.publicKeyBinary)
         addLog('✓ Watch key ready', 0x44ff44)
         addLog('Generating pool...', 0x888888)
         currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 5 } })
@@ -476,8 +472,8 @@ Page(BasePage({
     }
     currentPage.request({ method: 'BLE_SYNC_KEYS', params: {} })
       .then(function(result) {
-        if (result.success && result.publicKeyHex) {
-          storage.setItem('watch_public_key', result.publicKeyHex)
+        if (result.success && result.publicKeyBinary) {
+          storage.setItem('watch_public_key', result.publicKeyBinary)
           addLog('✓ Watch key synced', 0x44ff44)
         }
         updateChecklist()

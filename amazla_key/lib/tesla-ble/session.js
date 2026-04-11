@@ -1,7 +1,8 @@
 
 import { sha1 } from './crypto/sha256.js'
-import { hmacSha256, hexToBytes, bytesToHex } from './crypto/hmac.js'
+import { hmacSha256 } from './crypto/hmac.js'
 import { ecdhFixed } from './crypto/p256.js'
+import { binaryStringToBytes, bytesToBinaryString, hexToBytes } from './crypto/binary-utils.js'
 import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -24,10 +25,7 @@ import {
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
-function byteToHex(byte) {
-  const hex = byte.toString(16)
-  return hex.length === 1 ? '0' + hex : hex
-}
+
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
@@ -99,18 +97,20 @@ class TeslaSession {
   }
   popKeyFromPool() {
     try {
-      const hex = this.storage.getItem('key_pool')
-      if (!hex || hex.length < 194) {
+      const data = this.storage.getItem('key_pool')
+      if (!data || data.length < 97) {
         if (this.onPoolLow && !this.replenishingPool) {
           this.replenishingPool = true
           this.onPoolLow(15)
         }
         return null
       }
-      const priv = hexToBytes(hex.slice(0, 64))
-      const pub  = hexToBytes(hex.slice(64, 194))
-      const rest = hex.slice(194)
-      const poolSize = (rest.length / 194) | 0
+      
+      // Binary storage: 97 bytes per key (32 priv + 65 pub)
+      const privBytes = binaryStringToBytes(data.slice(0, 32))
+      const pubBytes = binaryStringToBytes(data.slice(32, 97))
+      const rest = data.slice(97)
+      const poolSize = (rest.length / 97) | 0
 
       rest.length > 0
         ? this.storage.setItem('key_pool', rest)
@@ -121,7 +121,7 @@ class TeslaSession {
         this.onPoolLow(15)
       }
 
-      return { privateKeyBytes: priv, publicKeyBytes: pub }
+      return { privateKeyBytes: privBytes, publicKeyBytes: pubBytes }
     } catch (e) {
       console.log('[Session] popKeyFromPool error:', e.message)
       return null
@@ -132,26 +132,26 @@ class TeslaSession {
   }
   getPoolSize() {
     try {
-      const hex = this.storage.getItem('key_pool')
-      return hex ? (hex.length / 194) | 0 : 0
+      const data = this.storage.getItem('key_pool')
+      return data ? (data.length / 97) | 0 : 0
     } catch (e) {
       console.log('[Session] getPoolSize error:', e.message)
       return 0
     }
   }
-  setPrivateKey(privateKeyHex, publicKeyHex) {
-    this.enrolledPrivateKey = hexToBytes(privateKeyHex)
-    if (publicKeyHex) {
-      this.enrolledPublicKey = hexToBytes(publicKeyHex)
+  setPrivateKey(privateKeyBinary, publicKeyBinary) {
+    this.enrolledPrivateKey = binaryStringToBytes(privateKeyBinary)
+    if (publicKeyBinary) {
+      this.enrolledPublicKey = binaryStringToBytes(publicKeyBinary)
     }
   }
   loadVehiclePublicKey() {
     try {
-      const pubKeyHex = this.storage.getItem('vehicle_ec_public_key')
-      if (pubKeyHex && pubKeyHex.length === 130) {
-        this.vehiclePublicKey = hexToBytes(pubKeyHex)
-        const keyStart = pubKeyHex.slice(0, 16)
-        console.log('[SESSION] Loaded vehicle public key from storage: ' + keyStart + '...')
+      const pubKeyData = this.storage.getItem('vehicle_ec_public_key')
+      if (pubKeyData && pubKeyData.length === 65) {
+        // Binary storage: 65 bytes
+        this.vehiclePublicKey = binaryStringToBytes(pubKeyData)
+        console.log('[SESSION] Loaded vehicle public key from storage (65 bytes)')
         return true
       }
       
@@ -165,47 +165,50 @@ class TeslaSession {
   loadDoublingsTable() {
     if (this._doublingsTable) return this._doublingsTable
     try {
-      const hex = this.storage.getItem('vehicle_doublings_table')
-      if (!hex) {
+      const data = this.storage.getItem('vehicle_doublings_table')
+      if (!data) {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-      if (hex.length !== 256 * 64 * 2) {
-        console.log('[SESSION] Doublings table wrong size: ' + hex.length + ' hex chars (need 32768)')
+      
+      if (data.length !== 16384) {
+        console.log('[SESSION] Doublings table wrong size: ' + data.length + ' chars (expected 16384)')
         return null
       }
-      // Verify first entry matches vehicle public key without allocating intermediate buffer
+      
+      // Binary storage: convert string to Uint8Array
+      const bytes = binaryStringToBytes(data)
+      
+      // Verify first entry matches vehicle public key
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
-          if (parseInt(hex.substr(i * 2, 2), 16) !== this.vehiclePublicKey[1 + i] ||
-              parseInt(hex.substr((32 + i) * 2, 2), 16) !== this.vehiclePublicKey[33 + i]) {
+          if (bytes[i] !== this.vehiclePublicKey[1 + i] ||
+              bytes[32 + i] !== this.vehiclePublicKey[33 + i]) {
             console.log('[SESSION] Doublings table is for a different vehicle key — discarding')
             return null
           }
         }
       }
-      // Build table directly from hex — skips 16KB intermediate Uint8Array
-      // bytesToU256 layout: r[j] = big-endian uint32 at byte offset (28 - j*4)
+      
+      // Use DataView for efficient uint32 reads (big-endian)
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      const view = new DataView(buffer)
       const table = []
+      
       for (let i = 0; i < 256; i++) {
-        const base = i * 128  // each entry = 64 bytes = 128 hex chars
+        const base = i * 64  // 64 bytes per entry (32 for x, 32 for y)
         const x = new Uint32Array(8)
         const y = new Uint32Array(8)
+        
+        // Read 8 uint32s for x (big-endian), then 8 uint32s for y
         for (let j = 0; j < 8; j++) {
-          const xi = base + (28 - j * 4) * 2
-          x[j] = ((parseInt(hex.substr(xi,     2), 16) << 24) |
-                   (parseInt(hex.substr(xi + 2, 2), 16) << 16) |
-                   (parseInt(hex.substr(xi + 4, 2), 16) << 8)  |
-                    parseInt(hex.substr(xi + 6, 2), 16)) >>> 0
-          const yi = base + 64 + (28 - j * 4) * 2
-          y[j] = ((parseInt(hex.substr(yi,     2), 16) << 24) |
-                   (parseInt(hex.substr(yi + 2, 2), 16) << 16) |
-                   (parseInt(hex.substr(yi + 4, 2), 16) << 8)  |
-                    parseInt(hex.substr(yi + 6, 2), 16)) >>> 0
+          x[j] = view.getUint32(base + j * 4, false) >>> 0
+          y[j] = view.getUint32(base + 32 + j * 4, false) >>> 0
         }
         table.push([x, y])
       }
-      console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries, 16 KB)')
+      
+      console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries)')
       this._doublingsTable = table
       return table
     } catch (e) {
@@ -270,11 +273,10 @@ class TeslaSession {
             const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
             if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
               self.vehiclePublicKey = wlEntryInfo.publicKey
-              const keyHex = Array.from(self.vehiclePublicKey, x => byteToHex(x)).join('')
-              self.storage.setItem('vehicle_ec_public_key', keyHex)
+              const keyBinary = bytesToBinaryString(self.vehiclePublicKey)
+              self.storage.setItem('vehicle_ec_public_key', keyBinary)
               
-              const keyStart = keyHex.slice(0, 16)
-              console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo: ' + keyStart + '...')
+              console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo (65 bytes)')
               callback({ success: true, vehiclePublicKey: self.vehiclePublicKey })
               return
             }
@@ -376,8 +378,7 @@ class TeslaSession {
       sessionInfoRequest: sessionInfoRequest,
       uuid: uuid
     })
-    const msgHex = Array.from(message.slice(0, Math.min(64, message.length)), x => byteToHex(x)).join('')
-    console.log('[SESSION] TX request (first 64 bytes): ' + msgHex + (message.length > 64 ? '... total ' + message.length + ' bytes' : ''))
+    console.log('[SESSION] TX request (first 64 bytes of ' + message.length + ' total bytes)')
     const self = this
     const sessionInfoResponseHandler = function(result) {
       if (!result.success) {
@@ -390,8 +391,7 @@ class TeslaSession {
            callback({ success: false, error: 'No data in response' })
            return
          }
-         const dataHex = Array.from(result.data.slice(0, 31), x => byteToHex(x)).join('')
-         console.log('[SESSION] Raw response hex: ' + dataHex)
+         console.log('[SESSION] Raw response: ' + result.data.length + ' bytes')
 
         const response = parseRoutableMessage(result.data)
         console.log('[SESSION] Response fields: sessionInfo=' + (!!response.sessionInfo) + ', payload=' + (!!response.payload) + ', status=' + (!!response.signedMessageStatus))
@@ -413,8 +413,8 @@ class TeslaSession {
             self.vehiclePublicKey = response.sessionInfo.publicKey
             console.log('[SESSION] Got vehicle public key from SessionInfo response')
             if (!self.storage.getItem('vehicle_ec_public_key')) {
-              const keyHex = Array.from(response.sessionInfo.publicKey, x => byteToHex(x)).join('')
-              self.storage.setItem('vehicle_ec_public_key', keyHex)
+              const keyBinary = bytesToBinaryString(response.sessionInfo.publicKey)
+              self.storage.setItem('vehicle_ec_public_key', keyBinary)
               console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
             }
           } else {
@@ -436,15 +436,13 @@ class TeslaSession {
           
           // Log epoch safely
           if (self.epoch && self.epoch.length > 0) {
-            console.log('[SESSION] Epoch: ' + bytesToHex(self.epoch).slice(0, 8))
+            console.log('[SESSION] Epoch loaded: ' + self.epoch.length + ' bytes')
           } else {
             console.log('[SESSION] Epoch: <null or empty>')
           }
           
           if (self.vehiclePublicKey) {
-            console.log('[SESSION] Vehicle public key length: ' + self.vehiclePublicKey.length + ' bytes')
-            const keyHex = Array.from(self.vehiclePublicKey.slice(0, 8), x => byteToHex(x)).join('')
-            console.log('[SESSION] Vehicle public key starts with: ' + keyHex)
+            console.log('[SESSION] Vehicle public key: ' + self.vehiclePublicKey.length + ' bytes')
           } else {
             console.log('[SESSION] ERROR: vehiclePublicKey is null/undefined')
           }
@@ -466,12 +464,11 @@ class TeslaSession {
           const keyMaterial = sha1(sharedSecret)
           self.sessionKey = keyMaterial.slice(0, 16)
           self.established = true
-          const epochHex = self.epoch ? bytesToHex(self.epoch).slice(0, 8) : 'null'
-          console.log('[SESSION] ✓ Established: counter=' + self.counter + ', epoch=' + epochHex)
+          console.log('[SESSION] ✓ Established: counter=' + self.counter)
           callback({
             success: true,
             counter: self.counter,
-            epoch: self.epoch ? bytesToHex(self.epoch) : ''
+            epoch: self.epoch ? self.epoch.length : 0
           })
         } else {
           const fieldList = Object.keys(rawFields).sort(function(a,b) { return a-b }).join(', ')
@@ -650,7 +647,7 @@ class TeslaSession {
     return {
       established: this.established,
       counter: this.counter,
-      epoch: this.epoch ? bytesToHex(this.epoch) : null,
+      epoch: this.epoch ? this.epoch.length : 0,
       poolSize: this.getPoolSize()
     }
   }

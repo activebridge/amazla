@@ -1,7 +1,7 @@
 import { BaseSideService } from '@zeppos/zml/base-side';
 import { store } from '../../app-side/tesla/utils'
 import TeslaSession from '../../app-side/tesla/session'
-import bleCrypto from './ble-crypto.js'
+import bleCrypto, { bytesToBinaryString } from './ble-crypto.js'
 
 const camalize =  str => {
   return str.toLowerCase().replace(/[^a-zA-Z0-9]+(.)/g, (m, chr) => chr.toUpperCase())
@@ -33,9 +33,9 @@ const actions = {
       const result = bleCrypto.generateEnrolledKeyPair()
       if (result.success) {
         try {
-          TeslaSession.setKeys(result.privateKeyHex, result.publicKeyHex)
-          console.log('[App] ✓ Stored fresh enrolled key pair: ' + result.publicKeyHex.slice(0, 16) + '...')
-          return { success: true, publicKeyHex: result.publicKeyHex }
+          TeslaSession.setKeys(result.privateKeyBinary, result.publicKeyBinary)
+          console.log('[App] ✓ Stored fresh enrolled key pair')
+          return { success: true, publicKeyBinary: result.publicKeyBinary }
         } catch (storeError) {
           console.log('[App] Failed to store fresh key: ' + storeError.message)
           return { success: false, message: 'Failed to store keys' }
@@ -46,18 +46,17 @@ const actions = {
     
     try {
       const pubKey = TeslaSession.getPublicKey()
-      const pubKeyHex = Array.from(pubKey, x => x.toString(16).padStart(2, '0')).join('')
-      console.log('[App] Sending existing watch public key to watch: ' + pubKeyHex.slice(0, 16) + '...')
-      return { success: true, publicKeyHex: pubKeyHex }
+      console.log('[App] Sending existing watch public key to watch')
+      return { success: true, publicKeyBinary: bytesToBinaryString(pubKey) }
     } catch (error) {
       // No keys yet - generate and store them
       console.log('[App] No keys found, generating new pair: ' + error.message)
       const result = bleCrypto.generateEnrolledKeyPair()
       if (result.success) {
         try {
-          TeslaSession.setKeys(result.privateKeyHex, result.publicKeyHex)
+          TeslaSession.setKeys(result.privateKeyBinary, result.publicKeyBinary)
           console.log('[App] ✓ Stored new enrolled key pair')
-          return { success: true, publicKeyHex: result.publicKeyHex }
+          return { success: true, publicKeyBinary: result.publicKeyBinary }
         } catch (storeError) {
           console.log('[App] Failed to store keys: ' + storeError.message)
           return { success: false, message: 'Failed to store keys' }
@@ -69,13 +68,13 @@ const actions = {
 
   // BLE Pairing - build message bytes for watch to send
   BLE_PAIR: async (params) => {
-    return bleCrypto.buildPairMessage(params.publicKeyHex)
+    return bleCrypto.buildPairMessage(params.publicKeyBinary)
   },
 
   // Verify pairing: query whitelist entry to get vehicle EC key
   BLE_VERIFY_PAIR: async (params) => {
     console.log('[App] Building whitelist query message for verification')
-    return bleCrypto.buildWhitelistQueryMessage(params.publicKeyHex)
+    return bleCrypto.buildWhitelistQueryMessage(params.publicKeyBinary)
   },
 
   // Generate ephemeral P-256 keypair pool for watch passive entry.
@@ -88,10 +87,15 @@ const actions = {
   },
 
   // Precompute doublings table for watch-side fixed-base ECDH.
-  // Called once after pairing; result stored on watch for fast cold-start ECDH.
+  // Called once after pairing; watch stores result as binary for fast cold-start ECDH.
   BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyHex }) => {
     console.log('[App] Building ECDH doublings table for vehicle key')
-    return bleCrypto.buildDoublingsTable(vehiclePublicKeyHex)
+    const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyHex)
+    if (!result.success) return result
+    // Convert ArrayBuffer → binary string (16 KB binary data as string with 0-255 char codes)
+    // Watch stores this directly and uses DataView for fast uint32 reads
+    const bytes = new Uint8Array(result.buffer)
+    return { success: true, table: bytesToBinaryString(bytes) }
   },
 
   DOOR_LOCK: async() => {
