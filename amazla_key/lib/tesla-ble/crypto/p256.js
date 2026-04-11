@@ -208,7 +208,8 @@ const scalarMulFixed = (rx, ry, k, table) => {
   for (let i = 0; i < 8; i++) { _RX[i]=0; _RY[i]=0; _RZ[i]=0 }
   for (let i = 0; i < 256; i++) {
     if ((k[i >> 5] >>> (i & 31)) & 1) {
-      jacAddAffine(_TX, _TY, _TZ, _RX, _RY, _RZ, table[i][0], table[i][1])
+      const b = i * 16
+      jacAddAffine(_TX, _TY, _TZ, _RX, _RY, _RZ, table.subarray(b, b + 8), table.subarray(b + 8, b + 16))
       copy(_RX, _TX); copy(_RY, _TY); copy(_RZ, _TZ)
     }
   }

@@ -878,6 +878,66 @@ session.requestVehiclePublicKey((result) => {
 
 **Testing**: All 229 unit tests passing, no regressions.
 
+### OOM Prevention (✅ Complete)
+
+**Goal**: Reduce peak heap allocation and GC pressure on the watch to prevent out-of-memory crashes during session establishment and RKE commands.
+
+#### Doublings table — flat `Uint32Array` instead of array-of-pairs
+
+**Before**: `loadDoublingsTable()` built `[[Uint32Array(8), Uint32Array(8)], ...]` — 512 separate TypedArray objects with ~40–80 bytes of object header each.
+
+**After**: Single flat `Uint32Array(256 × 16)` — 1 object, 16 KB data. `scalarMulFixed` in `p256.js` accesses entries via `table.subarray(i*16, i*16+8)` (zero-copy view, no data copy).
+
+| | Before | After |
+|---|---|---|
+| Object count | 512 TypedArrays | 1 TypedArray |
+| Object overhead | ~30 KB | ~0 |
+| Data | 16 KB | 16 KB |
+
+#### Doublings table parsing — no intermediate allocations
+
+**Before**: `binaryStringToBytes(data)` allocated `Uint8Array(16384)`, then `buffer.slice(...)` copied it again into a new `ArrayBuffer` for the DataView. Peak: ~94 KB.
+
+**After**: uint32 words read directly from the binary string using `charCodeAt` — no Uint8Array, no buffer copy. Peak: ~16 KB (the cached flat table only).
+
+**Bug fixed**: The previous `view.getUint32(base + j*4)` had reversed byte ordering vs `bytesToU256` in `p256.js` (MSW-first vs LSW-first), which would have silently produced wrong ECDH shared secrets on the watch. Fixed to `base + 28 - j*4`.
+
+#### `bytesToBinaryString` — chunked for large buffers
+
+**Before**: `s += String.fromCharCode(bytes[i])` in a loop — for 16 KB inputs (doublings table sent phone→watch) this caused 16,384 string reallocations.
+
+**After**: `String.fromCharCode.apply(null, bytes.subarray(i, i + 8192))` in 8 KB chunks — single concat per chunk.
+
+#### `decodeMessage` — zero-copy field values
+
+**Before**: Every length-delimited protobuf field used `buffer.slice(...)` — a copy. During session establishment, ~10–15 nested decode calls each created a copy.
+
+**After**: `buffer.subarray(...)` — zero-copy views. The original buffer stays alive (held by the views), but no duplicate data is allocated. Reduces heap fragmentation from many short-lived objects.
+
+#### Pre-computed HMAC pads
+
+**Before**: Every `hmacSha256(sessionKey, message)` call allocated 3 × `Uint8Array(64)` = 192 bytes for `paddedKey`, `innerPad`, `outerPad`. Called once per RKE command.
+
+**After**: `_initHmacPads()` pre-computes `_hmacInner` and `_hmacOuter` once when the session key is established. `_hmac(message)` uses them directly — only `innerData` (64 + msgLen) and `outerData` (96 bytes) are allocated per call.
+
+Called from:
+- Session establishment (after ECDH)
+- `restorePreservedSession()` (reconnect path)
+- Cleared on `reset()`
+
+**Savings per RKE command**: 192 bytes + 3 object allocations eliminated.
+
+#### Peak allocation summary
+
+| Operation | Before | After |
+|---|---|---|
+| `loadDoublingsTable` peak | ~94 KB | ~16 KB |
+| Cached table footprint | ~46 KB | ~16 KB |
+| Per RKE command (HMAC) | +192 B alloc | +96 B alloc |
+| Protobuf decode per response | ~10 copies | 0 copies |
+
+**Testing**: All 238 unit tests passing (9 new tests for `_hmac` correctness, pad lifecycle, and RFC 4231 vectors).
+
 ## Development
 
 ### Build

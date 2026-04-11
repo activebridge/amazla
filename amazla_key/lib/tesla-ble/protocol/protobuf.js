@@ -85,19 +85,19 @@ const decodeMessage = (buffer) => {
         break
       }
       case WIRE_64BIT: {
-        value = buffer.slice(offset, offset + 8)
+        value = buffer.subarray(offset, offset + 8)
         valueBytes = 8
         break
       }
       case WIRE_LENGTH_DELIMITED: {
         const { value: length, bytesRead: lenBytes } = decodeVarint(buffer, offset)
         offset += lenBytes
-        value = buffer.slice(offset, offset + length)
+        value = buffer.subarray(offset, offset + length)
         valueBytes = length
         break
       }
       case WIRE_32BIT: {
-        value = buffer.slice(offset, offset + 4)
+        value = buffer.subarray(offset, offset + 4)
         valueBytes = 4
         break
       }

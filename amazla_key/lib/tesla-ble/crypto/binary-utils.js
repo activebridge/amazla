@@ -9,9 +9,11 @@ function binaryStringToBytes(binary) {
 }
 
 function bytesToBinaryString(bytes) {
+  const CHUNK = 8192
+  if (bytes.length <= CHUNK) return String.fromCharCode.apply(null, bytes)
   let s = ''
-  for (let i = 0; i < bytes.length; i++) {
-    s += String.fromCharCode(bytes[i])
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK))
   }
   return s
 }

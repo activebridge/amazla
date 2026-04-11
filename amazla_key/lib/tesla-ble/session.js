@@ -1,8 +1,8 @@
 
 import { sha1 } from './crypto/sha256.js'
-import { hmacSha256 } from './crypto/hmac.js'
+import { sha256 } from './crypto/sha256.js'
 import { ecdhFixed } from './crypto/p256.js'
-import { binaryStringToBytes, bytesToBinaryString, hexToBytes } from './crypto/binary-utils.js'
+import { binaryStringToBytes, bytesToBinaryString } from './crypto/binary-utils.js'
 import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -50,6 +50,27 @@ class TeslaSession {
     this._connecting = false   // guard against duplicate connection attempts
     this.pendingCallbacks = null
     this._doublingsTable = null // cached after first parse; invalidated on reset
+    this._hmacInner = null     // pre-computed HMAC inner pad (sessionKey XOR 0x36, padded to 64 bytes)
+    this._hmacOuter = null     // pre-computed HMAC outer pad (sessionKey XOR 0x5c, padded to 64 bytes)
+  }
+  _initHmacPads() {
+    this._hmacInner = new Uint8Array(64)
+    this._hmacOuter = new Uint8Array(64)
+    for (let i = 0; i < 64; i++) {
+      const k = i < this.sessionKey.length ? this.sessionKey[i] : 0
+      this._hmacInner[i] = k ^ 0x36
+      this._hmacOuter[i] = k ^ 0x5c
+    }
+  }
+  _hmac(message) {
+    const innerData = new Uint8Array(64 + message.length)
+    innerData.set(this._hmacInner)
+    innerData.set(message, 64)
+    const innerHash = sha256(innerData)
+    const outerData = new Uint8Array(96)
+    outerData.set(this._hmacOuter)
+    outerData.set(innerHash, 64)
+    return sha256(outerData)
   }
   preserveForReconnect(timeoutMs) {
     this.preserved = {
@@ -90,6 +111,7 @@ class TeslaSession {
     this.routingAddress = session.routingAddress
     this.established = true
     this.preserved = null
+    this._initHmacPads()
     
     var age = Date.now() - session.timestamp
     console.log('[Session] Session restored from preserved state (age: ' + (age / 1000).toFixed(1) + 's)')
@@ -170,44 +192,40 @@ class TeslaSession {
         console.log('[SESSION] Doublings table not found (will use standard ECDH)')
         return null
       }
-      
       if (data.length !== 16384) {
         console.log('[SESSION] Doublings table wrong size: ' + data.length + ' chars (expected 16384)')
         return null
       }
-      
-      // Binary storage: convert string to Uint8Array
-      const bytes = binaryStringToBytes(data)
-      
-      // Verify first entry matches vehicle public key
+      // Verify first entry matches vehicle public key (read directly from binary string)
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
-          if (bytes[i] !== this.vehiclePublicKey[1 + i] ||
-              bytes[32 + i] !== this.vehiclePublicKey[33 + i]) {
+          if ((data.charCodeAt(i) & 0xff) !== this.vehiclePublicKey[1 + i] ||
+              (data.charCodeAt(32 + i) & 0xff) !== this.vehiclePublicKey[33 + i]) {
             console.log('[SESSION] Doublings table is for a different vehicle key — discarding')
             return null
           }
         }
       }
-      
-      // Use DataView for efficient uint32 reads (big-endian)
-      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-      const view = new DataView(buffer)
-      const table = []
-      
+      // Flat Uint32Array(256×16): entry i has x at [i*16..i*16+7], y at [i*16+8..i*16+15]
+      // LSW-first convention (matches bytesToU256 in p256.js): word j = bytes at offset 28-j*4
+      // Reads directly from binary string — no intermediate Uint8Array or buffer copy
+      const table = new Uint32Array(256 * 16)
       for (let i = 0; i < 256; i++) {
-        const base = i * 64  // 64 bytes per entry (32 for x, 32 for y)
-        const x = new Uint32Array(8)
-        const y = new Uint32Array(8)
-        
-        // Read 8 uint32s for x (big-endian), then 8 uint32s for y
+        const base = i * 64
+        const tbase = i * 16
         for (let j = 0; j < 8; j++) {
-          x[j] = view.getUint32(base + j * 4, false) >>> 0
-          y[j] = view.getUint32(base + 32 + j * 4, false) >>> 0
+          const xo = base + 28 - j * 4
+          table[tbase + j] = (((data.charCodeAt(xo)   & 0xff) << 24) |
+                               ((data.charCodeAt(xo+1) & 0xff) << 16) |
+                               ((data.charCodeAt(xo+2) & 0xff) <<  8) |
+                                (data.charCodeAt(xo+3) & 0xff)) >>> 0
+          const yo = base + 32 + 28 - j * 4
+          table[tbase + 8 + j] = (((data.charCodeAt(yo)   & 0xff) << 24) |
+                                   ((data.charCodeAt(yo+1) & 0xff) << 16) |
+                                   ((data.charCodeAt(yo+2) & 0xff) <<  8) |
+                                    (data.charCodeAt(yo+3) & 0xff)) >>> 0
         }
-        table.push([x, y])
       }
-      
       console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries)')
       this._doublingsTable = table
       return table
@@ -463,6 +481,7 @@ class TeslaSession {
           console.log('[SESSION] ECDH done in ' + (Date.now() - _ecdhStart) + 'ms')
           const keyMaterial = sha1(sharedSecret)
           self.sessionKey = keyMaterial.slice(0, 16)
+          self._initHmacPads()
           self.established = true
           console.log('[SESSION] ✓ Established: counter=' + self.counter)
           callback({
@@ -498,7 +517,7 @@ class TeslaSession {
       epoch: this.epoch,
       expiresAt: expiresAt
     })
-    const hmac = hmacSha256(this.sessionKey, signedMessage)
+    const hmac = this._hmac(signedMessage)
     const authenticatedMessage = buildSignedMessage({
       payload: unsignedMessage,
       signatureType: SIGNATURE_TYPE_HMAC,

@@ -64,9 +64,13 @@ function buildDoublingsTableJS(pubKeyHex) {
   }
   const xHex = pubKeyHex.slice(2, 66), yHex = pubKeyHex.slice(66, 130)
   let cur = [BigInt('0x' + xHex), BigInt('0x' + yHex)]
-  const table = []
+  // Flat Uint32Array(256×16): entry i has x at [i*16..i*16+7], y at [i*16+8..i*16+15], LSW-first
+  const table = new Uint32Array(256 * 16)
   for (let i = 0; i < 256; i++) {
-    table.push([bytesToBigInt(bigToBytes(cur[0])), bytesToBigInt(bigToBytes(cur[1]))])
+    const xWords = bytesToBigInt(bigToBytes(cur[0]))
+    const yWords = bytesToBigInt(bigToBytes(cur[1]))
+    const b = i * 16
+    for (let j = 0; j < 8; j++) { table[b + j] = xWords[j]; table[b + 8 + j] = yWords[j] }
     if (i < 255) cur = pointAdd(cur, cur)
   }
   return table

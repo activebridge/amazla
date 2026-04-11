@@ -19,6 +19,8 @@ import {
 } from '../lib/tesla-ble/protocol/vcsec.js'
 import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
+import { TeslaSession } from '../lib/tesla-ble/session.js'
+import { hmacSha256 } from '../lib/tesla-ble/crypto/hmac.js'
 
 function bytesToHex(b) {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
@@ -438,8 +440,9 @@ describe('BLECryptoSession.generateKeyPool', () => {
   test('generated keypair is on the P-256 curve (ecdhFixed succeeds)', async () => {
     const { ecdhFixed, bytesToBigInt } = await import('../lib/tesla-ble/crypto/p256.js')
     const pool = bleCryptoSession.generateKeyPool(1).pool
+    // Pool is binary string: first 32 chars = private key bytes
     const priv = new Uint8Array(32)
-    for (let i = 0; i < 32; i++) priv[i] = parseInt(pool.slice(i * 2, i * 2 + 2), 16)
+    for (let i = 0; i < 32; i++) priv[i] = pool.charCodeAt(i) & 0xff
 
     // Build doublings table for BOB_PUB using BigInt (same as phone-side)
     const BOB_PUB = '047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1'
@@ -470,9 +473,12 @@ describe('BLECryptoSession.generateKeyPool', () => {
       return b
     }
     let cur = [BigInt('0x' + BOB_PUB.slice(2, 66)), BigInt('0x' + BOB_PUB.slice(66, 130))]
-    const table = []
+    // Flat Uint32Array(256×16): entry i has x at [i*16..i*16+7], y at [i*16+8..i*16+15], LSW-first
+    const table = new Uint32Array(256 * 16)
     for (let i = 0; i < 256; i++) {
-      table.push([bytesToBigInt(bigToBytes(cur[0])), bytesToBigInt(bigToBytes(cur[1]))])
+      const xW = bytesToBigInt(bigToBytes(cur[0])), yW = bytesToBigInt(bigToBytes(cur[1]))
+      const b = i * 16
+      for (let j = 0; j < 8; j++) { table[b + j] = xW[j]; table[b + 8 + j] = yW[j] }
       if (i < 255) cur = pointAdd(cur, cur)
     }
 
@@ -486,53 +492,48 @@ describe('BLECryptoSession.generateKeyPool', () => {
 // Tests the parsing logic in isolation (no storage dependency).
 
 describe('loadDoublingsTable parsing logic', () => {
-  function bytesToHex(b) { return Array.from(b, x => x.toString(16).padStart(2, '0')).join('') }
-  function hexToBytes(h) {
-    const b = new Uint8Array(h.length / 2)
-    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
-    return b
-  }
-
-  // Reproduce the table-building logic from loadDoublingsTable for unit testing
+  // Mirror the logic from session.js loadDoublingsTable for unit testing.
+  // Storage format: binary string, 16384 chars (256 entries × 64 bytes each).
+  // Output: flat Uint32Array(256×16), LSW-first (matches bytesToU256 in p256.js).
   // vehiclePublicKey: optional Uint8Array[65] (uncompressed: 04 || x[32] || y[32])
-  function parseDoublingsTable(hex, vehiclePublicKey = null) {
-    if (!hex || hex.length !== 256 * 64 * 2) return null
+  function parseDoublingsTable(data, vehiclePublicKey = null) {
+    if (!data || data.length !== 16384) return null
     if (vehiclePublicKey && vehiclePublicKey.length === 65) {
       for (let i = 0; i < 32; i++) {
-        if (parseInt(hex.substr(i * 2, 2), 16) !== vehiclePublicKey[1 + i] ||
-            parseInt(hex.substr((32 + i) * 2, 2), 16) !== vehiclePublicKey[33 + i]) return null
+        if ((data.charCodeAt(i) & 0xff) !== vehiclePublicKey[1 + i] ||
+            (data.charCodeAt(32 + i) & 0xff) !== vehiclePublicKey[33 + i]) return null
       }
     }
-    const table = []
+    const table = new Uint32Array(256 * 16)
     for (let i = 0; i < 256; i++) {
-      const base = i * 128
-      const x = new Uint32Array(8)
-      const y = new Uint32Array(8)
+      const base = i * 64
+      const tbase = i * 16
       for (let j = 0; j < 8; j++) {
-        const xi = base + (28 - j * 4) * 2
-        x[j] = ((parseInt(hex.substr(xi,     2), 16) << 24) |
-                 (parseInt(hex.substr(xi + 2, 2), 16) << 16) |
-                 (parseInt(hex.substr(xi + 4, 2), 16) << 8)  |
-                  parseInt(hex.substr(xi + 6, 2), 16)) >>> 0
-        const yi = base + 64 + (28 - j * 4) * 2
-        y[j] = ((parseInt(hex.substr(yi,     2), 16) << 24) |
-                 (parseInt(hex.substr(yi + 2, 2), 16) << 16) |
-                 (parseInt(hex.substr(yi + 4, 2), 16) << 8)  |
-                  parseInt(hex.substr(yi + 6, 2), 16)) >>> 0
+        const xo = base + 28 - j * 4
+        table[tbase + j] = (((data.charCodeAt(xo)   & 0xff) << 24) |
+                             ((data.charCodeAt(xo+1) & 0xff) << 16) |
+                             ((data.charCodeAt(xo+2) & 0xff) <<  8) |
+                              (data.charCodeAt(xo+3) & 0xff)) >>> 0
+        const yo = base + 32 + 28 - j * 4
+        table[tbase + 8 + j] = (((data.charCodeAt(yo)   & 0xff) << 24) |
+                                 ((data.charCodeAt(yo+1) & 0xff) << 16) |
+                                 ((data.charCodeAt(yo+2) & 0xff) <<  8) |
+                                  (data.charCodeAt(yo+3) & 0xff)) >>> 0
       }
-      table.push([x, y])
     }
     return table
   }
 
-  function makeTableHex(entries) {
+  function makeTableBinary(entries) {
     // entries: array of 256 {x: Uint8Array[32], y: Uint8Array[32]}
     const raw = new Uint8Array(256 * 64)
     for (let i = 0; i < 256; i++) {
       raw.set(entries[i].x, i * 64)
       raw.set(entries[i].y, i * 64 + 32)
     }
-    return bytesToHex(raw)
+    let s = ''
+    for (let i = 0; i < raw.length; i++) s += String.fromCharCode(raw[i])
+    return s
   }
 
   const DUMMY_ENTRIES = Array.from({ length: 256 }, (_, i) => ({
@@ -541,19 +542,21 @@ describe('loadDoublingsTable parsing logic', () => {
   }))
 
   test('valid hex (32768 chars) parses to 256 entries', () => {
-    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
+    const table = parseDoublingsTable(makeTableBinary(DUMMY_ENTRIES))
     expect(table).not.toBeNull()
-    expect(table.length).toBe(256)
+    expect(table.length).toBe(256 * 16)
   })
 
   test('each entry is [Uint32Array(8), Uint32Array(8)]', () => {
-    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
-    for (const [x, y] of table) {
-      expect(x).toBeInstanceOf(Uint32Array)
-      expect(x.length).toBe(8)
-      expect(y).toBeInstanceOf(Uint32Array)
-      expect(y.length).toBe(8)
-    }
+    const table = parseDoublingsTable(makeTableBinary(DUMMY_ENTRIES))
+    // flat format: entry i at [i*16..i*16+15], all uint32 values
+    expect(table).toBeInstanceOf(Uint32Array)
+    expect(table.length).toBe(256 * 16)
+    // spot check entry 0: x at [0..7], y at [8..15]
+    const x0 = table.subarray(0, 8)
+    const y0 = table.subarray(8, 16)
+    expect(x0.length).toBe(8)
+    expect(y0.length).toBe(8)
   })
 
   test('null input → null', () => {
@@ -562,8 +565,8 @@ describe('loadDoublingsTable parsing logic', () => {
 
   test('wrong length hex → null', () => {
     expect(parseDoublingsTable('aabb')).toBeNull()
-    expect(parseDoublingsTable('a'.repeat(32767))).toBeNull()
-    expect(parseDoublingsTable('a'.repeat(32769))).toBeNull()
+    expect(parseDoublingsTable('a'.repeat(16383))).toBeNull()
+    expect(parseDoublingsTable('a'.repeat(16385))).toBeNull()
   })
 
   test('empty string → null', () => {
@@ -574,32 +577,30 @@ describe('loadDoublingsTable parsing logic', () => {
     const x0 = new Uint8Array(32)
     for (let i = 0; i < 32; i++) x0[i] = i
     const entries = DUMMY_ENTRIES.map((e, i) => i === 0 ? { x: x0, y: e.y } : e)
-    const table = parseDoublingsTable(makeTableHex(entries))
-    // Reconstruct bytes from Uint32Array and compare
+    const table = parseDoublingsTable(makeTableBinary(entries))
+    // Reconstruct bytes from flat table entry 0 x-words (LSW-first)
     const recovered = new Uint8Array(32)
     for (let i = 0; i < 8; i++) {
       const idx = 28 - i * 4
-      recovered[idx]   = (table[0][0][i] >>> 24) & 0xff
-      recovered[idx+1] = (table[0][0][i] >>> 16) & 0xff
-      recovered[idx+2] = (table[0][0][i] >>>  8) & 0xff
-      recovered[idx+3] =  table[0][0][i]          & 0xff
+      recovered[idx]   = (table[i] >>> 24) & 0xff
+      recovered[idx+1] = (table[i] >>> 16) & 0xff
+      recovered[idx+2] = (table[i] >>>  8) & 0xff
+      recovered[idx+3] =  table[i]          & 0xff
     }
     expect(Array.from(recovered)).toEqual(Array.from(x0))
   })
 
   test('last entry (index 255) is parsed correctly', () => {
-    const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
-    // entry 255: x = fill(255 & 0xff = 0xff), y = fill(256 & 0xff = 0x00)
-    expect(table[255][0][0]).not.toBe(0) // x is non-zero (all 0xff bytes)
+    const table = parseDoublingsTable(makeTableBinary(DUMMY_ENTRIES))
+    // entry 255: x = fill(255 & 0xff = 0xff), so x-words are non-zero
+    expect(table[255 * 16]).not.toBe(0)
   })
 
   // Vehicle public key verification tests
-  // The table's first entry stores the base point G = vehiclePublicKey.
-  // bytes [0..31] of table hex = entry[0].x = vehiclePublicKey[1..32]
-  // bytes [32..63] of table hex = entry[0].y = vehiclePublicKey[33..64]
+  // bytes [0..31] of binary table = entry[0].x raw bytes = vehiclePublicKey[1..32]
+  // bytes [32..63] of binary table = entry[0].y raw bytes = vehiclePublicKey[33..64]
 
   function makeVehicleKey(x0bytes, y0bytes) {
-    // Construct a 65-byte uncompressed public key: 0x04 || x[32] || y[32]
     const key = new Uint8Array(65)
     key[0] = 0x04
     key.set(x0bytes, 1)
@@ -608,60 +609,163 @@ describe('loadDoublingsTable parsing logic', () => {
   }
 
   function makeTableWithFirstEntry(x0, y0) {
-    // Build a table where entry[0].x = x0, entry[0].y = y0
     const entries = DUMMY_ENTRIES.map((e, i) => i === 0 ? { x: x0, y: y0 } : e)
-    return makeTableHex(entries)
+    return makeTableBinary(entries)
   }
 
   test('vehiclePublicKey null — skips key check, returns table', () => {
-    const hex = makeTableHex(DUMMY_ENTRIES)
-    const table = parseDoublingsTable(hex, null)
+    const data = makeTableBinary(DUMMY_ENTRIES)
+    const table = parseDoublingsTable(data, null)
     expect(table).not.toBeNull()
-    expect(table.length).toBe(256)
+    expect(table.length).toBe(256 * 16)
   })
 
   test('vehiclePublicKey matches first entry — returns table', () => {
     const x0 = new Uint8Array(32).fill(0xab)
     const y0 = new Uint8Array(32).fill(0xcd)
-    const hex = makeTableWithFirstEntry(x0, y0)
+    const data = makeTableWithFirstEntry(x0, y0)
     const vehicleKey = makeVehicleKey(x0, y0)
-    const table = parseDoublingsTable(hex, vehicleKey)
+    const table = parseDoublingsTable(data, vehicleKey)
     expect(table).not.toBeNull()
-    expect(table.length).toBe(256)
+    expect(table.length).toBe(256 * 16)
   })
 
   test('vehiclePublicKey x-mismatch — returns null', () => {
     const x0 = new Uint8Array(32).fill(0xab)
     const y0 = new Uint8Array(32).fill(0xcd)
-    const hex = makeTableWithFirstEntry(x0, y0)
+    const data = makeTableWithFirstEntry(x0, y0)
     const wrongX = new Uint8Array(32).fill(0x99)
-    const vehicleKey = makeVehicleKey(wrongX, y0)
-    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+    expect(parseDoublingsTable(data, makeVehicleKey(wrongX, y0))).toBeNull()
   })
 
   test('vehiclePublicKey y-mismatch — returns null', () => {
     const x0 = new Uint8Array(32).fill(0xab)
     const y0 = new Uint8Array(32).fill(0xcd)
-    const hex = makeTableWithFirstEntry(x0, y0)
+    const data = makeTableWithFirstEntry(x0, y0)
     const wrongY = new Uint8Array(32).fill(0x99)
-    const vehicleKey = makeVehicleKey(x0, wrongY)
-    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+    expect(parseDoublingsTable(data, makeVehicleKey(x0, wrongY))).toBeNull()
   })
 
   test('vehiclePublicKey single-byte x-mismatch at last byte — returns null', () => {
     const x0 = new Uint8Array(32).fill(0x11)
     const y0 = new Uint8Array(32).fill(0x22)
-    const hex = makeTableWithFirstEntry(x0, y0)
+    const data = makeTableWithFirstEntry(x0, y0)
     const wrongX = new Uint8Array(32).fill(0x11)
-    wrongX[31] = 0xff // only last byte differs
-    const vehicleKey = makeVehicleKey(wrongX, y0)
-    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+    wrongX[31] = 0xff
+    expect(parseDoublingsTable(data, makeVehicleKey(wrongX, y0))).toBeNull()
   })
 
   test('vehiclePublicKey wrong length — skips key check, returns table', () => {
-    const hex = makeTableHex(DUMMY_ENTRIES)
-    const shortKey = new Uint8Array(33) // not 65 bytes
-    const table = parseDoublingsTable(hex, shortKey)
-    expect(table).not.toBeNull()
+    const data = makeTableBinary(DUMMY_ENTRIES)
+    const shortKey = new Uint8Array(33)
+    expect(parseDoublingsTable(data, shortKey)).not.toBeNull()
+  })
+})
+
+// ── TeslaSession._hmac (pre-computed HMAC pads) ────────────────────────────
+// _hmac uses pads pre-computed from sessionKey to avoid allocating innerPad/outerPad
+// on every command. Must match hmacSha256(sessionKey, message) exactly.
+
+describe('TeslaSession._hmac pre-computed pads', () => {
+  function hexToBytes(h) {
+    const b = new Uint8Array(h.length / 2)
+    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
+    return b
+  }
+
+  function makeSession(keyHex) {
+    const s = new TeslaSession()
+    s.sessionKey = hexToBytes(keyHex)
+    s._initHmacPads()
+    return s
+  }
+
+  // RFC 4231 TC1: key=20×0x0b, data="Hi There"
+  const TC1_KEY  = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'
+  const TC1_DATA = new Uint8Array([0x48,0x69,0x20,0x54,0x68,0x65,0x72,0x65])
+  const TC1_MAC  = 'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7'
+
+  // RFC 4231 TC2: key="Jefe", data="what do ya want for nothing?"
+  const TC2_KEY  = '4a656665'
+  const TC2_STR  = 'what do ya want for nothing?'
+  const TC2_DATA = new Uint8Array(TC2_STR.length).map((_, i) => TC2_STR.charCodeAt(i))
+  const TC2_MAC  = '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843'
+
+  test('matches hmacSha256 for RFC 4231 TC1 (20-byte key)', () => {
+    const s = makeSession(TC1_KEY)
+    expect(bytesToHex(s._hmac(TC1_DATA))).toBe(TC1_MAC)
+  })
+
+  test('matches hmacSha256 output directly — TC1', () => {
+    const s = makeSession(TC1_KEY)
+    const expected = hmacSha256(hexToBytes(TC1_KEY), TC1_DATA)
+    expect(s._hmac(TC1_DATA)).toEqual(expected)
+  })
+
+  test('matches hmacSha256 for RFC 4231 TC2 (4-byte key)', () => {
+    const s = makeSession(TC2_KEY)
+    expect(bytesToHex(s._hmac(TC2_DATA))).toBe(TC2_MAC)
+  })
+
+  test('16-byte session key (typical Tesla session)', () => {
+    const key = new Uint8Array(16).fill(0xab)
+    const s = new TeslaSession()
+    s.sessionKey = key
+    s._initHmacPads()
+    const msg = new Uint8Array([1, 2, 3, 4, 5])
+    expect(s._hmac(msg)).toEqual(hmacSha256(key, msg))
+  })
+
+  test('different messages produce different MACs', () => {
+    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    const r1 = bytesToHex(s._hmac(new Uint8Array([1, 2, 3])))
+    const r2 = bytesToHex(s._hmac(new Uint8Array([4, 5, 6])))
+    expect(r1).not.toBe(r2)
+  })
+
+  test('pads null before _initHmacPads called', () => {
+    const s = new TeslaSession()
+    expect(s._hmacInner).toBeNull()
+    expect(s._hmacOuter).toBeNull()
+  })
+
+  test('pads cleared on reset()', () => {
+    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    expect(s._hmacInner).not.toBeNull()
+    s.reset()
+    expect(s._hmacInner).toBeNull()
+    expect(s._hmacOuter).toBeNull()
+  })
+
+  test('pads re-initialized after restorePreservedSession', () => {
+    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    s.established = true
+    s.counter = 5
+    s.preserveForReconnect(60000)
+    // Simulate disconnect: clear active state but keep preserved (don't call reset)
+    s.sessionKey = null
+    s._hmacInner = null
+    s._hmacOuter = null
+    s.established = false
+    expect(s._hmacInner).toBeNull()
+    s.restorePreservedSession()
+    expect(s._hmacInner).not.toBeNull()
+    expect(s._hmacOuter).not.toBeNull()
+    // pads must produce correct HMAC after restore
+    const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+    expect(s._hmac(msg)).toEqual(hmacSha256(hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'), msg))
+  })
+
+  test('inner pad is sessionKey XOR 0x36, outer pad is sessionKey XOR 0x5c', () => {
+    const key = new Uint8Array(16).fill(0x42)
+    const s = new TeslaSession()
+    s.sessionKey = key
+    s._initHmacPads()
+    // First 16 bytes: key XOR constant; remaining 48 bytes: 0x00 XOR constant
+    for (let i = 0; i < 64; i++) {
+      const k = i < 16 ? 0x42 : 0x00
+      expect(s._hmacInner[i]).toBe(k ^ 0x36)
+      expect(s._hmacOuter[i]).toBe(k ^ 0x5c)
+    }
   })
 })
