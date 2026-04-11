@@ -476,24 +476,33 @@ describe('loadDoublingsTable parsing logic', () => {
   }
 
   // Reproduce the table-building logic from loadDoublingsTable for unit testing
-  function parseDoublingsTable(hex) {
+  // vehiclePublicKey: optional Uint8Array[65] (uncompressed: 04 || x[32] || y[32])
+  function parseDoublingsTable(hex, vehiclePublicKey = null) {
     if (!hex || hex.length !== 256 * 64 * 2) return null
-    const raw = new Uint8Array(256 * 64)
-    for (let i = 0; i < raw.length; i++) raw[i] = parseInt(hex.substr(i * 2, 2), 16)
-    const { bytesToBigInt } = { bytesToBigInt: (bytes) => {
-      const r = new Uint32Array(8)
-      for (let i = 0; i < 8; i++) {
-        const idx = 28 - i * 4
-        r[i] = (bytes[idx] << 24) | (bytes[idx+1] << 16) | (bytes[idx+2] << 8) | bytes[idx+3]
+    if (vehiclePublicKey && vehiclePublicKey.length === 65) {
+      for (let i = 0; i < 32; i++) {
+        if (parseInt(hex.substr(i * 2, 2), 16) !== vehiclePublicKey[1 + i] ||
+            parseInt(hex.substr((32 + i) * 2, 2), 16) !== vehiclePublicKey[33 + i]) return null
       }
-      return r
-    }}
+    }
     const table = []
     for (let i = 0; i < 256; i++) {
-      table.push([
-        bytesToBigInt(raw.slice(i * 64,      i * 64 + 32)),
-        bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64)),
-      ])
+      const base = i * 128
+      const x = new Uint32Array(8)
+      const y = new Uint32Array(8)
+      for (let j = 0; j < 8; j++) {
+        const xi = base + (28 - j * 4) * 2
+        x[j] = ((parseInt(hex.substr(xi,     2), 16) << 24) |
+                 (parseInt(hex.substr(xi + 2, 2), 16) << 16) |
+                 (parseInt(hex.substr(xi + 4, 2), 16) << 8)  |
+                  parseInt(hex.substr(xi + 6, 2), 16)) >>> 0
+        const yi = base + 64 + (28 - j * 4) * 2
+        y[j] = ((parseInt(hex.substr(yi,     2), 16) << 24) |
+                 (parseInt(hex.substr(yi + 2, 2), 16) << 16) |
+                 (parseInt(hex.substr(yi + 4, 2), 16) << 8)  |
+                  parseInt(hex.substr(yi + 6, 2), 16)) >>> 0
+      }
+      table.push([x, y])
     }
     return table
   }
@@ -564,5 +573,77 @@ describe('loadDoublingsTable parsing logic', () => {
     const table = parseDoublingsTable(makeTableHex(DUMMY_ENTRIES))
     // entry 255: x = fill(255 & 0xff = 0xff), y = fill(256 & 0xff = 0x00)
     expect(table[255][0][0]).not.toBe(0) // x is non-zero (all 0xff bytes)
+  })
+
+  // Vehicle public key verification tests
+  // The table's first entry stores the base point G = vehiclePublicKey.
+  // bytes [0..31] of table hex = entry[0].x = vehiclePublicKey[1..32]
+  // bytes [32..63] of table hex = entry[0].y = vehiclePublicKey[33..64]
+
+  function makeVehicleKey(x0bytes, y0bytes) {
+    // Construct a 65-byte uncompressed public key: 0x04 || x[32] || y[32]
+    const key = new Uint8Array(65)
+    key[0] = 0x04
+    key.set(x0bytes, 1)
+    key.set(y0bytes, 33)
+    return key
+  }
+
+  function makeTableWithFirstEntry(x0, y0) {
+    // Build a table where entry[0].x = x0, entry[0].y = y0
+    const entries = DUMMY_ENTRIES.map((e, i) => i === 0 ? { x: x0, y: y0 } : e)
+    return makeTableHex(entries)
+  }
+
+  test('vehiclePublicKey null — skips key check, returns table', () => {
+    const hex = makeTableHex(DUMMY_ENTRIES)
+    const table = parseDoublingsTable(hex, null)
+    expect(table).not.toBeNull()
+    expect(table.length).toBe(256)
+  })
+
+  test('vehiclePublicKey matches first entry — returns table', () => {
+    const x0 = new Uint8Array(32).fill(0xab)
+    const y0 = new Uint8Array(32).fill(0xcd)
+    const hex = makeTableWithFirstEntry(x0, y0)
+    const vehicleKey = makeVehicleKey(x0, y0)
+    const table = parseDoublingsTable(hex, vehicleKey)
+    expect(table).not.toBeNull()
+    expect(table.length).toBe(256)
+  })
+
+  test('vehiclePublicKey x-mismatch — returns null', () => {
+    const x0 = new Uint8Array(32).fill(0xab)
+    const y0 = new Uint8Array(32).fill(0xcd)
+    const hex = makeTableWithFirstEntry(x0, y0)
+    const wrongX = new Uint8Array(32).fill(0x99)
+    const vehicleKey = makeVehicleKey(wrongX, y0)
+    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+  })
+
+  test('vehiclePublicKey y-mismatch — returns null', () => {
+    const x0 = new Uint8Array(32).fill(0xab)
+    const y0 = new Uint8Array(32).fill(0xcd)
+    const hex = makeTableWithFirstEntry(x0, y0)
+    const wrongY = new Uint8Array(32).fill(0x99)
+    const vehicleKey = makeVehicleKey(x0, wrongY)
+    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+  })
+
+  test('vehiclePublicKey single-byte x-mismatch at last byte — returns null', () => {
+    const x0 = new Uint8Array(32).fill(0x11)
+    const y0 = new Uint8Array(32).fill(0x22)
+    const hex = makeTableWithFirstEntry(x0, y0)
+    const wrongX = new Uint8Array(32).fill(0x11)
+    wrongX[31] = 0xff // only last byte differs
+    const vehicleKey = makeVehicleKey(wrongX, y0)
+    expect(parseDoublingsTable(hex, vehicleKey)).toBeNull()
+  })
+
+  test('vehiclePublicKey wrong length — skips key check, returns table', () => {
+    const hex = makeTableHex(DUMMY_ENTRIES)
+    const shortKey = new Uint8Array(33) // not 65 bytes
+    const table = parseDoublingsTable(hex, shortKey)
+    expect(table).not.toBeNull()
   })
 })

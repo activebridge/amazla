@@ -1,5 +1,5 @@
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
-import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec.js'
+import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 
 function hexToBytes(hex) {
   var bytes = new Uint8Array(hex.length / 2)

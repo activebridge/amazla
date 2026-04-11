@@ -8,7 +8,7 @@ import {
   OPERATIONSTATUS_OK,
   OPERATIONSTATUS_WAIT,
   OPERATIONSTATUS_ERROR
-} from '../lib/tesla-ble/protocol/vcsec.js'
+} from '../lib/tesla-ble/protocol/vcsec-pairing.js'
 
 // Test keys (same format as secrets.js)
 const TEST_PRIVATE_KEY = 'ec00d429c82dcf2bea3e4485da9ed75e84347741393786b4a48e02554eadb88f'

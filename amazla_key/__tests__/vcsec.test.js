@@ -1,22 +1,24 @@
 import {
   DOMAIN_VEHICLE_SECURITY,
-  SIGNATURE_TYPE_PRESENT_KEY,
-  KEY_ROLE_OWNER,
-  KEY_FORM_FACTOR_ANDROID_DEVICE,
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
-  OPERATIONSTATUS_OK,
-  OPERATIONSTATUS_WAIT,
-  OPERATIONSTATUS_ERROR,
   buildUnsignedMessage,
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
+  generateUUID,
+} from '../lib/tesla-ble/protocol/vcsec.js'
+import {
+  SIGNATURE_TYPE_PRESENT_KEY,
+  KEY_ROLE_OWNER,
+  KEY_FORM_FACTOR_ANDROID_DEVICE,
+  OPERATIONSTATUS_OK,
+  OPERATIONSTATUS_WAIT,
+  OPERATIONSTATUS_ERROR,
   buildWhitelistOperation,
   buildUnsignedMessageWithWhitelist,
   parseCommandStatus,
   parsePairingResponse,
-  generateUUID,
-} from '../lib/tesla-ble/protocol/vcsec.js'
+} from '../lib/tesla-ble/protocol/vcsec-pairing.js'
 
 import { decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
 

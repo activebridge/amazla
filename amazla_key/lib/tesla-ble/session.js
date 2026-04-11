@@ -1,7 +1,7 @@
 
 import { sha1 } from './crypto/sha256.js'
 import { hmacSha256, hexToBytes, bytesToHex } from './crypto/hmac.js'
-import { ecdhFixed, bytesToBigInt } from './crypto/p256.js'
+import { ecdhFixed } from './crypto/p256.js'
 import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -174,20 +174,36 @@ class TeslaSession {
         console.log('[SESSION] Doublings table wrong size: ' + hex.length + ' hex chars (need 32768)')
         return null
       }
-      const raw = new Uint8Array(256 * 64)
-      for (let i = 0; i < raw.length; i++) raw[i] = parseInt(hex.substr(i * 2, 2), 16)
+      // Verify first entry matches vehicle public key without allocating intermediate buffer
       if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
         for (let i = 0; i < 32; i++) {
-          if (raw[i] !== this.vehiclePublicKey[1 + i] || raw[32 + i] !== this.vehiclePublicKey[33 + i]) {
+          if (parseInt(hex.substr(i * 2, 2), 16) !== this.vehiclePublicKey[1 + i] ||
+              parseInt(hex.substr((32 + i) * 2, 2), 16) !== this.vehiclePublicKey[33 + i]) {
             console.log('[SESSION] Doublings table is for a different vehicle key — discarding')
             return null
           }
         }
       }
+      // Build table directly from hex — skips 16KB intermediate Uint8Array
+      // bytesToU256 layout: r[j] = big-endian uint32 at byte offset (28 - j*4)
       const table = []
       for (let i = 0; i < 256; i++) {
-        table.push([bytesToBigInt(raw.slice(i * 64, i * 64 + 32)),
-                    bytesToBigInt(raw.slice(i * 64 + 32, i * 64 + 64))])
+        const base = i * 128  // each entry = 64 bytes = 128 hex chars
+        const x = new Uint32Array(8)
+        const y = new Uint32Array(8)
+        for (let j = 0; j < 8; j++) {
+          const xi = base + (28 - j * 4) * 2
+          x[j] = ((parseInt(hex.substr(xi,     2), 16) << 24) |
+                   (parseInt(hex.substr(xi + 2, 2), 16) << 16) |
+                   (parseInt(hex.substr(xi + 4, 2), 16) << 8)  |
+                    parseInt(hex.substr(xi + 6, 2), 16)) >>> 0
+          const yi = base + 64 + (28 - j * 4) * 2
+          y[j] = ((parseInt(hex.substr(yi,     2), 16) << 24) |
+                   (parseInt(hex.substr(yi + 2, 2), 16) << 16) |
+                   (parseInt(hex.substr(yi + 4, 2), 16) << 8)  |
+                    parseInt(hex.substr(yi + 6, 2), 16)) >>> 0
+        }
+        table.push([x, y])
       }
       console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries, 16 KB)')
       this._doublingsTable = table
