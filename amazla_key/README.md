@@ -206,8 +206,8 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │     ┌─────────────────────────────────────────────────────────────────┐      │
 │     │  ble_settings.txt (watch storage)                               │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │ watch_private_key: "abc123..." (32 bytes / 64 hex chars)    ││      │
-│     │  │ watch_public_key:  "04def..." (65 bytes / 130 hex chars)    ││      │
+│     │  │ watch_private_key: "abc123..." (32-byte binary string)       ││      │
+│     │  │ watch_public_key:  "04def..." (65-byte binary string)       ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
@@ -220,12 +220,12 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool (field in ble_settings.txt, hex string)               │      │
+│     │  key_pool (field in ble_settings.txt, binary string)            │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │  [ key0_priv(32B/64 hex) | key0_pub(65B/130 hex) ]          ││      │
-│     │  │  [ key1_priv(32B/64 hex) | key1_pub(65B/130 hex) ]          ││      │
+│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
+│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
 │     │  │  ...                                                        ││      │
-│     │  │  194 hex chars per key                                      ││      │
+│     │  │  97 bytes per key                                           ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
@@ -681,12 +681,12 @@ amazla_key/
 
 | File | Key | Contents | Managed By |
 |------|-----|----------|------------|
-| `ble_settings.txt` | `watch_private_key` | 32-byte enrolled private key (hex) | Phone sync |
-| `ble_settings.txt` | `watch_public_key` | 65-byte enrolled public key (hex) | Phone sync |
+| `ble_settings.txt` | `watch_private_key` | 32-byte enrolled private key (binary string) | Phone sync |
+| `ble_settings.txt` | `watch_public_key` | 65-byte enrolled public key (binary string) | Phone sync |
 | `ble_settings.txt` | `tesla_ble_mac` | Vehicle BLE MAC address | Auto-saved on scan |
-| `ble_settings.txt` | `vehicle_ec_public_key` | 65-byte vehicle EC key (hex) | Auto-saved after pairing |
-| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (hex, 32768 chars) | Phone sync |
-| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (hex, 194 chars/key) | GEN POOL button |
+| `ble_settings.txt` | `vehicle_ec_public_key` | 65-byte vehicle EC key (binary string) | Auto-saved after pairing |
+| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (binary string, 16384 chars) | Phone sync |
+| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (binary string, 97 bytes/key) | GEN POOL button |
 
 ## Setup Guide
 
@@ -828,7 +828,7 @@ session.requestVehiclePublicKey((result) => {
 
 | Component | Before | After | Reduction | Benefit |
 |-----------|--------|-------|-----------|---------|
-| Doublings table | 32,768 hex chars | 16,384 bytes | 50% | Direct DataView reads, no hex parsing |
+| Doublings table | 32,768 hex chars | 16,384 bytes | 50% | Direct charCodeAt reads, no hex parsing |
 | Key pool (per key) | 194 hex chars | 97 bytes | 50% | 8.9× faster parsing with charCodeAt |
 | Vehicle EC key | 130 hex chars | 65 bytes | 50% | Binary storage, direct byte access |
 | Watch public key | 130 hex chars | 65 bytes | 50% | Consistent binary format |
@@ -850,7 +850,7 @@ session.requestVehiclePublicKey((result) => {
    - `hexToBytes(hex)` — hex → Uint8Array (fallback)
 
 3. **Storage format updates**:
-   - Doublings table: `loadDoublingsTable()` uses DataView for direct uint32 reads
+   - Doublings table: `loadDoublingsTable()` reads uint32 words directly from binary string via `charCodeAt` — no intermediate Uint8Array or DataView
    - Key pool: `popKeyFromPool()` extracts 97-byte entries with charCodeAt
    - Vehicle key: `loadVehiclePublicKey()` loads 65-byte binary string
    - Enrolled keys: Phone stores/sends binary, watch uses binary directly
@@ -876,7 +876,7 @@ session.requestVehiclePublicKey((result) => {
 - **Storage**: 18.6 KB saved on watch
 - **Startup**: ~50-100ms faster due to reduced parsing
 
-**Testing**: All 229 unit tests passing, no regressions.
+**Testing**: All 238 unit tests passing, no regressions.
 
 ### OOM Prevention (✅ Complete)
 
