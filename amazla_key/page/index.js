@@ -10,7 +10,7 @@ import { keepScreenOn } from '../../zeppify/index.js'
 import UI, { page, button, img, rect } from '../../pages/ui'
 import { LOCK, UNLOCK, CLOSE, OPEN } from '../../pages/styles'
 import vibrate from '../../pages/vibrate'
-
+import { buildClosureMoveRequest } from '../lib/tesla-ble/protocol/vcsec.js'
 import teslaSession from '../lib/tesla-ble/session.js'
 
 const { height } = getDeviceInfo()
@@ -186,10 +186,54 @@ const sendCommand = (rkeAction, label) => {
   })
 }
 
+const sendClosure = (closureId, moveType, label) => {
+  if (isRunning) { hmUI.showToast({ text: 'Busy…' }); return }
+  isRunning = true
+  hmUI.updateStatusBarTitle(label + '…')
+  teslaSession.ensureSessionEstablished(function(result) {
+    if (!result.success) {
+      isRunning = false
+      hmUI.updateStatusBarTitle('✗ Error')
+      hmUI.showToast({ text: result.error || 'Error' })
+      return
+    }
+    // Build closureMoveRequest payload and send via authenticated command
+    try {
+      const cmr = buildClosureMoveRequest(closureId, moveType)
+      teslaSession.sendCommand({ closureMoveRequest: cmr }, function(result) {
+        isRunning = false
+        if (result && result._requeue) {
+          // Intermediate ack — session handler re-queued the callback; wait for final response
+          return
+        }
+        if (!result.success) {
+          hmUI.updateStatusBarTitle('✗ Error')
+          hmUI.showToast({ text: result.error || 'Error' })
+          return
+        }
+        const resp = result.response
+        if (resp && resp.actionStatus) {
+          vibrate(24)
+          hmUI.updateStatusBarTitle('✓ ' + label)
+          setTimeout(refreshStatus, 1000)
+        } else {
+          hmUI.updateStatusBarTitle('✗ Error')
+          hmUI.showToast({ text: 'No action status' })
+        }
+      })
+    } catch (e) {
+      isRunning = false
+      hmUI.updateStatusBarTitle('✗ Error')
+      hmUI.showToast({ text: e.message || 'Error' })
+    }
+  })
+}
+
 const onLock   = () => sendCommand(1, 'Locking')
 const onUnlock = () => sendCommand(0, 'Unlocking')
-const onTrunk  = () => sendCommand(2, 'Trunk')
-const onFrunk  = () => sendCommand(3, 'Frunk')
+// Closure IDs: rear trunk=5, front trunk (frunk)=6; moveType MOVE=0
+const onTrunk  = () => sendClosure(5, 0, 'Trunk')
+const onFrunk  = () => sendClosure(6, 0, 'Frunk')
 
 Page(BasePage({
   build() {
@@ -202,8 +246,8 @@ Page(BasePage({
     if (!storage.getItem('tesla_ble_mac') ||
         !storage.getItem('vehicle_ec_public_key') ||
         !storage.getItem('vehicle_doublings_table')) {
-      push({ url: 'page/wizard/index' })
-      return
+      // push({ url: 'page/wizard/index' })
+      // return
     }
 
     onKey({

@@ -7,12 +7,12 @@ import { LocalStorage } from '@zos/storage'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
   DOMAIN_VEHICLE_SECURITY,
-  SIGNATURE_TYPE_HMAC,
   buildRoutableMessage,
   buildSessionInfoRequest,
   buildSignedMessage,
   buildToVCSECMessage,
   buildUnsignedMessage,
+  buildSignatureData,
   parseRoutableMessage,
   parseWhitelistEntryInfo,
   generateUUID,
@@ -52,14 +52,32 @@ class TeslaSession {
     this._doublingsTable = null // cached after first parse; invalidated on reset
     this._hmacInner = null     // pre-computed HMAC inner pad (sessionKey XOR 0x36, padded to 64 bytes)
     this._hmacOuter = null     // pre-computed HMAC outer pad (sessionKey XOR 0x5c, padded to 64 bytes)
+    this._cmdHmacInner = null  // command HMAC inner pad (subKey XOR 0x36, subKey = HMAC(sessionKey, "authenticated command"))
+    this._cmdHmacOuter = null  // command HMAC outer pad
+    this.vin = null            // vehicle VIN as Uint8Array for HMAC personalization
+    this._waitingForSecondResponse = false
+    if (this._secondResponseTimer) { clearTimeout(this._secondResponseTimer); this._secondResponseTimer = null }
   }
   _initHmacPads() {
+    // Raw session key pads — used by _hmac() for general HMAC-SHA256(sessionKey, data)
     this._hmacInner = new Uint8Array(64)
     this._hmacOuter = new Uint8Array(64)
     for (let i = 0; i < 64; i++) {
       const k = i < this.sessionKey.length ? this.sessionKey[i] : 0
       this._hmacInner[i] = k ^ 0x36
       this._hmacOuter[i] = k ^ 0x5c
+    }
+    // Command HMAC sub-key pads — per Tesla SDK:
+    //   subKey = HMAC-SHA256(sessionKey, "authenticated command")
+    //   used by _cmdHmac() for authenticated command signing
+    const LABEL = new Uint8Array([97,117,116,104,101,110,116,105,99,97,116,101,100,32,99,111,109,109,97,110,100])
+    const subKey = this._hmac(LABEL)  // 32-byte derived key
+    this._cmdHmacInner = new Uint8Array(64)
+    this._cmdHmacOuter = new Uint8Array(64)
+    for (let i = 0; i < 64; i++) {
+      const k = i < subKey.length ? subKey[i] : 0
+      this._cmdHmacInner[i] = k ^ 0x36
+      this._cmdHmacOuter[i] = k ^ 0x5c
     }
   }
   _hmac(message) {
@@ -71,6 +89,50 @@ class TeslaSession {
     outerData.set(this._hmacOuter)
     outerData.set(innerHash, 64)
     return sha256(outerData)
+  }
+  // HMAC-SHA256 using the command sub-key (HMAC(sessionKey, "authenticated command")).
+  // Used for command authentication per Tesla SDK (AuthorizeHMAC path).
+  _cmdHmac(message) {
+    const innerData = new Uint8Array(64 + message.length)
+    innerData.set(this._cmdHmacInner)
+    innerData.set(message, 64)
+    const innerHash = sha256(innerData)
+    const outerData = new Uint8Array(96)
+    outerData.set(this._cmdHmacOuter)
+    outerData.set(innerHash, 64)
+    return sha256(outerData)
+  }
+  // Builds the HMAC tag for an authenticated command per Tesla SDK metadata scheme.
+  // Input: HMAC-SHA256(subKey, metadata || 0xFF || payloadBytes)
+  // Metadata TLV fields (tag 1B | len 1B | value):
+  //   TAG_SIGNATURE_TYPE(0): HMAC_PERSONALIZED=8
+  //   TAG_DOMAIN(1): VEHICLE_SECURITY=2
+  //   TAG_PERSONALIZATION(2): VIN bytes (empty if VIN not set)
+  //   TAG_EPOCH(3): 16-byte epoch
+  //   TAG_EXPIRES_AT(4): uint32 big-endian
+  //   TAG_COUNTER(5): uint32 big-endian
+  //   TAG_END(0xFF)
+  //   payload bytes (ToVCSECMessage)
+  _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
+    const vin = this.vin || new Uint8Array(0)
+    const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
+    const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
+    const expiresAtBytes = u32be(expiresAt)
+    const counterBytes = u32be(counter)
+    const totalLen = 3 + 3 + 2 + vin.length + 2 + epochBytes.length + 6 + 6 + 1 + payloadBytes.length
+    const hmacInput = new Uint8Array(totalLen)
+    let off = 0
+    const wb = (byte) => { hmacInput[off++] = byte }
+    const wBytes = (bytes) => { hmacInput.set(bytes, off); off += bytes.length }
+    wb(0x00); wb(0x01); wb(0x08)             // TAG_SIGNATURE_TYPE: HMAC_PERSONALIZED=8
+    wb(0x01); wb(0x01); wb(0x02)             // TAG_DOMAIN: VEHICLE_SECURITY=2
+    wb(0x02); wb(vin.length); wBytes(vin)    // TAG_PERSONALIZATION: VIN
+    wb(0x03); wb(epochBytes.length); wBytes(epochBytes)    // TAG_EPOCH
+    wb(0x04); wb(0x04); wBytes(expiresAtBytes)             // TAG_EXPIRES_AT (big-endian)
+    wb(0x05); wb(0x04); wBytes(counterBytes)               // TAG_COUNTER (big-endian)
+    wb(0xFF)                                  // TAG_END
+    wBytes(payloadBytes)                      // payload (ToVCSECMessage bytes)
+    return this._cmdHmac(hmacInput)
   }
   preserveForReconnect(timeoutMs) {
     this.preserved = {
@@ -112,6 +174,9 @@ class TeslaSession {
     this.established = true
     this.preserved = null
     this._initHmacPads()
+    // Ensure VIN is loaded from storage after restoring a preserved session so
+    // HMAC personalization includes the VIN bytes (if stored previously).
+    try { this.loadVehicleVIN() } catch (e) { /* non-fatal */ }
     
     var age = Date.now() - session.timestamp
     console.log('[Session] Session restored from preserved state (age: ' + (age / 1000).toFixed(1) + 's)')
@@ -234,6 +299,28 @@ class TeslaSession {
       return null
     }
   }
+  loadVehicleVIN() {
+    try {
+      const vin = this.storage.getItem('vehicle_vin')
+      if (vin && vin.length > 0) {
+        this.vin = new Uint8Array(vin.length)
+        for (let i = 0; i < vin.length; i++) this.vin[i] = vin.charCodeAt(i) & 0x7f
+        console.log('[SESSION] Loaded VIN for HMAC personalization')
+        return true
+      }
+      this.vin = new Uint8Array(0)
+      console.log('[SESSION] VIN not stored — HMAC personalization empty (commands may fail)')
+      return false
+    } catch(e) {
+      this.vin = new Uint8Array(0)
+      return false
+    }
+  }
+  setVehicleVIN(vinString) {
+    this.vin = new Uint8Array(vinString.length)
+    for (let i = 0; i < vinString.length; i++) this.vin[i] = vinString.charCodeAt(i) & 0x7f
+    this.storage.setItem('vehicle_vin', vinString)
+  }
   requestVehiclePublicKey(callback) {
     const self = this
     const ensureConnectedAndFetch = function() {
@@ -272,9 +359,13 @@ class TeslaSession {
         0  // slot 0 = first enrolled key
       )
       const unsignedMsg = buildUnsignedMessage({ informationRequest: infoRequest })
-      const signedMsg = buildSignedMessage(unsignedMsg)
+      const signedMsg = buildSignedMessage({ payload: unsignedMsg, signatureType: 2 }) // SIGNATURE_TYPE_PRESENT_KEY
       const toMsg = buildToVCSECMessage(signedMsg)
-      const routableMsg = buildRoutableMessage(toMsg, DOMAIN_VEHICLE_SECURITY)
+      const routableMsg = buildRoutableMessage({
+        toDomain: DOMAIN_VEHICLE_SECURITY,
+        payload: toMsg,
+        uuid: generateUUID()
+      })
       
       teslaBLE.send(routableMsg, (r) => {
         if (!r.success) {
@@ -483,6 +574,7 @@ class TeslaSession {
           self.sessionKey = keyMaterial.slice(0, 16)
           self._initHmacPads()
           self.established = true
+          self.loadVehicleVIN()
           console.log('[SESSION] ✓ Established: counter=' + self.counter)
           callback({
             success: true,
@@ -503,42 +595,48 @@ class TeslaSession {
     }
     teslaBLE.send(message, sessionInfoResponseHandler)
   }
-  buildAuthenticatedCommand(rkeAction) {
+  buildAuthenticatedCommand(rkeActionOrClosure) {
     if (!this.established) {
       throw new Error('Session not established')
     }
     this.counter++
-    const unsignedMessage = buildUnsignedMessage({ rkeAction })
     const expiresAt = this.clockTime + 60
-    const signedMessage = buildSignedMessage({
-      payload: unsignedMessage,
-      signatureType: SIGNATURE_TYPE_HMAC,
-      counter: this.counter,
-      epoch: this.epoch,
-      expiresAt: expiresAt
-    })
-    const hmac = this._hmac(signedMessage)
-    const authenticatedMessage = buildSignedMessage({
-      payload: unsignedMessage,
-      signatureType: SIGNATURE_TYPE_HMAC,
-      signature: hmac,
-      counter: this.counter,
-      epoch: this.epoch,
-      expiresAt: expiresAt
-    })
-    const toVcsec = buildToVCSECMessage(authenticatedMessage)
+    // Build payload: UnsignedMessage → SignedMessage (payload only) → ToVCSECMessage
+    // Per vcsec.proto SignedMessage has only field 2 (payload) and field 3 (signatureType).
+    // For HMAC commands, signatureType is omitted (NONE=0 default); auth is in RoutableMessage.signature_data.
+    let unsignedMessage
+    if (typeof rkeActionOrClosure === 'number') {
+      unsignedMessage = buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
+    } else {
+      // Expect rkeActionOrClosure to be an object { closureMoveRequest: <Uint8Array> }
+      unsignedMessage = buildUnsignedMessage(rkeActionOrClosure)
+    }
+    const signedMessage = buildSignedMessage({ payload: unsignedMessage })
+    const toVcsec = buildToVCSECMessage(signedMessage)
+    // Compute HMAC tag per Tesla SDK (AuthorizeHMAC): HMAC(subKey, metadata || TAG_END || payload)
+    // subKey = HMAC(sessionKey, "authenticated command"), precomputed in _initHmacPads
+    const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, toVcsec)
+    // SignatureData goes in RoutableMessage field 13 (signature_data)
+    const signatureData = buildSignatureData(
+      this.ephemeralPublicKey,
+      this.epoch,
+      this.counter,
+      expiresAt,
+      tag
+    )
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
       payload: toVcsec,
+      signatureData,
       uuid: generateUUID()
     })
   }
-  sendCommand(rkeAction, callback) {
+  sendCommand(rkeActionOrClosure, callback) {
     const self = this
     const doSend = function() {
       try {
-        const message = self.buildAuthenticatedCommand(rkeAction)
+        const message = self.buildAuthenticatedCommand(rkeActionOrClosure)
         
         // Track if we received the first response (status push)
         self._waitingForSecondResponse = false
@@ -557,13 +655,25 @@ class TeslaSession {
             if (!response.actionStatus && !self._waitingForSecondResponse) {
               self._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
+              // Set a timeout to clear waiting state if second response never arrives
+              if (self._secondResponseTimer) clearTimeout(self._secondResponseTimer)
+              self._secondResponseTimer = setTimeout(function() {
+                if (self._waitingForSecondResponse) {
+                  console.log('[SESSION] Second response timeout — clearing waiting state')
+                  self._waitingForSecondResponse = false
+                  self._secondResponseTimer = null
+                  try { callback({ success: false, error: 'Second response timeout' }) } catch (e) {}
+                }
+              }, 10000)
+
               // Pass _requeue back through result so BLE wrapper re-registers callback
               result._requeue = true
               callback(result)
               return
             }
-            
+
             // This is the real response with actionStatus, or we already got first response
+            if (self._secondResponseTimer) { clearTimeout(self._secondResponseTimer); self._secondResponseTimer = null }
             self._waitingForSecondResponse = false
             callback({ success: true, response })
           } catch (e) {
@@ -595,14 +705,26 @@ class TeslaSession {
       callback({ success: false, error: 'Session not established' })
       return
     }
-    const infoRequest = buildInformationRequest(INFO_REQUEST_GET_STATUS)
+    this.counter++
+    const expiresAt = this.clockTime + 60
+    const unsignedMessage = buildUnsignedMessage({ informationRequest: buildInformationRequest(INFO_REQUEST_GET_STATUS) })
+    const signedMessage = buildSignedMessage({ payload: unsignedMessage })
+    const toVcsec = buildToVCSECMessage(signedMessage)
+    const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, toVcsec)
+    const signatureData = buildSignatureData(
+      this.ephemeralPublicKey,
+      this.epoch,
+      this.counter,
+      expiresAt,
+      tag
+    )
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
-      informationRequest: infoRequest,
+      payload: toVcsec,
+      signatureData,
       uuid: generateUUID()
     })
-    const self = this
     teslaBLE.send(message, function(result) {
       if (!result.success) {
         callback({ success: false, error: result.error })

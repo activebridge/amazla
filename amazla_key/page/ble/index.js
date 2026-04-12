@@ -4,7 +4,7 @@ import { keepScreenOn } from '../../../zeppify/index.js'
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
-import { binaryStringToBytes } from '../../lib/tesla-ble/crypto/binary-utils.js'
+import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
 import { writeFileSync, readFileSync } from '@zos/fs'
 import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 
@@ -238,12 +238,11 @@ function doVerify() {
           if (pk[1] && pk[1].length === 65) ecKey = pk[1]
         }
         if (ecKey) {
-          var ecKeyHex = ''
-          for (var i = 0; i < ecKey.length; i++) ecKeyHex += ('0' + ecKey[i].toString(16)).slice(-2)
-          storage.setItem('vehicle_ec_public_key', ecKeyHex)
+          var ecKeyBinary = bytesToBinaryString(ecKey)
+          storage.setItem('vehicle_ec_public_key', ecKeyBinary)
           addLog('✓ EC key saved', 0x44ff44)
           addLog('Computing table...', 0x666666)
-          currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: ecKeyHex } })
+          currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: ecKeyBinary } })
             .then(function(r) {
               if (r.success && r.table) {
                 storage.setItem('vehicle_doublings_table', r.table)
@@ -342,6 +341,29 @@ function onPair() {
     if (result.type === 'found') {
       foundMAC = result.device.mac || null
       addLog('FND: ' + (result.device.name || '?'), 0x00cc44)
+
+      // Attempt to auto-extract VIN from Tesla BLE device name.
+      // Name format: S<16-hex-chars>C (hex encodes 8 ASCII chars = last 8 VIN chars)
+      try {
+        var devName = result.device.name || ''
+        var m = devName.match(/^S([a-f0-9]{16})C$/i)
+        if (m) {
+          var hex = m[1]
+          var vinPart = ''
+          for (var i = 0; i < hex.length; i += 2) {
+            vinPart += String.fromCharCode(parseInt(hex.substr(i, 2), 16))
+          }
+          // Ensure session has storage set and persist VIN for HMAC personalization
+          try { teslaSession.setStorage(storage) } catch (e) {}
+          try {
+            if (vinPart && vinPart.length > 0) {
+              teslaSession.setVehicleVIN(vinPart)
+              addLog('VIN auto-extracted: ' + vinPart, 0x44cc44)
+            }
+          } catch (e) { addLog('VIN extract fail', 0xffaa44) }
+        }
+      } catch (e) { /* non-fatal */ }
+
       teslaBleApi.stopScan()
       state = 'IDLE'
       scheduleTimeout(function() { doConnect(foundMAC, 0, doPair) }, 500)

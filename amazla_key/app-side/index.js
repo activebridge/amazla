@@ -88,9 +88,9 @@ const actions = {
 
   // Precompute doublings table for watch-side fixed-base ECDH.
   // Called once after pairing; watch stores result as binary for fast cold-start ECDH.
-  BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyHex }) => {
+  BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {
     console.log('[App] Building ECDH doublings table for vehicle key')
-    const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyHex)
+    const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyBinary)
     if (!result.success) return result
     // Convert ArrayBuffer → binary string (16 KB binary data as string with 0-255 char codes)
     // Watch stores this directly and uses DataView for fast uint32 reads

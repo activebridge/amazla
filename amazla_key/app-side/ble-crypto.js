@@ -63,50 +63,7 @@ function bigIntToBytes32(n) {
 // Protobuf encoding helpers
 // ============================================
 
-function encodeVarint(value) {
-  const bytes = []
-  while (value > 0x7f) {
-    bytes.push((value & 0x7f) | 0x80)
-    value >>>= 7
-  }
-  bytes.push(value & 0x7f)
-  return new Uint8Array(bytes)
-}
-
-function encodeBytes(fieldNumber, data) {
-  const key = encodeVarint((fieldNumber << 3) | 2)
-  const length = encodeVarint(data.length)
-  const result = new Uint8Array(key.length + length.length + data.length)
-  result.set(key)
-  result.set(length, key.length)
-  result.set(data, key.length + length.length)
-  return result
-}
-
-function encodeEnum(fieldNumber, value) {
-  const key = encodeVarint((fieldNumber << 3) | 0)
-  const val = encodeVarint(value)
-  const result = new Uint8Array(key.length + val.length)
-  result.set(key)
-  result.set(val, key.length)
-  return result
-}
-
-function encodeVarintField(fieldNumber, value) {
-  // Same as encodeEnum - both encode field as varint (wire type 0)
-  return encodeEnum(fieldNumber, value)
-}
-
-function concat(...arrays) {
-  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0)
-  const result = new Uint8Array(totalLength)
-  let offset = 0
-  for (const arr of arrays) {
-    result.set(arr, offset)
-    offset += arr.length
-  }
-  return result
-}
+import { encodeVarint, encodeBytes, encodeEnum, encodeVarintField, concat, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
 
 // ============================================
 // Tesla VCSEC Protocol Constants
@@ -228,14 +185,17 @@ class BLECryptoSession {
   // Precompute doublings table for vehicle's fixed public key.
   // Returns ArrayBuffer: 256 entries × 64 bytes = 16384 bytes.
   // Phone does this once during pairing; watch stores it as binary for fast fixed-base ECDH.
-  buildDoublingsTable(vehiclePubKeyHex) {
+  buildDoublingsTable(vehiclePublicKeyBinary) {
     try {
-      if (vehiclePubKeyHex.length !== 130) {
-        return { success: false, error: 'Expected 65-byte pubkey (130 hex chars)' }
+      if (vehiclePublicKeyBinary.length !== 65) {
+        return { success: false, error: 'Expected 65-byte uncompressed EC public key' }
       }
-      const xHex = vehiclePubKeyHex.slice(2, 66)
-      const yHex = vehiclePubKeyHex.slice(66, 130)
-      let current = [BigInt('0x' + xHex), BigInt('0x' + yHex)]
+      let x = 0n, y = 0n
+      for (let i = 0; i < 32; i++) {
+        x = (x << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(1 + i) & 0xff)
+        y = (y << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(33 + i) & 0xff)
+      }
+      let current = [x, y]
 
       // table[i] = 2^i * Q: Q, 2Q, 4Q, ..., 2^255*Q
       const tableBytes = new Uint8Array(256 * 64)

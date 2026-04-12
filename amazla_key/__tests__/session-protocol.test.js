@@ -1,26 +1,31 @@
 // Session protocol tests: vcsec session builders, key pool binary format, generateKeyPool
 
 import {
-  SIGNATURE_TYPE_HMAC,
+  SIGNATURE_TYPE_HMAC_PERSONALIZED,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_OPEN_TRUNK,
   RKE_ACTION_OPEN_FRUNK,
   buildRoutableMessage,
   buildSessionInfoRequest,
+  buildClosureMoveRequest,
   buildSignedMessage,
   buildToVCSECMessage,
   buildUnsignedMessage,
+  buildKeyIdentity,
+  buildHMACPersonalizedData,
+  buildSignatureData,
   parseSessionInfo,
   parseRoutableMessage,
   generateUUID,
   generateRoutingAddress,
   DOMAIN_VEHICLE_SECURITY,
 } from '../lib/tesla-ble/protocol/vcsec.js'
-import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
+import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import { hmacSha256 } from '../lib/tesla-ble/crypto/hmac.js'
+import teslaBLE from '../lib/tesla-ble/ble.js'
 
 function bytesToHex(b) {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
@@ -36,8 +41,8 @@ describe('RKE action constants', () => {
     expect(RKE_ACTION_OPEN_FRUNK).toBe(3)
   })
 
-  test('SIGNATURE_TYPE_HMAC=5', () => {
-    expect(SIGNATURE_TYPE_HMAC).toBe(5)
+  test('SIGNATURE_TYPE_HMAC_PERSONALIZED=8 (signatures.proto SignatureType enum)', () => {
+    expect(SIGNATURE_TYPE_HMAC_PERSONALIZED).toBe(8)
   })
 })
 
@@ -59,41 +64,140 @@ describe('buildUnsignedMessage — RKE action at field 2', () => {
   })
 })
 
-describe('buildSignedMessage — session fields', () => {
-  test('includes counter at field 4, epoch at field 6, expiresAt at field 7', () => {
+// vcsec.proto SignedMessage has ONLY field 2 (payload) and field 3 (signatureType).
+// HMAC auth data goes in RoutableMessage.signature_data (field 13), NOT here.
+describe('buildSignedMessage — only fields 2 and 3 per vcsec.proto', () => {
+  test('encodes payload at field 2', () => {
     const payload = new Uint8Array([0x10, 0x01])
-    const epoch   = new Uint8Array(16).fill(0xee)
-    const msg = buildSignedMessage({
-      payload,
-      signatureType: SIGNATURE_TYPE_HMAC,
-      counter: 42,
-      epoch,
-      expiresAt: 1000,
-    })
+    const msg = buildSignedMessage({ payload })
     const fields = decodeMessage(msg)
-    expect(fields[2]).toBeDefined()           // payload
-    expect(fields[3]).toBe(SIGNATURE_TYPE_HMAC)
-    expect(fields[4]).toBe(42)                // counter
-    expect(fields[6].length).toBe(16)         // epoch bytes
-    expect(fields[7]).toBe(1000)              // expiresAt
-    expect(fields[5]).toBeUndefined()         // no signature yet
+    expect(fields[2]).toBeDefined()
+    expect(Array.from(fields[2])).toEqual([0x10, 0x01])
   })
 
-  test('includes signature at field 5 when provided', () => {
-    const sig = new Uint8Array(32).fill(0xaa)
-    const msg = buildSignedMessage({
+  test('encodes signatureType at field 3 when provided', () => {
+    const msg = buildSignedMessage({ payload: new Uint8Array([0x01]), signatureType: 2 })
+    expect(decodeMessage(msg)[3]).toBe(2)  // PRESENT_KEY = 2
+  })
+
+  test('no fields 4-7 (those do not exist in vcsec.proto SignedMessage)', () => {
+    const msg = buildSignedMessage({ payload: new Uint8Array([0x01]), signatureType: 2 })
+    const fields = decodeMessage(msg)
+    expect(fields[4]).toBeUndefined()
+    expect(fields[5]).toBeUndefined()
+    expect(fields[6]).toBeUndefined()
+    expect(fields[7]).toBeUndefined()
+  })
+
+  test('authenticated commands omit signatureType (NONE=0 implied by proto3 default)', () => {
+    // For HMAC commands, the auth is entirely in RoutableMessage field 13
+    const msg = buildSignedMessage({ payload: new Uint8Array([0xaa]) })
+    const fields = decodeMessage(msg)
+    expect(fields[2]).toBeDefined()      // payload present
+    expect(fields[3]).toBeUndefined()    // signatureType absent (proto3 omits default 0)
+  })
+})
+
+// ── buildSignatureData — HMAC auth structure ──────────────────────────────
+// Per signatures.proto: SignatureData { signer_identity(1), HMAC_Personalized_data(8) }
+// HMAC_Personalized_Signature_Data { epoch(1), counter(2 uint32), expires_at(3 fixed32 LE), tag(4) }
+
+describe('buildSignatureData — correct HMAC auth structure', () => {
+  const epoch   = new Uint8Array(16).fill(0xee)
+  const pubKey  = new Uint8Array(65).fill(0x04)
+  const tag     = new Uint8Array(32).fill(0xab)
+  const counter = 42
+  const expiresAt = 1060
+
+  test('field 1 = KeyIdentity containing signer public key', () => {
+    const sigData = buildSignatureData(pubKey, epoch, counter, expiresAt, tag)
+    const fields = decodeMessage(sigData)
+    expect(fields[1]).toBeDefined()
+    // KeyIdentity { public_key (field 1) }
+    const keyId = decodeMessage(fields[1])
+    expect(keyId[1].length).toBe(65)
+    expect(keyId[1][0]).toBe(0x04)
+  })
+
+  test('field 8 = HMAC_Personalized_data with epoch, counter, expires_at, tag', () => {
+    const sigData = buildSignatureData(pubKey, epoch, counter, expiresAt, tag)
+    const fields = decodeMessage(sigData)
+    expect(fields[8]).toBeDefined()
+    const hmacData = decodeMessage(fields[8])
+    expect(hmacData[1].length).toBe(16)     // epoch (field 1 bytes)
+    expect(hmacData[2]).toBe(42)             // counter (field 2 varint)
+    expect(hmacData[3].length).toBe(4)      // expires_at (field 3 fixed32 = 4-byte LE)
+    expect(hmacData[4].length).toBe(32)     // tag (field 4 bytes)
+  })
+
+  test('expires_at encoded as fixed32 little-endian', () => {
+    const sigData = buildSignatureData(pubKey, epoch, counter, 0x01020304, tag)
+    const hmacData = decodeMessage(decodeMessage(sigData)[8])
+    // fixed32 LE: 0x01020304 → bytes [0x04, 0x03, 0x02, 0x01]
+    expect(hmacData[3][0]).toBe(0x04)
+    expect(hmacData[3][1]).toBe(0x03)
+    expect(hmacData[3][2]).toBe(0x02)
+    expect(hmacData[3][3]).toBe(0x01)
+  })
+
+  test('buildKeyIdentity alone encodes public key at field 1', () => {
+    const keyId = buildKeyIdentity(pubKey)
+    expect(decodeMessage(keyId)[1].length).toBe(65)
+  })
+
+  test('buildHMACPersonalizedData without tag omits field 4', () => {
+    const hmacData = buildHMACPersonalizedData(epoch, counter, expiresAt, null)
+    const fields = decodeMessage(hmacData)
+    expect(fields[1].length).toBe(16)  // epoch
+    expect(fields[2]).toBe(counter)     // counter
+    expect(fields[3].length).toBe(4)   // expires_at
+    expect(fields[4]).toBeUndefined()   // no tag yet
+  })
+})
+
+describe('buildRoutableMessage — signatureData at field 13', () => {
+  test('signatureData placed at field 13, not field 10 or 14', () => {
+    const sigData = buildSignatureData(
+      new Uint8Array(65).fill(0x04),
+      new Uint8Array(16).fill(0xee),
+      1, 1060,
+      new Uint8Array(32).fill(0xff)
+    )
+    const msg = buildRoutableMessage({
+      toDomain: DOMAIN_VEHICLE_SECURITY,
+      routingAddress: generateRoutingAddress(),
       payload: new Uint8Array([0x01]),
-      signatureType: SIGNATURE_TYPE_HMAC,
-      counter: 1,
-      epoch: new Uint8Array(16),
-      expiresAt: 100,
-      signature: sig,
+      signatureData: sigData,
+      uuid: generateUUID(),
     })
-    expect(decodeMessage(msg)[5].length).toBe(32)
+    const fields = decodeMessage(msg)
+    expect(fields[13]).toBeDefined()
+    expect(fields[10]).toBeDefined()  // payload still present
+  })
+
+  test('signatureData absent when not provided', () => {
+    const msg = buildRoutableMessage({
+      toDomain: DOMAIN_VEHICLE_SECURITY,
+      payload: new Uint8Array([0x01]),
+      uuid: generateUUID(),
+    })
+    expect(decodeMessage(msg)[13]).toBeUndefined()
   })
 })
 
 describe('buildSessionInfoRequest', () => {
+  test('buildClosureMoveRequest encodes closureId and moveType and placed at field 3 when used', () => {
+    const cmr = buildClosureMoveRequest(5, 0) // rear trunk, move
+    // Place in UnsignedMessage via buildUnsignedMessage
+    const um = buildUnsignedMessage({ closureMoveRequest: cmr })
+    const fields = decodeMessage(um)
+    // field 3 should be the closureMoveRequest bytes
+    expect(fields[3]).toBeDefined()
+    const cmrFields = decodeMessage(fields[3])
+    expect(cmrFields[1]).toBe(5)
+    expect(cmrFields[2]).toBe(0)
+  })
+
   test('places publicKey at field 1, challenge at field 2', () => {
     const pub       = new Uint8Array(65).fill(0x04)
     const challenge = new Uint8Array(16).fill(0x77)
@@ -769,3 +873,394 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     }
   })
 })
+
+// ── requestVehiclePublicKey message structure ──────────────────────────────
+// Bug fix: was calling buildRoutableMessage(toMsg, DOMAIN) with positional args
+// (Uint8Array as first arg → all fields undefined → empty message).
+// Also: buildSignedMessage(unsignedMsg) was passing Uint8Array instead of options object.
+// Both born in commit 07f7217, never hit in practice (fallback path when SessionInfo
+// response lacks the vehicle public key).
+
+describe('requestVehiclePublicKey — sends valid PRESENT_KEY whitelist query', () => {
+  let capturedMsg, origSend
+
+  beforeEach(() => {
+    capturedMsg = undefined
+    origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.connected = true
+    teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
+  })
+
+  afterEach(() => {
+    teslaBLE.connected = false
+    delete teslaBLE.send  // remove instance override, prototype method restored
+  })
+
+  function makeSession() {
+    const s = new TeslaSession()
+    s.storage = { getItem: () => null }
+    return s
+  }
+
+  test('sends a non-empty message (was empty before fix)', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    expect(capturedMsg).toBeDefined()
+    expect(capturedMsg.length).toBeGreaterThan(0)
+  })
+
+  test('RoutableMessage has DOMAIN_VEHICLE_SECURITY at field 6', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[6]).toBeDefined()
+    expect(decodeMessage(outer[6])[1]).toBe(DOMAIN_VEHICLE_SECURITY)
+  })
+
+  test('has payload at field 10 — not empty (was missing before fix)', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[10]).toBeDefined()
+    expect(outer[10].length).toBeGreaterThan(0)
+  })
+
+  test('SignedMessage uses SIGNATURE_TYPE_PRESENT_KEY (2) — no HMAC key needed', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    const toVcsec   = decodeMessage(decodeMessage(capturedMsg)[10])
+    const signedMsg = decodeMessage(toVcsec[1])
+    expect(signedMsg[3]).toBe(2)          // PRESENT_KEY
+    expect(signedMsg[5]).toBeUndefined()  // no HMAC signature
+  })
+
+  test('UnsignedMessage has InformationRequest with GET_WHITELIST_ENTRY_INFO (6), slot=0', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    const toVcsec    = decodeMessage(decodeMessage(capturedMsg)[10])
+    const signedMsg  = decodeMessage(toVcsec[1])
+    const unsignedMsg = decodeMessage(signedMsg[2])
+    const infoReq    = decodeMessage(unsignedMsg[1])
+    expect(infoReq[1]).toBe(6)  // GET_WHITELIST_ENTRY_INFO
+    expect(infoReq[4]).toBe(0)  // slot = 0
+  })
+
+  test('includes 16-byte UUID at field 50', () => {
+    makeSession().requestVehiclePublicKey(() => {})
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[50]).toBeDefined()
+    expect(outer[50].length).toBe(16)
+  })
+})
+
+// ── getVehicleStatus message structure ────────────────────────────────────
+// Bug fix: was passing `informationRequest` key to buildRoutableMessage which
+// doesn't recognise it — silently dropped, sending an empty routable message.
+// Born in Copilot commit 6f0ea70. Also removed unused `const self = this`.
+
+describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () => {
+  let capturedMsg
+
+  function makeSession() {
+    const s = new TeslaSession()
+    s.established  = true
+    s.sessionKey   = new Uint8Array(16).fill(0x0b)
+    s.epoch        = new Uint8Array(16).fill(0xee)
+    s.counter      = 5
+    s.clockTime    = 1000
+    s.routingAddress = new Uint8Array(16).fill(0x01)
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    s.vin          = new Uint8Array(0)
+    s._initHmacPads()
+    return s
+  }
+
+  beforeEach(() => {
+    capturedMsg = undefined
+    teslaBLE.connected = true
+    teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
+  })
+
+  afterEach(() => {
+    teslaBLE.connected = false
+    delete teslaBLE.send
+  })
+
+  test('sends a non-empty message (was empty before fix)', () => {
+    makeSession().getVehicleStatus(() => {})
+    expect(capturedMsg).toBeDefined()
+    expect(capturedMsg.length).toBeGreaterThan(0)
+  })
+
+  test('returns error immediately if session not established', () => {
+    let result
+    new TeslaSession().getVehicleStatus(r => { result = r })
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not established/i)
+    expect(capturedMsg).toBeUndefined()
+  })
+
+  test('increments counter before sending', () => {
+    const s = makeSession()
+    s.getVehicleStatus(() => {})
+    expect(s.counter).toBe(6)
+  })
+
+  test('RoutableMessage has DOMAIN_VEHICLE_SECURITY at field 6', () => {
+    makeSession().getVehicleStatus(() => {})
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[6]).toBeDefined()
+    expect(decodeMessage(outer[6])[1]).toBe(DOMAIN_VEHICLE_SECURITY)
+  })
+
+  test('has payload at field 10 — not empty (was missing before fix)', () => {
+    makeSession().getVehicleStatus(() => {})
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[10]).toBeDefined()
+    expect(outer[10].length).toBeGreaterThan(0)
+  })
+
+  test('SignatureData in RoutableMessage field 13 — not in inner SignedMessage', () => {
+    makeSession().getVehicleStatus(() => {})
+    const outer = decodeMessage(capturedMsg)
+    // Auth data in field 13 (RoutableMessage.signature_data)
+    expect(outer[13]).toBeDefined()
+    // Inner SignedMessage (inside ToVCSECMessage) has no HMAC fields
+    const toVcsec   = decodeMessage(outer[10])
+    const signedMsg = decodeMessage(toVcsec[1])
+    expect(signedMsg[4]).toBeUndefined()   // no counter field (doesn't exist in vcsec.proto)
+    expect(signedMsg[5]).toBeUndefined()   // no signature field
+    expect(signedMsg[6]).toBeUndefined()   // no epoch field
+    expect(signedMsg[7]).toBeUndefined()   // no expiresAt field
+  })
+
+  test('SignatureData has signer_identity (field 1) and HMAC_Personalized_data (field 8)', () => {
+    makeSession().getVehicleStatus(() => {})
+    const sigData = decodeMessage(decodeMessage(capturedMsg)[13])
+    expect(sigData[1]).toBeDefined()  // signer_identity
+    expect(sigData[8]).toBeDefined()  // HMAC_Personalized_data
+  })
+
+  test('HMAC_Personalized_data has counter=6, epoch(16B), expires_at=1060', () => {
+    makeSession().getVehicleStatus(() => {})
+    const sigData   = decodeMessage(decodeMessage(capturedMsg)[13])
+    const hmacData  = decodeMessage(sigData[8])
+    expect(hmacData[2]).toBe(6)           // counter (varint)
+    expect(hmacData[1].length).toBe(16)   // epoch (bytes)
+    // expires_at: fixed32 LE encoding of 1060 = 0x424 → [0x24, 0x04, 0x00, 0x00]
+    expect(hmacData[3][0]).toBe(0x24)
+    expect(hmacData[3][1]).toBe(0x04)
+    expect(hmacData[3][2]).toBe(0x00)
+    expect(hmacData[3][3]).toBe(0x00)
+    expect(hmacData[4].length).toBe(32)   // tag (32-byte HMAC-SHA256)
+  })
+
+  test('UnsignedMessage has InformationRequest with GET_STATUS (0)', () => {
+    makeSession().getVehicleStatus(() => {})
+    const toVcsec     = decodeMessage(decodeMessage(capturedMsg)[10])
+    const signedMsg   = decodeMessage(toVcsec[1])
+    const unsignedMsg = decodeMessage(signedMsg[2])
+    const infoReq     = decodeMessage(unsignedMsg[1])
+    expect(infoReq[1]).toBe(0)  // GET_STATUS = 0
+  })
+
+  test('includes 16-byte UUID at field 50', () => {
+    makeSession().getVehicleStatus(() => {})
+    expect(decodeMessage(capturedMsg)[50].length).toBe(16)
+  })
+})
+
+// ── buildAuthenticatedCommand — correct HMAC structure ────────────────────
+// HMAC auth data in RoutableMessage.signature_data (field 13), not in vcsec.proto SignedMessage.
+
+describe('buildAuthenticatedCommand — SignatureData structure', () => {
+  let capturedMsg
+
+  function makeSession() {
+    const s = new TeslaSession()
+    s.established  = true
+    s.sessionKey   = new Uint8Array(16).fill(0x0b)
+    s.epoch        = new Uint8Array(16).fill(0xee)
+    s.counter      = 10
+    s.clockTime    = 2000
+    s.routingAddress = new Uint8Array(16).fill(0x02)
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    s.vin          = new Uint8Array(0)
+    s._initHmacPads()
+    return s
+  }
+
+  beforeEach(() => {
+    capturedMsg = undefined
+    teslaBLE.connected = true
+    teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
+  })
+
+  afterEach(() => {
+    teslaBLE.connected = false
+    delete teslaBLE.send
+  })
+
+  test('increments counter by 1', () => {
+    const s = makeSession()
+    s.buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    expect(s.counter).toBe(11)
+  })
+
+  test('RoutableMessage has DOMAIN_VEHICLE_SECURITY at field 6', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_UNLOCK)
+    expect(decodeMessage(decodeMessage(msg)[6])[1]).toBe(DOMAIN_VEHICLE_SECURITY)
+  })
+
+  test('SignatureData at field 13, not inside ToVCSECMessage', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const outer = decodeMessage(msg)
+    expect(outer[13]).toBeDefined()
+    expect(outer[10]).toBeDefined()
+    // Inner SignedMessage has no HMAC fields — only payload
+    const toVcsec   = decodeMessage(outer[10])
+    const signedMsg = decodeMessage(toVcsec[1])
+    expect(signedMsg[4]).toBeUndefined()
+    expect(signedMsg[5]).toBeUndefined()
+    expect(signedMsg[6]).toBeUndefined()
+    expect(signedMsg[7]).toBeUndefined()
+  })
+
+  test('SignatureData signer_identity contains 65-byte public key', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const sigData = decodeMessage(decodeMessage(msg)[13])
+    const keyId = decodeMessage(sigData[1])
+    expect(keyId[1].length).toBe(65)
+  })
+
+  test('HMAC_Personalized_data has counter=11, epoch(16B), expires_at=2060, tag(32B)', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const sigData  = decodeMessage(decodeMessage(msg)[13])
+    const hmacData = decodeMessage(sigData[8])
+    expect(hmacData[2]).toBe(11)           // counter (varint field 2)
+    expect(hmacData[1].length).toBe(16)   // epoch
+    expect(hmacData[3].length).toBe(4)    // expires_at as fixed32 LE
+    expect(hmacData[4].length).toBe(32)   // HMAC-SHA256 tag
+    // expires_at = 2060 = 0x80C → LE [0x0C, 0x08, 0x00, 0x00]
+    expect(hmacData[3][0]).toBe(0x0C)
+    expect(hmacData[3][1]).toBe(0x08)
+  })
+
+  test('UnsignedMessage has LOCK=1 at field 2', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const outer     = decodeMessage(msg)
+    const toVcsec   = decodeMessage(outer[10])
+    const signedMsg = decodeMessage(toVcsec[1])
+    const unsigned  = decodeMessage(signedMsg[2])
+    expect(unsigned[2]).toBe(RKE_ACTION_LOCK)
+  })
+
+  test('UnsignedMessage has UNLOCK=0 at field 2', () => {
+    const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_UNLOCK)
+    const unsigned  = decodeMessage(decodeMessage(decodeMessage(decodeMessage(msg)[10])[1])[2])
+    expect(unsigned[2]).toBe(RKE_ACTION_UNLOCK)
+  })
+
+  test('different commands produce different HMAC tags', () => {
+    const s = makeSession()
+    const m1 = s.buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const m2 = s.buildAuthenticatedCommand(RKE_ACTION_UNLOCK)
+    const tag1 = decodeMessage(decodeMessage(decodeMessage(m1)[13])[8])[4]
+    const tag2 = decodeMessage(decodeMessage(decodeMessage(m2)[13])[8])[4]
+    expect(Array.from(tag1)).not.toEqual(Array.from(tag2))
+  })
+
+  test('throws if session not established', () => {
+    const s = new TeslaSession()
+    expect(() => s.buildAuthenticatedCommand(RKE_ACTION_LOCK)).toThrow(/not established/i)
+  })
+})
+
+// ── _buildHMACTag — metadata format ──────────────────────────────────────
+// Tag = HMAC-SHA256(subKey, metadata || 0xFF || payload)
+// subKey = HMAC-SHA256(sessionKey, "authenticated command")
+
+describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
+  function hexToBytes(h) {
+    const b = new Uint8Array(h.length / 2)
+    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
+    return b
+  }
+
+  function makeSession(vin) {
+    const s = new TeslaSession()
+    s.sessionKey = new Uint8Array(16).fill(0x0b)
+    s.vin = vin || new Uint8Array(0)
+    s._initHmacPads()
+    return s
+  }
+
+  test('returns 32-byte tag', () => {
+    const s = makeSession()
+    const tag = s._buildHMACTag(new Uint8Array(16).fill(0xee), 1, 100, new Uint8Array([0x01]))
+    expect(tag.length).toBe(32)
+  })
+
+  test('different epochs produce different tags', () => {
+    const s = makeSession()
+    const payload = new Uint8Array([0xaa])
+    const t1 = s._buildHMACTag(new Uint8Array(16).fill(0x01), 1, 100, payload)
+    const t2 = s._buildHMACTag(new Uint8Array(16).fill(0x02), 1, 100, payload)
+    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+
+  test('different counters produce different tags', () => {
+    const s = makeSession()
+    const epoch = new Uint8Array(16).fill(0xee)
+    const payload = new Uint8Array([0xbb])
+    const t1 = s._buildHMACTag(epoch, 1, 100, payload)
+    const t2 = s._buildHMACTag(epoch, 2, 100, payload)
+    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+
+  test('different payloads produce different tags', () => {
+    const s = makeSession()
+    const epoch = new Uint8Array(16).fill(0xee)
+    const t1 = s._buildHMACTag(epoch, 1, 100, new Uint8Array([0x01]))
+    const t2 = s._buildHMACTag(epoch, 1, 100, new Uint8Array([0x02]))
+    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+
+  test('different session keys produce different tags (subKey is session-specific)', () => {
+    const s1 = makeSession()
+    const s2 = new TeslaSession()
+    s2.sessionKey = new Uint8Array(16).fill(0xcc)
+    s2.vin = new Uint8Array(0)
+    s2._initHmacPads()
+    const epoch = new Uint8Array(16).fill(0xee)
+    const payload = new Uint8Array([0xaa])
+    const t1 = s1._buildHMACTag(epoch, 1, 100, payload)
+    const t2 = s2._buildHMACTag(epoch, 1, 100, payload)
+    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+
+  test('_cmdHmac(x) != _hmac(x) — subKey != sessionKey', () => {
+    const s = makeSession()
+    const msg = new Uint8Array([0x01, 0x02, 0x03])
+    // _cmdHmac uses subKey = HMAC(sessionKey, "authenticated command")
+    // _hmac uses raw sessionKey
+    // They should produce different results for the same input
+    expect(Array.from(s._cmdHmac(msg))).not.toEqual(Array.from(s._hmac(msg)))
+  })
+
+  test('different VINs produce different HMAC tags', () => {
+    const s1 = makeSession(new Uint8Array([0x41,0x42,0x43])) // 'ABC'
+    const s2 = makeSession(new Uint8Array([0x58,0x59,0x5A])) // 'XYZ'
+    const epoch = new Uint8Array(16).fill(0xee)
+    const payload = new Uint8Array([0x01])
+    const t1 = s1._buildHMACTag(epoch, 1, 100, payload)
+    const t2 = s2._buildHMACTag(epoch, 1, 100, payload)
+    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+
+  test('empty VIN vs populated VIN produce different tags', () => {
+    const sEmpty = makeSession()
+    const sWith = makeSession(new Uint8Array([0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48]))
+    const epoch = new Uint8Array(16).fill(0xee)
+    const payload = new Uint8Array([0xab])
+    const te = sEmpty._buildHMACTag(epoch, 2, 200, payload)
+    const tw = sWith._buildHMACTag(epoch, 2, 200, payload)
+    expect(Array.from(te)).not.toEqual(Array.from(tw))
+  })
+}
+)

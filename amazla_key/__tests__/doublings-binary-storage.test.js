@@ -1,12 +1,13 @@
-import bleCryptoSession from '../app-side/ble-crypto.js'
+import bleCryptoSession, { hexToBytes, bytesToBinaryString } from '../app-side/ble-crypto.js'
 
 // Pre-computed test key (P-256, uncompressed)
 const TEST_PUBLIC_KEY_HEX = '042a5cee5e1a40fcd2e695cdd00cf6a36755290fc8fe1c956d51ce3450a83f55166c8d9255eb99fdcf99a28f1f96abae79b33b38242e243944a8e88b0cf29e2f7e'
+const TEST_PUBLIC_KEY_BINARY = bytesToBinaryString(hexToBytes(TEST_PUBLIC_KEY_HEX))
 
 describe('Doublings table binary storage', () => {
   describe('ArrayBuffer to binary string conversion', () => {
     test('generates binary string (16384 chars) from ArrayBuffer', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       expect(result.success).toBe(true)
       const bytes = new Uint8Array(result.buffer)
       
@@ -20,7 +21,7 @@ describe('Doublings table binary storage', () => {
     })
 
     test('binary string preserves all byte values (0-255)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const bytes = new Uint8Array(result.buffer)
       
       let binary = ''
@@ -38,7 +39,7 @@ describe('Doublings table binary storage', () => {
 
   describe('Binary storage loading with DataView', () => {
     test('converts binary string back to Uint8Array correctly', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const originalBytes = new Uint8Array(result.buffer)
       
       // Simulate storage: convert to binary string
@@ -57,7 +58,7 @@ describe('Doublings table binary storage', () => {
     })
 
     test('DataView reads uint32s correctly from binary data', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const originalBytes = new Uint8Array(result.buffer)
       
       // Simulate storage and loading
@@ -100,7 +101,7 @@ describe('Doublings table binary storage', () => {
     })
 
     test('DataView reads all 256 entries correctly', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const originalBytes = new Uint8Array(result.buffer)
       
       // Simulate storage/loading cycle
@@ -140,7 +141,7 @@ describe('Doublings table binary storage', () => {
 
   describe('Binary storage advantages', () => {
     test('binary storage is 50% smaller than hex', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const bytes = new Uint8Array(result.buffer)
       
       // Create hex string (current format)
@@ -162,7 +163,7 @@ describe('Doublings table binary storage', () => {
     })
 
     test('no hex parsing needed for binary format', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const originalBytes = new Uint8Array(result.buffer)
       
       // Create binary storage

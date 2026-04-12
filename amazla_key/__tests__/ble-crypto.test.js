@@ -142,34 +142,33 @@ describe('BLECryptoSession', () => {
 
   describe('buildDoublingsTable', () => {
     test('returns ArrayBuffer of correct size (256 × 64 = 16384 bytes)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       expect(result.success).toBe(true)
       expect(result.buffer).toBeInstanceOf(ArrayBuffer)
       expect(result.buffer.byteLength).toBe(16384)
     })
 
-    test('no longer returns hex string', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
-      expect(result.table).toBeUndefined()
+    test('accepts 65-byte binary string, not hex', () => {
+      expect(bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY).success).toBe(true)
+      expect(bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX).success).toBe(false)
     })
 
     test('entry 0 matches vehicle key x and y coordinates', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const bytes = new Uint8Array(result.buffer)
 
-      // Input key: 04 || x(32) || y(32), strip 04 prefix
-      const xHex = TEST_PUBLIC_KEY_HEX.slice(2, 66)
-      const yHex = TEST_PUBLIC_KEY_HEX.slice(66, 130)
+      // Binary key: byte[0]=0x04, bytes[1..32]=x, bytes[33..64]=y
+      const keyBytes = hexToBytes(TEST_PUBLIC_KEY_HEX)
 
       // Entry 0: bytes[0..31] = x, bytes[32..63] = y
       for (let i = 0; i < 32; i++) {
-        expect(bytes[i]).toBe(parseInt(xHex.substr(i * 2, 2), 16))
-        expect(bytes[32 + i]).toBe(parseInt(yHex.substr(i * 2, 2), 16))
+        expect(bytes[i]).toBe(keyBytes[1 + i])
+        expect(bytes[32 + i]).toBe(keyBytes[33 + i])
       }
     })
 
     test('all 256 entries are distinct (no repeated points)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const bytes = new Uint8Array(result.buffer)
       const seen = new Set()
       for (let i = 0; i < 256; i++) {
@@ -181,28 +180,30 @@ describe('BLECryptoSession', () => {
     })
 
     test('deterministic — same key produces same buffer', () => {
-      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
-      const r2 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
+      const r2 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       expect(new Uint8Array(r1.buffer)).toEqual(new Uint8Array(r2.buffer))
     })
 
     test('different vehicle keys produce different tables', () => {
-      // Flip one byte in the key to get a different (invalid but distinct) point
-      const altKey = TEST_PUBLIC_KEY_HEX.slice(0, 2) + 'ff' + TEST_PUBLIC_KEY_HEX.slice(4)
-      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      // Flip one coordinate byte to get a different (invalid but distinct) point
+      const altBytes = hexToBytes(TEST_PUBLIC_KEY_HEX)
+      altBytes[2] ^= 0xff
+      const altKey = bytesToBinaryString(altBytes)
+      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       const r2 = bleCryptoSession.buildDoublingsTable(altKey)
       // At least entry 0 x-bytes must differ
       expect(new Uint8Array(r1.buffer, 0, 32)).not.toEqual(new Uint8Array(r2.buffer, 0, 32))
     })
 
     test('invalid key length returns error', () => {
-      const result = bleCryptoSession.buildDoublingsTable('deadbeef')
+      const result = bleCryptoSession.buildDoublingsTable(bytesToBinaryString(new Uint8Array(32)))
       expect(result.success).toBe(false)
       expect(result.error).toBeDefined()
     })
 
     test('each entry is 64 bytes: 32-byte x then 32-byte y (big-endian)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX)
+      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       // Verify non-zero x and y for all entries (no point-at-infinity)
       const bytes = new Uint8Array(result.buffer)
       for (let i = 0; i < 256; i++) {
