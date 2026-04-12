@@ -49,19 +49,15 @@ class TeslaBLE {
   _cleanup() {
     if (this.ble) {
       try {
-        if (this.writeCompleteHandler) {
-          this.ble.off?.descWriteComplete?.()
-          this.writeCompleteHandler = null
+        if (this.ble.off) {
+          if (this.ble.off.descWriteComplete) this.ble.off.descWriteComplete()
+          if (this.ble.off.charaValueArrived) this.ble.off.charaValueArrived()
+          if (this.ble.off.charaNotification) this.ble.off.charaNotification()
+          if (this.ble.off.deregisterAll) this.ble.off.deregisterAll()
         }
-        if (this.charaValueHandler) {
-          this.ble.off?.charaValueArrived?.(this.charaValueHandler)
-          this.charaValueHandler = null
-        }
-        if (this.charaNotificationHandler) {
-          this.ble.off?.charaNotification?.(this.charaNotificationHandler)
-          this.charaNotificationHandler = null
-        }
-        this.ble.off?.deregisterAll?.()
+        this.writeCompleteHandler = null
+        this.charaValueHandler = null
+        this.charaNotificationHandler = null
         this.ble.quit()
       } catch (e) {
         console.log('[BLE] Cleanup error (ignored):', e)
@@ -174,16 +170,23 @@ class TeslaBLE {
           settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
           return
         }
+        // Defensive deregistration before re-registering callbacks (prevents duplicates on reconnect).
+        const ble = this._ensureBLE()
+        if (ble.off) {
+          if (ble.off.charaValueArrived) ble.off.charaValueArrived()
+          if (ble.off.charaNotification) ble.off.charaNotification()
+          if (ble.off.descWriteComplete) ble.off.descWriteComplete()
+        }
         this.charaValueHandler = (uuid, data, len) => {
           console.log('[BLE] charaValueArrived:', uuid, len)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
-        this._ensureBLE().on.charaValueArrived(this.charaValueHandler)
+        ble.on.charaValueArrived(this.charaValueHandler)
         this.charaNotificationHandler = (uuid, data, len) => {
           console.log('[BLE] charaNotification:', uuid, len)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
-        this._ensureBLE().on.charaNotification(this.charaNotificationHandler)
+        ble.on.charaNotification(this.charaNotificationHandler)
         this.writeCompleteHandler = (chara, desc, status) => {
           console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
           if (done) return
@@ -200,9 +203,9 @@ class TeslaBLE {
           console.log('[BLE] CCCD confirmed, ready')
           settle({ success: true, mac })
         }
-        this._ensureBLE().on.descWriteComplete(this.writeCompleteHandler)
+        ble.on.descWriteComplete(this.writeCompleteHandler)
         console.log('[BLE] Enabling indications (CCCD=0x0002)...')
-        this._ensureBLE().write.descriptor(TESLA_READ_UUID, '2902', '0200')
+        ble.write.descriptor(TESLA_READ_UUID, '2902', '0200')
         setTimeout(() => {
           if (!done) {
             console.log('[BLE] CCCD timeout fallback, continuing anyway')

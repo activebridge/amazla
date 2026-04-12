@@ -13,7 +13,9 @@ const dispatch = async (method, response, params = {}) => {
     if (func) {
       const result = await func(params)
       response(null, result)
+      return
     }
+    response(null, { success: false, error: `Unknown method: ${method}` })
   } catch (e) {
     response(null, { success: false, error: e && e.message || 'dispatch error' })
   }
@@ -96,20 +98,6 @@ const actions = {
     // Watch stores this directly and uses DataView for fast uint32 reads
     const bytes = new Uint8Array(result.buffer)
     return { success: true, table: bytesToBinaryString(bytes) }
-  },
-
-  DOOR_LOCK: async() => {
-    // TODO: Implement BLE door lock command
-    // For now, return success for UI feedback
-    console.log('[App] DOOR_LOCK - BLE implementation pending')
-    return { success: true, locked: true }
-  },
-
-  DOOR_UNLOCK: async() => {
-    // TODO: Implement BLE door unlock command
-    // For now, return success for UI feedback
-    console.log('[App] DOOR_UNLOCK - BLE implementation pending')
-    return { success: true, locked: false }
   },
 
 }

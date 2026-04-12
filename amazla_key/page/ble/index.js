@@ -353,14 +353,11 @@ function onPair() {
           for (var i = 0; i < hex.length; i += 2) {
             vinPart += String.fromCharCode(parseInt(hex.substr(i, 2), 16))
           }
-          // Ensure session has storage set and persist VIN for HMAC personalization
+          // Ensure session has storage set; BLE name contains only last 8 VIN chars.
           try { teslaSession.setStorage(storage) } catch (e) {}
-          try {
-            if (vinPart && vinPart.length > 0) {
-              teslaSession.setVehicleVIN(vinPart)
-              addLog('VIN auto-extracted: ' + vinPart, 0x44cc44)
-            }
-          } catch (e) { addLog('VIN extract fail', 0xffaa44) }
+          if (vinPart && vinPart.length > 0) {
+            addLog('VIN suffix detected: ' + vinPart, 0x44cc44)
+          }
         }
       } catch (e) { /* non-fatal */ }
 
@@ -479,7 +476,6 @@ Page(BasePage({
         .then(function(r) {
           if (r.success && r.pool) {
             var b64 = storage.getItem('key_pool') || ''
-            var newPool = b64 + r.pool.substring(b64.length ? 0 : 0)
             storage.setItem('key_pool', b64 ? (b64 + r.pool) : r.pool)
             addLog('✓ Pool replenished: +' + count, 0x44ff44)
           } else {

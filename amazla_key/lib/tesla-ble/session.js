@@ -26,6 +26,8 @@ import {
 } from './protocol/vcsec.js'
 import teslaBLE from './ble.js'
 
+const HARDCODED_DEV_VIN = '5YJ3E1EA6JF020598'
+
 class TeslaSession {
   constructor() {
     this.storage = new LocalStorage()
@@ -302,21 +304,27 @@ class TeslaSession {
   loadVehicleVIN() {
     try {
       const vin = this.storage.getItem('vehicle_vin')
-      if (vin && vin.length > 0) {
+      if (vin && vin.length === 17) {
         this.vin = new Uint8Array(vin.length)
         for (let i = 0; i < vin.length; i++) this.vin[i] = vin.charCodeAt(i) & 0x7f
         console.log('[SESSION] Loaded VIN for HMAC personalization')
         return true
       }
-      this.vin = new Uint8Array(0)
-      console.log('[SESSION] VIN not stored — HMAC personalization empty (commands may fail)')
-      return false
+      if (vin && vin.length !== 17) {
+        console.log('[SESSION] Stored VIN has invalid length (' + vin.length + '), expected 17 — replacing with fallback')
+      }
+      this.setVehicleVIN(HARDCODED_DEV_VIN)
+      console.log('[SESSION] VIN not stored — using hardcoded VIN fallback for HMAC personalization')
+      return true
     } catch(e) {
       this.vin = new Uint8Array(0)
       return false
     }
   }
   setVehicleVIN(vinString) {
+    if (!vinString || vinString.length !== 17) {
+      throw new Error('VIN must be 17 characters')
+    }
     this.vin = new Uint8Array(vinString.length)
     for (let i = 0; i < vinString.length; i++) this.vin[i] = vinString.charCodeAt(i) & 0x7f
     this.storage.setItem('vehicle_vin', vinString)

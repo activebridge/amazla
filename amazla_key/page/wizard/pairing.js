@@ -1,6 +1,6 @@
 import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
-import { binaryStringToBytes } from '../../lib/tesla-ble/crypto/binary-utils.js'
+import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
 
 function decodeRawFields(data) {
   var fields = {}, offset = 0
@@ -219,12 +219,33 @@ export const createPairingController = function(page, storage, onState, onSucces
       })
   }
 
-  // Compute doublings table and generate key pool from a known EC key hex string.
+  function normalizeVehicleKeyBinary(keyData) {
+    if (typeof keyData !== 'string') return null
+    if (keyData.length === 65) return keyData
+    if (keyData.length === 130) {
+      const out = new Uint8Array(65)
+      for (var i = 0; i < 65; i++) {
+        const byteHex = keyData.substr(i * 2, 2)
+        const n = parseInt(byteHex, 16)
+        if (isNaN(n)) return null
+        out[i] = n
+      }
+      return bytesToBinaryString(out)
+    }
+    return null
+  }
+
+  // Compute doublings table and generate key pool from a known EC public key binary string.
   // Called from doVerify() after fetching the key, or directly on retry when the
   // EC key is already saved but the table is missing.
-  function computeTableAndPool(ecKeyHex) {
+  function computeTableAndPool(ecKeyBinaryOrHex) {
     if (cancelled) return
-    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyHex: ecKeyHex } })
+    var vehiclePublicKeyBinary = normalizeVehicleKeyBinary(ecKeyBinaryOrHex)
+    if (!vehiclePublicKeyBinary) {
+      onError('Invalid vehicle public key format. Re-pair with vehicle.')
+      return
+    }
+    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: vehiclePublicKeyBinary } })
       .then(function(r) {
         if (cancelled) return
         if (!r.success || !r.table) {
@@ -232,6 +253,7 @@ export const createPairingController = function(page, storage, onState, onSucces
           throw new Error('handled')
         }
         try {
+          storage.setItem('vehicle_ec_public_key', vehiclePublicKeyBinary)
           storage.setItem('vehicle_doublings_table', r.table)
         } catch (e) {
           onError('Failed to save session table. Check watch storage.')
@@ -299,16 +321,15 @@ export const createPairingController = function(page, storage, onState, onSucces
             onError('Could not read vehicle key. Please try again.')
             return
           }
-          var ecKeyHex = ''
-          for (var i = 0; i < ecKey.length; i++) ecKeyHex += ('0' + ecKey[i].toString(16)).slice(-2)
+          var ecKeyBinary = bytesToBinaryString(ecKey)
           try {
-            storage.setItem('vehicle_ec_public_key', ecKeyHex)
+            storage.setItem('vehicle_ec_public_key', ecKeyBinary)
           } catch (e) {
             onError('Failed to save vehicle key. Check watch storage.')
             return
           }
 
-          computeTableAndPool(ecKeyHex)
+          computeTableAndPool(ecKeyBinary)
         }
 
         teslaBLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)

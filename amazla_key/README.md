@@ -472,27 +472,37 @@ All commands are sent as HMAC-signed `RoutableMessage` → `ToVCSECMessage` → 
 
 ### RKE Actions (Remote Keyless Entry)
 
-These are the core vehicle control commands, sent via `UnsignedMessage.rkeAction` (field 2).
+Core lock/unlock commands are sent via `UnsignedMessage.rkeAction` (field 2).
 
 | Constant | Value | Method | Description |
 |----------|-------|--------|-------------|
 | `RKE_ACTION_UNLOCK` | 0 | `session.unlock(cb)` | Unlock all doors |
 | `RKE_ACTION_LOCK` | 1 | `session.lock(cb)` | Lock all doors |
-| `RKE_ACTION_OPEN_TRUNK` | 2 | `session.sendRKECommand(2, cb)` | Open rear trunk |
-| `RKE_ACTION_OPEN_FRUNK` | 3 | `session.sendRKECommand(3, cb)` | Open front trunk (frunk) |
 
 **Usage:**
 ```javascript
 import teslaSession from './lib/tesla-ble/session.js'
-import { RKE_ACTION_OPEN_TRUNK, RKE_ACTION_OPEN_FRUNK } from './lib/tesla-ble/protocol/vcsec.js'
 
 // Convenience methods (session auto-establishes if needed):
 teslaSession.lock(result => { ... })
 teslaSession.unlock(result => { ... })
+```
 
-// Generic RKE — for trunk / frunk:
-teslaSession.sendRKECommand(RKE_ACTION_OPEN_TRUNK, result => { ... })
-teslaSession.sendRKECommand(RKE_ACTION_OPEN_FRUNK, result => { ... })
+### Closure Move Commands (Trunk/Frunk)
+
+Trunk and frunk use `UnsignedMessage.closureMoveRequest` (field 3), not `rkeAction`.
+
+```javascript
+import { buildClosureMoveRequest } from './lib/tesla-ble/protocol/vcsec.js'
+import teslaSession from './lib/tesla-ble/session.js'
+
+// Rear trunk: closureId=5, moveType=0 (MOVE)
+const rearTrunk = buildClosureMoveRequest(5, 0)
+teslaSession.sendCommand({ closureMoveRequest: rearTrunk }, result => { ... })
+
+// Frunk: closureId=6, moveType=0 (MOVE)
+const frontTrunk = buildClosureMoveRequest(6, 0)
+teslaSession.sendCommand({ closureMoveRequest: frontTrunk }, result => { ... })
 ```
 
 ### Information Requests
@@ -588,13 +598,13 @@ Returned in `CommandStatus.operationStatus` from vehicle responses:
 | Constant | Value | When Used |
 |----------|-------|-----------|
 | `SIGNATURE_TYPE_PRESENT_KEY` | 2 | Pairing messages (no HMAC, key not yet enrolled) |
-| `SIGNATURE_TYPE_HMAC` | 5 | All authenticated commands after session establishment |
+| `SIGNATURE_TYPE_HMAC_PERSONALIZED` | 8 | `RoutableMessage.signature_data` on authenticated commands |
 
 ## Protocol Verification vs Tesla Go SDK
 
 Our implementation was cross-referenced against the official [Tesla vehicle-command Go SDK](https://github.com/teslamotors/vehicle-command).
 
-> **Important distinction**: The Go SDK uses the newer `universal_message` protocol (for internet/Fleet API commands). Our implementation uses the older **VCSEC BLE protocol** (`vcsec.proto`) — the same protocol used by physical key fobs. These are distinct protocols with different protobuf schemas. The Go SDK's signing approach (`SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` from `signatures.proto`) does **not** apply to VCSEC BLE commands.
+> **Important distinction**: The Go SDK uses `universal_message` at higher layers, while BLE payload content is still VCSEC-oriented. For authenticated BLE commands, the SDK’s signing metadata format (`SignatureData` / `HMAC_PERSONALIZED`) applies and is mirrored here.
 
 ### Protocol Compatibility Matrix
 
@@ -608,21 +618,21 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | SessionInfoRequest | ephemeral pubkey only, no challenge | ephemeral pubkey only | ✅ Match |
 | Session key derivation | `SHA1(shared_x)[:16]` | `SHA1(shared_x)[:16]` | ✅ Match |
 | RX reassembly timeout | 1000ms per chunk | 1 second per chunk | ✅ Match |
-| HMAC signature type | `SIGNATURE_TYPE_HMAC = 5` (vcsec.proto) | N/A (different proto) | ✅ Correct for VCSEC |
-| HMAC computation | `HMAC-SHA256(sessionKey, messageBytes)` | N/A (different proto) | ✅ Correct for VCSEC |
+| HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
+| HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
 | GATT discovery | Skipped via `pair:false` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
 | Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (see below) |
-| MTU negotiation | None (hardcoded 20 B) | `ExchangeMTU()` before first write | ⚠️ Missing |
+| MTU negotiation | `mstSetMTU(247)` attempted after connect | `ExchangeMTU()` before first write | ⚠️ Partial (chunk writer still 20 B) |
 | Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
 
 ### MTU Optimization Opportunity
 
-The Go SDK calls `ExchangeMTU()` after connecting, allowing chunks up to ~244 bytes (the ZeppOS BLE maximum minus 3 bytes overhead). Our implementation uses the BLE minimum of 20 bytes.
+`mstSetMTU(247)` is already attempted after connect, but multi-chunk writes still use a fixed 20-byte chunk size in `_sendChunk`.
 
-**Impact**: A 70-byte `SessionInfoRequest` is sent in 4 chunks (20 + 20 + 20 + 10) instead of 1.
+**Impact**: Larger commands still incur extra BLE write round-trips even when higher MTU is negotiated.
 
-**Not a correctness issue** — the vehicle correctly reassembles chunked messages — but adds unnecessary round-trips. Fix would be to call `hmBle.mstExchangeMTU(connectId, maxMTU)` after connection and before `startListener`.
+**Not a correctness issue** — messages are correctly reassembled — but optimizing chunk size to negotiated MTU payload would reduce latency.
 
 ## Potential BLE Improvements
 
@@ -876,7 +886,7 @@ session.requestVehiclePublicKey((result) => {
 - **Storage**: 18.6 KB saved on watch
 - **Startup**: ~50-100ms faster due to reduced parsing
 
-**Testing**: All 238 unit tests passing, no regressions.
+**Testing**: All 290 unit tests passing, no regressions.
 
 ### OOM Prevention (✅ Complete)
 
@@ -936,7 +946,7 @@ Called from:
 | Per RKE command (HMAC) | +192 B alloc | +96 B alloc |
 | Protobuf decode per response | ~10 copies | 0 copies |
 
-**Testing**: All 238 unit tests passing (9 new tests for `_hmac` correctness, pad lifecycle, and RFC 4231 vectors).
+**Testing**: All 290 unit tests passing (including `_hmac` correctness, pad lifecycle, and RFC 4231 vectors).
 
 ## Development
 
