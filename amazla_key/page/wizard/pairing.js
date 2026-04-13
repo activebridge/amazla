@@ -258,7 +258,7 @@ export const createPairingController = function(page, storage, onState, onSucces
         }
         try {
           storage.vehicleEcPublicKey = vehiclePublicKeyBytes
-          storage.vehicleDoublingsTable = r.table
+          storage.vehicleDoublingsTable = binaryStringToBytes(r.table)
         } catch (e) {
           onError('Failed to save session table. Check watch storage.')
           throw new Error('handled')

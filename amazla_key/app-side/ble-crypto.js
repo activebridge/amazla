@@ -198,14 +198,22 @@ class BLECryptoSession {
       let current = [x, y]
 
       // table[i] = 2^i * Q: Q, 2Q, 4Q, ..., 2^255*Q
-      const tableBytes = new Uint8Array(256 * 64)
+      // Stored as Uint32Array(256×16): LSW-first uint32s, 8 words for x then 8 for y.
+      // Pre-parsed here (V8) so the watch can view it directly without a parse loop.
+      const table = new Uint32Array(256 * 16)
       for (let i = 0; i < 256; i++) {
-        tableBytes.set(bigIntToBytes32(current[0]), i * 64)
-        tableBytes.set(bigIntToBytes32(current[1]), i * 64 + 32)
+        const xb = bigIntToBytes32(current[0])
+        const yb = bigIntToBytes32(current[1])
+        const tbase = i * 16
+        for (let j = 0; j < 8; j++) {
+          const bo = 28 - j * 4 // j=0 → LSW (bytes 28-31), j=7 → MSW (bytes 0-3)
+          table[tbase + j]     = ((xb[bo] << 24) | (xb[bo+1] << 16) | (xb[bo+2] << 8) | xb[bo+3]) >>> 0
+          table[tbase + 8 + j] = ((yb[bo] << 24) | (yb[bo+1] << 16) | (yb[bo+2] << 8) | yb[bo+3]) >>> 0
+        }
         if (i < 255) current = p256PointAdd(current, current)
       }
 
-      return { success: true, buffer: tableBytes.buffer }
+      return { success: true, buffer: table.buffer }
     } catch (e) {
       return { success: false, error: e.message }
     }

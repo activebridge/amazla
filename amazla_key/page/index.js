@@ -6,6 +6,7 @@ import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page'
 import { keepScreenOn } from '../../zeppify/index.js'
 import store from '../lib/store.js'
+import { binaryStringToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
 
 import UI, { page, button, img, rect } from '../../pages/ui'
 import { LOCK, UNLOCK, CLOSE, OPEN } from '../../pages/styles'
@@ -28,6 +29,7 @@ var connectionState = {
 }
 
 var isRunning = false
+var currentPage = null
 
 const render = () => {
   const { locked, df, dr, pf, pr, trunkOpen, frunkOpen } = vehicleState
@@ -83,7 +85,15 @@ const render = () => {
       normal_color: 0x003366, press_color: 0x004488, radius: 6,
       click_func: onGoToBLE,
     }, slide1)
-    
+
+    button({
+      centered: true, x: 0, y: 375,
+      w: 280, h: 50,
+      text: 'Simulate Pair', text_size: 16, color: 0x99ffcc,
+      normal_color: 0x003322, press_color: 0x004433, radius: 6,
+      click_func: onSimulatePair,
+    }, slide1)
+
     return
   }
 
@@ -212,6 +222,46 @@ const sendClosure = (closureId, moveType, label) => {
   })
 }
 
+const onSimulatePair = () => {
+  hmUI.updateStatusBarTitle('Simulating pair...')
+  var vehicleEcKeyBinary = null
+  currentPage.request({ method: 'SIMULATE_PAIR', params: {} })
+    .then(function(r) {
+      if (!r.success) {
+        hmUI.showToast({ text: r.error || 'Simulate failed' })
+        hmUI.updateStatusBarTitle('Sim pair failed')
+        throw new Error('handled')
+      }
+      store.watchPublicKey     = binaryStringToBytes(r.watchPublicKeyBinary)
+      store.vehicleEcPublicKey = binaryStringToBytes(r.vehicleEcKeyBinary)
+      store.vehicleMac         = r.mac
+      store.vehicleVin         = r.vin
+      vehicleEcKeyBinary       = r.vehicleEcKeyBinary
+      hmUI.updateStatusBarTitle('Computing table...')
+      return currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: vehicleEcKeyBinary } })
+    })
+    .then(function(r) {
+      if (!r.success || !r.table) {
+        hmUI.showToast({ text: 'Table failed: ' + (r.error || '?') })
+        hmUI.updateStatusBarTitle('Sim pair failed')
+        throw new Error('handled')
+      }
+      store.vehicleDoublingsTable = binaryStringToBytes(r.table)
+      hmUI.updateStatusBarTitle('Generating keys...')
+      return currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+    })
+    .then(function(r) {
+      if (r && r.success && r.pool) {
+        store.keyPool = binaryStringToBytes(r.pool)
+      }
+      hmUI.showToast({ text: 'Simulate pair OK' })
+      hmUI.updateStatusBarTitle('Sim pair OK')
+    })
+    .catch(function(e) {
+      if (e.message !== 'handled') hmUI.showToast({ text: e.message || 'Error' })
+    })
+}
+
 const onLock   = () => sendCommand(1, 'Locking')
 const onUnlock = () => sendCommand(0, 'Unlocking')
 // Closure IDs: rear trunk=5, front trunk (frunk)=6; moveType MOVE=0
@@ -220,6 +270,7 @@ const onFrunk  = () => sendClosure(6, 0, 'Frunk')
 
 Page(BasePage({
   build() {
+    currentPage = this
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
 

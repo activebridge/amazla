@@ -3,6 +3,8 @@ import { LocalStorage } from '@zos/storage'
 
 const localStorage = new LocalStorage()
 
+let _doublingsTableCache = null
+
 const readBinary = (path) => {
   try {
     const raw = readFileSync({ path: `${path}.dat` })
@@ -35,9 +37,14 @@ export default {
     writeBinary('vehicle_ec_public_key', value)
   },
   get vehicleDoublingsTable() {
-    return readBinary('vehicle_doublings_table')
+    if (_doublingsTableCache) return _doublingsTableCache
+    const data = readBinary('vehicle_doublings_table')
+    if (!data || data.length !== 16384) return undefined
+    _doublingsTableCache = new Uint32Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength))
+    return _doublingsTableCache
   },
   set vehicleDoublingsTable(value) {
+    _doublingsTableCache = null
     writeBinary('vehicle_doublings_table', value)
   },
   get keyPool() {

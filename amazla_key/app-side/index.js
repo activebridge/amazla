@@ -94,10 +94,30 @@ const actions = {
     console.log('[App] Building ECDH doublings table for vehicle key')
     const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyBinary)
     if (!result.success) return result
-    // Convert ArrayBuffer → binary string (16 KB binary data as string with 0-255 char codes)
-    // Watch stores this directly and uses DataView for fast uint32 reads
     const bytes = new Uint8Array(result.buffer)
     return { success: true, table: bytesToBinaryString(bytes) }
+  },
+
+  // Simulates a full pairing flow with a generated vehicle key — no car needed.
+  // All computation is real (P-256 keypairs, doublings table, key pool).
+  // Watch stores the result identically to a real pairing so session establishment works.
+  SIMULATE_PAIR: async () => {
+    console.log('[App] SIMULATE_PAIR: generating fake vehicle pairing data')
+
+    const watchKeypair = bleCrypto.generateEnrolledKeyPair()
+    if (!watchKeypair.success) return { success: false, error: 'Watch keypair gen failed' }
+
+    const vehicleKeypair = bleCrypto.generateEnrolledKeyPair()
+    if (!vehicleKeypair.success) return { success: false, error: 'Vehicle keypair gen failed' }
+
+    console.log('[App] SIMULATE_PAIR: keypairs generated OK')
+    return {
+      success: true,
+      watchPublicKeyBinary: watchKeypair.publicKeyBinary,
+      vehicleEcKeyBinary:   vehicleKeypair.publicKeyBinary,
+      mac:                  'AA:BB:CC:DD:EE:FF',
+      vin:                  '5YJ3E1EA6JF020598',
+    }
   },
 
 }

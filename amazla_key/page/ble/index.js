@@ -227,7 +227,7 @@ function doVerify() {
           currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: bytesToBinaryString(ecKey) } })
             .then(function(r) {
               if (r.success && r.table) {
-                store.vehicleDoublingsTable = r.table
+                store.vehicleDoublingsTable = binaryStringToBytes(r.table)
                 addLog('✓ Table saved', 0x44ff44)
               } else {
                 addLog('Table failed: ' + (r.error || '?'), 0xffaa44)

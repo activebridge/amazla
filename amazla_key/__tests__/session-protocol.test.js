@@ -838,19 +838,15 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     expect(s._hmac).toBeNull()
   })
 
-  test('pads re-initialized after restorePreservedSession', () => {
+  test('pads re-initialized after reset + re-establish', () => {
     const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    s.established = true
-    s.counter = 5
-    s.preserveForReconnect(60000)
-    // Simulate disconnect: clear active state but keep preserved (don't call reset)
-    s.sessionKey = null
-    s._hmac = null
-    s.established = false
-    expect(s._hmac).toBeNull()
-    s.restorePreservedSession()
     expect(s._hmac).not.toBeNull()
-    // hmac must produce correct HMAC after restore
+    s.reset()
+    expect(s._hmac).toBeNull()
+    // Re-establish with same key
+    s.sessionKey = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    s._initHmacPads()
+    expect(s._hmac).not.toBeNull()
     const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
     const { hmac } = createHmac(hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'))
     expect(s._hmac(msg)).toEqual(hmac(msg))

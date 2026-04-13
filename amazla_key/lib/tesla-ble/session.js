@@ -1,9 +1,8 @@
 import store from '../store.js'
 import teslaBLE from './ble-native.js'
-import { binaryStringToBytes } from './crypto/binary-utils.js'
-import { ecdhFixed } from './crypto/p256.js'
-import { sha1, sha256 } from './crypto/sha256.js'
 import { createHmac } from './crypto/hmac.js'
+import { ecdhFixed } from './crypto/p256.js'
+import { sha1 } from './crypto/sha256.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
   buildInformationRequest,
@@ -42,11 +41,9 @@ class TeslaSession {
     this.sessionKey = null
     this.routingAddress = null
     this.established = false
-    this.preserved = null
     this.replenishingPool = false
     this._connecting = false // guard against duplicate connection attempts
     this.pendingCallbacks = null
-    this._doublingsTable = null // cached after first parse; invalidated on reset
     this._hmac = null // instance hmac function for sessionKey
     this._cmdHmacFn = null // instance hmac function for command subKey
     this.vin = null // vehicle VIN as Uint8Array for HMAC personalization
@@ -126,58 +123,6 @@ class TeslaSession {
     wBytes(payloadBytes) // payload (ToVCSECMessage bytes)
     return this._cmdHmac(hmacInput)
   }
-  preserveForReconnect(timeoutMs) {
-    this.preserved = {
-      ephemeralPrivateKey: this.ephemeralPrivateKey,
-      ephemeralPublicKey: this.ephemeralPublicKey,
-      vehiclePublicKey: this.vehiclePublicKey,
-      epoch: this.epoch,
-      counter: this.counter,
-      clockTime: this.clockTime,
-      sessionKey: this.sessionKey,
-      routingAddress: this.routingAddress,
-      timestamp: Date.now(),
-      timeout: timeoutMs,
-    }
-    console.log(`[Session] Session preserved for reconnect (timeout: ${(timeoutMs / 1000).toFixed(1)}s)`)
-  }
-  isPreserved() {
-    if (!this.preserved) return false
-    var age = Date.now() - this.preserved.timestamp
-    var isValid = age < this.preserved.timeout
-    if (!isValid && this.preserved) {
-      console.log(`[Session] Preserved session expired (${(age / 1000).toFixed(1)}s old)`)
-      this.preserved = null
-    }
-    return isValid
-  }
-  restorePreservedSession() {
-    if (!this.isPreserved()) return false
-
-    var session = this.preserved
-    this.ephemeralPrivateKey = session.ephemeralPrivateKey
-    this.ephemeralPublicKey = session.ephemeralPublicKey
-    this.vehiclePublicKey = session.vehiclePublicKey
-    this.epoch = session.epoch
-    this.counter = session.counter
-    this.clockTime = session.clockTime
-    this.sessionKey = session.sessionKey
-    this.routingAddress = session.routingAddress
-    this.established = true
-    this.preserved = null
-    this._initHmacPads()
-    // Ensure VIN is loaded from storage after restoring a preserved session so
-    // HMAC personalization includes the VIN bytes (if stored previously).
-    try {
-      this.loadVehicleVIN()
-    } catch (_e) {
-      /* non-fatal */
-    }
-
-    var age = Date.now() - session.timestamp
-    console.log(`[Session] Session restored from preserved state (age: ${(age / 1000).toFixed(1)}s)`)
-    return true
-  }
   popKeyFromPool() {
     try {
       const data = store.keyPool
@@ -224,12 +169,6 @@ class TeslaSession {
       return 0
     }
   }
-  setPrivateKey(privateKeyBinary, publicKeyBinary) {
-    this.enrolledPrivateKey = binaryStringToBytes(privateKeyBinary)
-    if (publicKeyBinary) {
-      this.enrolledPublicKey = binaryStringToBytes(publicKeyBinary)
-    }
-  }
   loadVehiclePublicKey() {
     try {
       const pubKeyData = store.vehicleEcPublicKey
@@ -245,58 +184,6 @@ class TeslaSession {
     } catch (e) {
       console.log('[SESSION] Error loading vehicle public key:', e.message)
       return false
-    }
-  }
-  loadDoublingsTable() {
-    if (this._doublingsTable) return this._doublingsTable
-    try {
-      const data = store.vehicleDoublingsTable
-      if (!data) {
-        console.log('[SESSION] Doublings table not found (will use standard ECDH)')
-        return null
-      }
-      if (data.length !== 16384) {
-        console.log(`[SESSION] Doublings table wrong size: ${data.length} bytes (expected 16384)`)
-        return null
-      }
-      // Verify first entry matches vehicle public key.
-      if (this.vehiclePublicKey && this.vehiclePublicKey.length === 65) {
-        for (let i = 0; i < 32; i++) {
-          if (data[i] !== this.vehiclePublicKey[1 + i] || data[32 + i] !== this.vehiclePublicKey[33 + i]) {
-            console.log('[SESSION] Doublings table is for a different vehicle key — discarding')
-            return null
-          }
-        }
-      }
-      // Flat Uint32Array(256×16): entry i has x at [i*16..i*16+7], y at [i*16+8..i*16+15]
-      // LSW-first convention (matches bytesToU256 in p256.js): word j = bytes at offset 28-j*4
-      const table = new Uint32Array(256 * 16)
-      for (let i = 0; i < 256; i++) {
-        const base = i * 64
-        const tbase = i * 16
-        for (let j = 0; j < 8; j++) {
-          const xo = base + 28 - j * 4
-          table[tbase + j] =
-            (((data[xo] & 0xff) << 24) |
-              ((data[xo + 1] & 0xff) << 16) |
-              ((data[xo + 2] & 0xff) << 8) |
-              (data[xo + 3] & 0xff)) >>>
-            0
-          const yo = base + 32 + 28 - j * 4
-          table[tbase + 8 + j] =
-            (((data[yo] & 0xff) << 24) |
-              ((data[yo + 1] & 0xff) << 16) |
-              ((data[yo + 2] & 0xff) << 8) |
-              (data[yo + 3] & 0xff)) >>>
-            0
-        }
-      }
-      console.log('[SESSION] ✓ Loaded precomputed doublings table (256 entries)')
-      this._doublingsTable = table
-      return table
-    } catch (e) {
-      console.log(`[SESSION] loadDoublingsTable error: ${e.message}`)
-      return null
     }
   }
   loadVehicleVIN() {
@@ -752,9 +639,6 @@ class TeslaSession {
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
   }
-  isEstablished() {
-    return this.established
-  }
   isPaired() {
     // Check if pairing data exists (means user completed pairing flow)
     return !!store.keyPool && !!store.vehicleEcPublicKey
@@ -785,14 +669,6 @@ class TeslaSession {
       this.pendingCallbacks = null
       callbacks.forEach((cb) => cb(result))
     })
-  }
-  getStatus() {
-    return {
-      established: this.established,
-      counter: this.counter,
-      epoch: this.epoch ? this.epoch.length : 0,
-      poolSize: this.getPoolSize(),
-    }
   }
 }
 const teslaSession = new TeslaSession()
