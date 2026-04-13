@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from '@zos/fs'
+import { readFileSync, rmSync, writeFileSync } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
 
 const localStorage = new LocalStorage()
@@ -7,8 +7,9 @@ const readBinary = (path) => {
   try {
     const raw = readFileSync({ path: `${path}.dat` })
     if (raw) return new Uint8Array(raw)
+    return undefined
   } catch (_e) {
-    return null
+    return undefined
   }
 }
 
@@ -70,6 +71,12 @@ export default {
     localStorage.setItem('vehicleModel', value)
   },
 
-  removeBinary: (key) => writeBinary(key, new Uint8Array(0)),
+  removeBinary: (key) => {
+    try {
+      rmSync({ path: `${key}.dat` })
+    } catch (_e) {
+      // ignore
+    }
+  },
   removeItem: (key) => localStorage.removeItem(key),
 }

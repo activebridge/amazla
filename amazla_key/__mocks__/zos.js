@@ -9,6 +9,7 @@ export class LocalStorage {
 // @zos/fs stub
 export const writeFileSync = () => {}
 export const readFileSync  = () => null
+export const rmSync = () => {}
 
 // @zos/ble native stubs
 export const mstStartScan              = () => true
