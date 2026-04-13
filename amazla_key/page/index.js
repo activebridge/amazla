@@ -4,8 +4,8 @@ import { getDeviceInfo } from '@zos/device'
 import { onKey, KEY_SELECT, KEY_EVENT_CLICK } from '@zos/interaction'
 import { push } from '@zos/router'
 import { BasePage } from '@zeppos/zml/base-page'
-import { writeFileSync, readFileSync } from '@zos/fs'
 import { keepScreenOn } from '../../zeppify/index.js'
+import store from '../lib/store.js'
 
 import UI, { page, button, img, rect } from '../../pages/ui'
 import { LOCK, UNLOCK, CLOSE, OPEN } from '../../pages/styles'
@@ -15,23 +15,6 @@ import teslaSession from '../lib/tesla-ble/session.js'
 
 const { height } = getDeviceInfo()
 
-var storage = {
-  data: {},
-  load: function() {
-    try {
-      var json = readFileSync({ path: 'ble_settings.txt', options: { encoding: 'utf8' } })
-      this.data = json ? JSON.parse(json) : {}
-    } catch (e) { this.data = {} }
-  },
-  save: function() {
-    try {
-      writeFileSync({ path: 'ble_settings.txt', data: JSON.stringify(this.data), options: { encoding: 'utf8' } })
-    } catch (e) {}
-  },
-  getItem: function(key) { return this.data[key] || null },
-  setItem: function(key, val) { this.data[key] = val; this.save() },
-  removeItem: function(key) { delete this.data[key]; this.save() }
-}
 
 var vehicleState = {
   locked: true,
@@ -240,12 +223,12 @@ Page(BasePage({
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
 
-    storage.load()
-    teslaSession.setStorage(storage)
 
-    if (!storage.getItem('tesla_ble_mac') ||
-        !storage.getItem('vehicle_ec_public_key') ||
-        !storage.getItem('vehicle_doublings_table')) {
+
+
+    if (!store.vehicleMac ||
+        !store.vehicleEcPublicKey ||
+        !store.vehicleDoublingsTable) {
       // push({ url: 'page/wizard/index' })
       // return
     }

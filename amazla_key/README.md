@@ -11,7 +11,30 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
-### BLE GATT Setup & CCCD Queue Fix (⚠️ Needs Testing)
+### Native BLE Layer — easy-ble Removed (✅ Complete, Tested on Device)
+
+**Problem**: `@silver-zepp/easy-ble` wrapped native `@zos/ble` with a `QueueManager`, wrapper objects (`write`, `on`, `off`), and UUID/MAC normalization layers. This added memory and CPU overhead on every BLE operation.
+
+**Solution**: Rewrote `lib/tesla-ble/ble-native.js` using direct `@zos/ble` native calls only.
+
+**What was eliminated**:
+- `QueueManager` — polling array + state machine that blocked descriptor writes for up to 5s
+- `BLEMaster` object allocation per connection
+- `write`/`on`/`off` wrapper object layers
+- UUID normalization on every BLE notification (hot path)
+- `pair:false` profile workaround + `startListener(null)` fallback
+
+**Key implementation details**:
+- `mstConnect` → callback `connected: 0/1/2` (not boolean) — 0=success, 1=failed, 2=disconnect
+- `mstBuildProfile` + `mstOnPrepare` replace `startListener` callback
+- `TESLA_READ_UUID_UC` precomputed constant — no `toUpperCase()` allocation per notification
+- MAC string `"AA:BB:CC:DD:EE:FF"` → 6-byte `ArrayBuffer` via direct `substr` indexing (no `split()`)
+- `CCCD_ENABLE` module-level constant — no `Uint8Array` allocation per connect
+- `mstDestroyProfileInstance` for cleanup
+
+**Tested on device**: BLE self-test button added to BLE debug page — all 5 tests pass (API existence, single-chunk reassembly, multi-chunk reassembly, dedup, 3s BLE scan).
+
+### BLE GATT Setup & CCCD Queue Fix (✅ Complete, Tested on Device)
 
 **Problem**: Session establishment always fails — vehicle never receives `SessionInfoRequest`.
 
@@ -621,48 +644,24 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
-| GATT discovery | Skipped via `pair:false` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
-| Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (see below) |
-| MTU negotiation | `mstSetMTU(247)` attempted after connect | `ExchangeMTU()` before first write | ⚠️ Partial (chunk writer still 20 B) |
+| GATT discovery | Skipped via `mstBuildProfile(pair:false)` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
+| Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (see Pending) |
+| MTU negotiation | `mstSetMTU(247)` after connect, stored in `this._mtu` | `ExchangeMTU()` before first write | ⚠️ Partial (chunk writer still 20 B) |
 | Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
 
-### MTU Optimization Opportunity
+### MTU Chunk Writer Opportunity
 
-`mstSetMTU(247)` is already attempted after connect, but multi-chunk writes still use a fixed 20-byte chunk size in `_sendChunk`.
+`mstSetMTU(247)` is called after connect and the negotiated MTU is stored in `this._mtu`. However `_sendChunk` still uses hardcoded `BLE_CHUNK_SIZE = 20`.
 
-**Impact**: Larger commands still incur extra BLE write round-trips even when higher MTU is negotiated.
+**Fix**: Replace `BLE_CHUNK_SIZE` with `this._mtu` in `_sendMessage` / `_sendChunk` — a one-line change. Not a correctness issue, but reduces TX round-trips (~3× for typical command sizes).
 
-**Not a correctness issue** — messages are correctly reassembled — but optimizing chunk size to negotiated MTU payload would reduce latency.
+## Pending
 
-## Potential BLE Improvements
-
-### 1. Replace `@silver-zepp/easy-ble` with direct `@zos/ble` calls (~22 KB source saved)
-
-`lib/tesla-ble/ble.js` currently depends on `@silver-zepp/easy-ble` (26 KB minified), which wraps the native `@zos/ble` module with `BLEMaster`, `QueueManager`, and write/read helper classes. Only a small subset of that surface is used.
-
-**Why it matters**: ZeppOS QuickJS compiles ~2× source→bytecode. The full module graph loaded at startup (session.js + vcsec.js + ble.js + easy-ble + p256.js + sha256.js + protobuf.js + hmac.js) is ~104 KB source → ~200 KB bytecode — right at the OOM threshold. Removing easy-ble and replacing it with a thin direct wrapper (~4–5 KB) would save ~21–22 KB source / ~42–44 KB bytecode.
-
-**What easy-ble provides that we use**:
-- `BLEMaster.scan()` / `stopScan()` → wraps `mstStartScan` / `mstStopScan`
-- `BLEMaster.connect()` / `disconnect()` → wraps `mstConnect`
-- `startListener()` → calls `mstBuildProfile`, registers `mstOnPrepare`
-- `on.charaValueArrived()` → wraps `mstOnCharaValueArrived`
-- `on.charaNotification()` → wraps `mstOnCharaNotification`
-- `on.descWriteComplete()` → wraps `mstOnDescWriteComplete`
-- `write.characteristicWithoutResponse()` → wraps `mstWriteCharacteristicWithoutResponse`
-- `write.descriptor()` → wraps `mstWriteDescriptor` + unblocks via `QueueManager`
-
-**What we'd need to write**: ~50 lines of direct `mst*` calls plus a simple write-queue (poll on `descWriteComplete` flag, ~30 lines). No complex abstractions needed.
-
-### 2. MTU Negotiation (~3× fewer write chunks)
-
-The current implementation uses hardcoded 20-byte BLE chunks (the minimum). The Tesla Go SDK calls `ExchangeMTU()` after connecting, which allows chunks up to ~244 bytes on ZeppOS.
-
-**Impact**: A 70-byte `SessionInfoRequest` is currently sent in 4 chunks (20+20+20+10). With MTU negotiation it would send in 1 chunk.
-
-**Fix**: Call `hmBle.mstSetMTU(connectId, 244)` (already imported — used once in `ble.js`) after connection and before `startListener`. Then use the negotiated MTU as the chunk size in `send()`.
-
-**Note**: Not a correctness issue — the vehicle correctly reassembles chunked messages — but reduces round-trips and connection setup time.
+| Item | Status | Notes |
+|------|--------|-------|
+| VIN entry | ⚠️ Needed | Commands will fail — vehicle enforces VIN personalization in HMAC. Add settings page text input. |
+| MTU chunk writer | ⚠️ Minor | Use `this._mtu` instead of `BLE_CHUNK_SIZE = 20` in `_sendChunk` |
+| Field test with car | ⏳ | All optimizations implemented, needs on-vehicle validation |
 
 ## File Structure
 
@@ -674,7 +673,8 @@ amazla_key/
 │       └── index.js              # BLE debug page (scan, pair, pool management)
 ├── lib/
 │   └── tesla-ble/
-│       ├── ble.js                # Low-level BLE (scan, connect, send/receive)
+│       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
+│       ├── ble.js                # Low-level BLE — easy-ble wrapper (kept for reference)
 │       ├── session.js            # Session management (ECDH, signing, commands)
 │       ├── index.js              # Tesla BLE API (high-level wrapper)
 │       ├── crypto/

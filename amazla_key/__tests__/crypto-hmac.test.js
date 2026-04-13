@@ -1,7 +1,8 @@
 // HMAC-SHA256, SHA-256, and SHA-1 correctness tests
 // Vectors verified against Node.js crypto module and RFC 3174 / RFC 4231
 
-import { hmacSha256, hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/hmac.js'
+import { createHmac } from '../lib/tesla-ble/crypto/hmac.js'
+import { hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/binary-utils.js'
 import { sha1, sha256 } from '../lib/tesla-ble/crypto/sha256.js'
 
 describe('SHA-256', () => {
@@ -140,7 +141,8 @@ describe('HMAC-SHA256', () => {
   test('TC1: key=20×0x0b, data="Hi There"', () => {
     const key  = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
     const data = new Uint8Array([0x48, 0x69, 0x20, 0x54, 0x68, 0x65, 0x72, 0x65])
-    expect(bytesToHex(hmacSha256(key, data))).toBe(
+    const { hmac } = createHmac(key)
+    expect(bytesToHex(hmac(data))).toBe(
       'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7'
     )
   })
@@ -151,33 +153,37 @@ describe('HMAC-SHA256', () => {
     const s = 'what do ya want for nothing?'
     const data = new Uint8Array(s.length)
     for (let i = 0; i < s.length; i++) data[i] = s.charCodeAt(i)
-    expect(bytesToHex(hmacSha256(key, data))).toBe(
+    const { hmac } = createHmac(key)
+    expect(bytesToHex(hmac(data))).toBe(
       '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843'
     )
   })
 
   test('returns 32 bytes', () => {
-    expect(hmacSha256(new Uint8Array(16).fill(0x01), new Uint8Array(8).fill(0x02)).length).toBe(32)
+    const { hmac } = createHmac(new Uint8Array(16).fill(0x01))
+    expect(hmac(new Uint8Array(8).fill(0x02)).length).toBe(32)
   })
 
   test('different keys produce different MACs', () => {
     const data = new Uint8Array([1, 2, 3, 4])
-    const mac1 = hmacSha256(new Uint8Array(16).fill(0x01), data)
-    const mac2 = hmacSha256(new Uint8Array(16).fill(0x02), data)
-    expect(bytesToHex(mac1)).not.toBe(bytesToHex(mac2))
+    const { hmac: h1 } = createHmac(new Uint8Array(16).fill(0x01))
+    const { hmac: h2 } = createHmac(new Uint8Array(16).fill(0x02))
+    expect(bytesToHex(h1(data))).not.toBe(bytesToHex(h2(data)))
   })
 
   test('different data produces different MACs', () => {
     const key = new Uint8Array(16).fill(0x42)
-    const mac1 = hmacSha256(key, new Uint8Array([1, 2, 3]))
-    const mac2 = hmacSha256(key, new Uint8Array([1, 2, 4]))
+    const { hmac } = createHmac(key)
+    const mac1 = hmac(new Uint8Array([1, 2, 3]))
+    const mac2 = hmac(new Uint8Array([1, 2, 4]))
     expect(bytesToHex(mac1)).not.toBe(bytesToHex(mac2))
   })
 
   test('deterministic', () => {
     const key  = new Uint8Array(16).fill(0x55)
     const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-    expect(bytesToHex(hmacSha256(key, data))).toBe(bytesToHex(hmacSha256(key, data)))
+    const { hmac } = createHmac(key)
+    expect(bytesToHex(hmac(data))).toBe(bytesToHex(hmac(data)))
   })
 })
 

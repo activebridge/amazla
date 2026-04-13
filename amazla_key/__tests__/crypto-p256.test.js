@@ -5,14 +5,7 @@
 import { ecdhFixed, bytesToBigInt } from '../lib/tesla-ble/crypto/p256.js'
 import { sha1 } from '../lib/tesla-ble/crypto/sha256.js'
 
-function hexToBytes(hex) {
-  const b = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) b[i / 2] = parseInt(hex.substr(i, 2), 16)
-  return b
-}
-function bytesToHex(b) {
-  return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
-}
+import { hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/binary-utils.js'
 
 // Pre-computed test keypairs (private → public, derived with BigInt P-256)
 const ALICE_PRIV = 'c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721'

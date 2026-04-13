@@ -5,7 +5,7 @@ import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
-import { writeFileSync, readFileSync } from '@zos/fs'
+import store from '../../lib/store.js'
 import UI, { text as uiText, button as uiButton, rect as uiRect } from '../../../pages/ui.js'
 
 // Store initialization flag on the imported module (survives re-evaluation)
@@ -13,23 +13,6 @@ if (teslaBleApi.__blePageInit === undefined) {
   teslaBleApi.__blePageInit = false
 }
 
-var storage = {
-  data: {},
-  load: function() {
-    try {
-      var json = readFileSync({ path: 'ble_settings.txt', options: { encoding: 'utf8' } })
-      this.data = json ? JSON.parse(json) : {}
-    } catch (e) { this.data = {} }
-  },
-  save: function() {
-    try {
-      writeFileSync({ path: 'ble_settings.txt', data: JSON.stringify(this.data), options: { encoding: 'utf8' } })
-    } catch (e) {}
-  },
-  getItem: function(key) { return this.data[key] || null },
-  setItem: function(key, val) { this.data[key] = val; this.save() },
-  removeItem: function(key) { delete this.data[key]; this.save() }
-}
 function dumpHex(bytes, n) {
   if (!bytes) return 'null'
   var s = '', limit = Math.min(bytes.length, n || 10)
@@ -87,13 +70,13 @@ function clearAllTimers() {
   activeTimers = []
 }
 function updateChecklist() {
-  var watchKey = storage.getItem('watch_public_key')
-  var ecKey    = storage.getItem('vehicle_ec_public_key')
-  var hasTable = !!storage.getItem('vehicle_doublings_table')
-  var mac      = storage.getItem('tesla_ble_mac') || storage.getItem('vehicle_mac')
+  var watchKey = store.watchPublicKey
+  var ecKey    = store.vehicleEcPublicKey
+  var hasTable = !!store.vehicleDoublingsTable
+  var mac      = store.vehicleMac
   var poolSize = 0
   try {
-    var poolBinary = storage.getItem('key_pool')
+    var poolBinary = store.keyPool
     if (poolBinary) poolSize = (poolBinary.length / 97) | 0
   } catch (e) {}
   if (chkKeyWidget)   chkKeyWidget.setProperty(hmUI.prop.TEXT,
@@ -115,14 +98,14 @@ function updateChecklist() {
 function doPair() {
   state = 'PAIRING'
   updateStatus('PAIRING...', 0xffcc00)
-  var watchKey = storage.getItem('watch_public_key')
+  var watchKey = store.watchPublicKey
   if (!watchKey) {
     state = 'IDLE'
     updateStatus('NO KEY', 0xff4444)
     addLog('No watch key - GENKEY first', 0xff4444)
     return
   }
-  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyBinary: watchKey } })
+  currentPage.request({ method: 'BLE_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
@@ -199,9 +182,9 @@ function doVerify() {
     return
   }
   updateStatus('QUERYING...', 0xffcc00)
-  var watchKey = storage.getItem('watch_public_key')
+  var watchKey = store.watchPublicKey
   if (!watchKey) { addLog('No watch key', 0xff4444); return }
-  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: watchKey } })
+  currentPage.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
     .then(function(result) {
       if (!result.success) {
         state = 'IDLE'
@@ -238,14 +221,13 @@ function doVerify() {
           if (pk[1] && pk[1].length === 65) ecKey = pk[1]
         }
         if (ecKey) {
-          var ecKeyBinary = bytesToBinaryString(ecKey)
-          storage.setItem('vehicle_ec_public_key', ecKeyBinary)
+          store.vehicleEcPublicKey = ecKey
           addLog('✓ EC key saved', 0x44ff44)
           addLog('Computing table...', 0x666666)
-          currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: ecKeyBinary } })
+          currentPage.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: bytesToBinaryString(ecKey) } })
             .then(function(r) {
               if (r.success && r.table) {
-                storage.setItem('vehicle_doublings_table', r.table)
+                store.vehicleDoublingsTable = r.table
                 addLog('✓ Table saved', 0x44ff44)
               } else {
                 addLog('Table failed: ' + (r.error || '?'), 0xffaa44)
@@ -255,7 +237,7 @@ function doVerify() {
             })
             .then(function(r) {
               if (r.success && r.pool) {
-                storage.setItem('key_pool', r.pool)
+                store.keyPool = binaryStringToBytes(r.pool)
                 addLog('✓ Pool:20 keys ready', 0x44ff44)
               } else {
                 addLog('Pool gen failed: ' + (r.error || '?'), 0xffaa44)
@@ -302,13 +284,13 @@ function onGenKey() {
   currentPage.request({ method: 'BLE_SYNC_KEYS', params: { forceNew: true } })
     .then(function(result) {
       if (result.success && result.publicKeyBinary) {
-        storage.setItem('watch_public_key', result.publicKeyBinary)
+        store.watchPublicKey = binaryStringToBytes(result.publicKeyBinary)
         addLog('✓ Watch key ready', 0x44ff44)
         addLog('Generating pool...', 0x888888)
         currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 5 } })
           .then(function(r) {
             if (r.success && r.pool) {
-              storage.setItem('key_pool', r.pool)
+              store.keyPool = binaryStringToBytes(r.pool)
               addLog('✓ Pool:5 keys ready', 0x44ff44)
             } else {
               addLog('Pool gen failed', 0xff8800)
@@ -329,7 +311,7 @@ function onPair() {
     return
   }
   addLog('Starting pairing...', 0xffcc00)
-  var savedMAC = storage.getItem('tesla_ble_mac') || teslaBleApi.savedMAC
+  var savedMAC = store.vehicleMac || teslaBleApi.savedMAC
   if (savedMAC) {
     doConnect(savedMAC, 0, doPair)
     return
@@ -354,7 +336,7 @@ function onPair() {
             vinPart += String.fromCharCode(parseInt(hex.substr(i, 2), 16))
           }
           // Ensure session has storage set; BLE name contains only last 8 VIN chars.
-          try { teslaSession.setStorage(storage) } catch (e) {}
+
           if (vinPart && vinPart.length > 0) {
             addLog('VIN suffix detected: ' + vinPart, 0x44cc44)
           }
@@ -386,12 +368,11 @@ function doConnect(mac, attempt, onConnected) {
     updateStatus('CONNECTED', 0x00cc44)
     updateChecklist()
     if (onConnected) onConnected()
-  }, storage)
+  })
 }
 function onConnect() {
   addLog('Connecting...', 0xffcc00)
   updateStatus('CONNECTING...', 0xffcc00)
-  teslaSession.setStorage(storage)
   teslaSession.requestSessionInfo(function(result) {
     if (result.success) {
       updateStatus('SESSION OK', 0x00cc44)
@@ -405,7 +386,6 @@ function onConnect() {
 }
 function onLock() {
   addLog('Locking...', 0xffcc00)
-  teslaSession.setStorage(storage)
   teslaSession.lock(function(result) {
     if (result._requeue) return  // Internal requeue - don't show UI feedback yet
     if (result.success) {
@@ -419,7 +399,6 @@ function onLock() {
 }
 function onUnlock() {
   addLog('Unlocking...', 0xffcc00)
-  teslaSession.setStorage(storage)
   teslaSession.unlock(function(result) {
     if (result._requeue) return  // Internal requeue - don't show UI feedback yet
     if (result.success) {
@@ -431,8 +410,69 @@ function onUnlock() {
     }
   })
 }
+function onTestBLE() {
+  addLog('BLE self-test...', 0xffcc00)
+  updateStatus('TESTING...', 0xffcc00)
+  var pass = 0, failCount = 0
+  function ok(msg)    { pass++;      addLog('✓ ' + msg, 0x44ff44) }
+  function notOk(msg) { failCount++; addLog('✗ ' + msg, 0xff4444) }
+  function done() {
+    updateStatus(
+      failCount === 0 ? ('PASS ' + pass) : ('FAIL ' + failCount + '/' + (pass + failCount)),
+      failCount === 0 ? 0x00cc44 : 0xff4444)
+  }
+
+  // 1. API methods exist on teslaBLE
+  if (typeof teslaBLE.scan    === 'function') { ok('scan fn')    } else { notOk('scan fn') }
+  if (typeof teslaBLE.connect === 'function') { ok('connect fn') } else { notOk('connect fn') }
+  if (typeof teslaBLE.send    === 'function') { ok('send fn')    } else { notOk('send fn') }
+
+  // 2. Single-chunk reassembly: header [0x00,0x03] + payload [0xAA,0xBB,0xCC]
+  var rx1 = null
+  teslaBLE._lastResponseData = null
+  teslaBLE._lastResponseTime = 0
+  teslaBLE._rxBuf = null
+  teslaBLE._rxExpected = 0
+  teslaBLE.responseCallback = function(r) { if (r.success) rx1 = r.data }
+  teslaBLE._handleResponse(new Uint8Array([0x00, 0x03, 0xAA, 0xBB, 0xCC]).buffer)
+  if (rx1 && rx1.length === 3 && rx1[0] === 0xAA && rx1[2] === 0xCC) ok('reassembly 1chunk')
+  else notOk('reassembly 1chunk')
+
+  // 3. Multi-chunk reassembly: header+[0x01,0x02] then [0x03,0x04]
+  var rx2 = null
+  teslaBLE._lastResponseData = null
+  teslaBLE._lastResponseTime = 0
+  teslaBLE._rxBuf = null
+  teslaBLE._rxExpected = 0
+  teslaBLE.responseCallback = function(r) { if (r.success) rx2 = r.data }
+  teslaBLE._handleResponse(new Uint8Array([0x00, 0x04, 0x01, 0x02]).buffer)
+  teslaBLE._handleResponse(new Uint8Array([0x03, 0x04]).buffer)
+  if (rx2 && rx2.length === 4 && rx2[0] === 0x01 && rx2[3] === 0x04) ok('reassembly 2chunk')
+  else notOk('reassembly 2chunk')
+
+  // 4. Duplicate dedup: same chunk twice within 200ms — only one callback
+  var dupCount = 0
+  teslaBLE._lastResponseData = null
+  teslaBLE._lastResponseTime = 0
+  teslaBLE._rxBuf = null
+  teslaBLE._rxExpected = 0
+  teslaBLE.responseCallback = function(r) { if (r.success) dupCount++ }
+  var dupBuf = new Uint8Array([0x00, 0x02, 0xDE, 0xAD]).buffer
+  teslaBLE._handleResponse(dupBuf)
+  teslaBLE._handleResponse(dupBuf)  // duplicate within 200ms — should be ignored
+  if (dupCount === 1) { ok('dedup') } else { notOk('dedup got=' + dupCount) }
+  teslaBLE.responseCallback = null
+
+  // 5. BLE scan 3s — verifies BLE hardware + mstStartScan callable
+  addLog('Scanning 3s...', 0x888888)
+  var scanCount = 0
+  teslaBLE.scan(function(result) {
+    if (result.type === 'found') { scanCount++; addLog('DEV:' + (result.device.name || result.device.mac), 0x4488ff) }
+    if (result.type === 'complete') { ok('scan (' + scanCount + ' devs)'); done() }
+  }, 3000)
+}
 function onClear() {
-  teslaBleApi.clear(storage)
+  teslaBleApi.clear()
   teslaSession.reset()
   state    = 'IDLE'
   foundMAC = null
@@ -454,7 +494,7 @@ Page(BasePage({
     logWidgets = []
     UI.reset()
     currentPage = this
-    storage.load()
+
     
     // CRITICAL: Clean up any pending operations from main page before initializing BLE here
     console.log('[BLE-LIFECYCLE] Resetting BLE and session from main page interference')
@@ -463,20 +503,24 @@ Page(BasePage({
     
     if (!teslaBleApi.__blePageInit) {
       console.log('[BLE-LIFECYCLE] First initialization - calling teslaBleApi.init()')
-      teslaBleApi.init(storage)
+      teslaBleApi.init()
       teslaBleApi.__blePageInit = true
     } else {
       console.log('[BLE-LIFECYCLE] Re-entry - skipping teslaBleApi.init()')
     }
     console.log('[BLE-LIFECYCLE] Setting session storage')
-    teslaSession.setStorage(storage)
+
     teslaSession.onPoolLow = function(count) {
       console.log('[BLE] Pool low, requesting ' + count + ' more keys')
       currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: count } })
         .then(function(r) {
           if (r.success && r.pool) {
-            var b64 = storage.getItem('key_pool') || ''
-            storage.setItem('key_pool', b64 ? (b64 + r.pool) : r.pool)
+            var pool = store.keyPool || new Uint8Array(0)
+            var next = binaryStringToBytes(r.pool)
+            var merged = new Uint8Array(pool.length + next.length)
+            merged.set(pool)
+            merged.set(next, pool.length)
+            store.keyPool = merged
             addLog('✓ Pool replenished: +' + count, 0x44ff44)
           } else {
             addLog('Pool replenish failed', 0xff8844)
@@ -491,7 +535,7 @@ Page(BasePage({
     currentPage.request({ method: 'BLE_SYNC_KEYS', params: {} })
       .then(function(result) {
         if (result.success && result.publicKeyBinary) {
-          storage.setItem('watch_public_key', result.publicKeyBinary)
+          store.watchPublicKey = binaryStringToBytes(result.publicKeyBinary)
           addLog('✓ Watch key synced', 0x44ff44)
         }
         updateChecklist()
@@ -574,6 +618,12 @@ Page(BasePage({
       text: 'UNLOCK', text_size: 16, color: 0xffffff,
       normal_color: 0x1a5c2a, press_color: 0x0d2d15, radius: 8,
       click_func: onUnlock, centered: false,
+    })
+    uiButton({
+      x: 20, y: 418, w: 440, h: 42,
+      text: 'TEST BLE', text_size: 16, color: 0xffffff,
+      normal_color: 0x2a2a66, press_color: 0x15153a, radius: 8,
+      click_func: onTestBLE, centered: false,
     })
     teslaBleApi.onDisconnect = function() {
       if (state === 'WAITING_KEYCARD' || state === 'PAIRING') {

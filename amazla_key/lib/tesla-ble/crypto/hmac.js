@@ -1,23 +1,32 @@
-
 import { sha256 } from './sha256.js'
+
 const BLOCK_SIZE = 64 // SHA-256 block size in bytes
-function hmacSha256(key, message) {
-  let keyBytes = toBytes(key)
-  const messageBytes = toBytes(message)
-  if (keyBytes.length > BLOCK_SIZE) {
-    keyBytes = sha256(keyBytes)
-  }
-  if (keyBytes.length < BLOCK_SIZE) {
+
+const buildKeyBlock = (keyBytes) => {
+  if (!(keyBytes instanceof Uint8Array)) throw new Error('HMAC key must be a Uint8Array')
+  let kb = keyBytes
+  if (kb.length > BLOCK_SIZE) kb = sha256(kb)
+  if (kb.length < BLOCK_SIZE) {
     const padded = new Uint8Array(BLOCK_SIZE)
-    padded.set(keyBytes)
-    keyBytes = padded
+    padded.set(kb)
+    kb = padded
   }
+  return kb
+}
+
+const buildPadsFromKeyBytes = (keyBytes) => {
   const innerPad = new Uint8Array(BLOCK_SIZE)
   const outerPad = new Uint8Array(BLOCK_SIZE)
   for (let i = 0; i < BLOCK_SIZE; i++) {
-    innerPad[i] = keyBytes[i] ^ 0x36
-    outerPad[i] = keyBytes[i] ^ 0x5c
+    const k = keyBytes[i]
+    innerPad[i] = k ^ 0x36
+    outerPad[i] = k ^ 0x5c
   }
+  return { innerPad, outerPad }
+}
+
+const hmacFromPads = (innerPad, outerPad, messageBytes) => {
+  if (!(messageBytes instanceof Uint8Array)) throw new Error('HMAC message must be a Uint8Array')
   const innerData = new Uint8Array(BLOCK_SIZE + messageBytes.length)
   innerData.set(innerPad)
   innerData.set(messageBytes, BLOCK_SIZE)
@@ -27,38 +36,12 @@ function hmacSha256(key, message) {
   outerData.set(innerHash, BLOCK_SIZE)
   return sha256(outerData)
 }
-function toBytes(data) {
-  if (data instanceof Uint8Array) {
-    return data
-  }
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data)
-  }
-  if (typeof data === 'string') {
-    const bytes = new Uint8Array(data.length)
-    for (let i = 0; i < data.length; i++) {
-      bytes[i] = data.charCodeAt(i) & 0xff
-    }
-    return bytes
-  }
-  if (Array.isArray(data)) {
-    return new Uint8Array(data)
-  }
-  throw new Error('Invalid input type for HMAC')
+
+const createHmac = (key) => {
+  const keyBytes = buildKeyBlock(key)
+  const { innerPad, outerPad } = buildPadsFromKeyBytes(keyBytes)
+  const hmac = (message) => hmacFromPads(innerPad, outerPad, message)
+  return { hmac, innerPad, outerPad }
 }
-function bytesToHex(bytes) {
-  let hex = ''
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, '0')
-  }
-  return hex
-}
-function hexToBytes(hex) {
-  const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = parseInt(hex.substr(i, 2), 16)
-  }
-  return bytes
-}
-export { hmacSha256, toBytes, bytesToHex, hexToBytes }
-export default hmacSha256
+
+export { createHmac }

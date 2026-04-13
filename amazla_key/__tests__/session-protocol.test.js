@@ -24,8 +24,9 @@ import {
 import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import { hmacSha256 } from '../lib/tesla-ble/crypto/hmac.js'
-import teslaBLE from '../lib/tesla-ble/ble.js'
+import { createHmac } from '../lib/tesla-ble/crypto/hmac.js'
+import teslaBLE from '../lib/tesla-ble/ble-native.js'
+import { hexToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
 
 function bytesToHex(b) {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
@@ -771,12 +772,6 @@ describe('loadDoublingsTable parsing logic', () => {
 // on every command. Must match hmacSha256(sessionKey, message) exactly.
 
 describe('TeslaSession._hmac pre-computed pads', () => {
-  function hexToBytes(h) {
-    const b = new Uint8Array(h.length / 2)
-    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
-    return b
-  }
-
   function makeSession(keyHex) {
     const s = new TeslaSession()
     s.sessionKey = hexToBytes(keyHex)
@@ -800,9 +795,10 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     expect(bytesToHex(s._hmac(TC1_DATA))).toBe(TC1_MAC)
   })
 
-  test('matches hmacSha256 output directly — TC1', () => {
+  test('matches RFC 4231 TC1 output directly — TC1', () => {
     const s = makeSession(TC1_KEY)
-    const expected = hmacSha256(hexToBytes(TC1_KEY), TC1_DATA)
+    const { hmac } = createHmac(hexToBytes(TC1_KEY))
+    const expected = hmac(TC1_DATA)
     expect(s._hmac(TC1_DATA)).toEqual(expected)
   })
 
@@ -817,7 +813,10 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     s.sessionKey = key
     s._initHmacPads()
     const msg = new Uint8Array([1, 2, 3, 4, 5])
-    expect(s._hmac(msg)).toEqual(hmacSha256(key, msg))
+    {
+    const { hmac } = createHmac(key)
+    expect(s._hmac(msg)).toEqual(hmac(msg))
+  }
   })
 
   test('different messages produce different MACs', () => {
@@ -827,18 +826,16 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     expect(r1).not.toBe(r2)
   })
 
-  test('pads null before _initHmacPads called', () => {
+  test('hmac function null before _initHmacPads called', () => {
     const s = new TeslaSession()
-    expect(s._hmacInner).toBeNull()
-    expect(s._hmacOuter).toBeNull()
+    expect(s._hmac).toBeNull()
   })
 
-  test('pads cleared on reset()', () => {
+  test('hmac function cleared on reset()', () => {
     const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    expect(s._hmacInner).not.toBeNull()
+    expect(s._hmac).not.toBeNull()
     s.reset()
-    expect(s._hmacInner).toBeNull()
-    expect(s._hmacOuter).toBeNull()
+    expect(s._hmac).toBeNull()
   })
 
   test('pads re-initialized after restorePreservedSession', () => {
@@ -848,30 +845,18 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     s.preserveForReconnect(60000)
     // Simulate disconnect: clear active state but keep preserved (don't call reset)
     s.sessionKey = null
-    s._hmacInner = null
-    s._hmacOuter = null
+    s._hmac = null
     s.established = false
-    expect(s._hmacInner).toBeNull()
+    expect(s._hmac).toBeNull()
     s.restorePreservedSession()
-    expect(s._hmacInner).not.toBeNull()
-    expect(s._hmacOuter).not.toBeNull()
-    // pads must produce correct HMAC after restore
+    expect(s._hmac).not.toBeNull()
+    // hmac must produce correct HMAC after restore
     const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-    expect(s._hmac(msg)).toEqual(hmacSha256(hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'), msg))
+    const { hmac } = createHmac(hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'))
+    expect(s._hmac(msg)).toEqual(hmac(msg))
   })
 
-  test('inner pad is sessionKey XOR 0x36, outer pad is sessionKey XOR 0x5c', () => {
-    const key = new Uint8Array(16).fill(0x42)
-    const s = new TeslaSession()
-    s.sessionKey = key
-    s._initHmacPads()
-    // First 16 bytes: key XOR constant; remaining 48 bytes: 0x00 XOR constant
-    for (let i = 0; i < 64; i++) {
-      const k = i < 16 ? 0x42 : 0x00
-      expect(s._hmacInner[i]).toBe(k ^ 0x36)
-      expect(s._hmacOuter[i]).toBe(k ^ 0x5c)
-    }
-  })
+
 })
 
 // ── requestVehiclePublicKey message structure ──────────────────────────────

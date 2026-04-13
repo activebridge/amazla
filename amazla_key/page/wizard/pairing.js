@@ -52,9 +52,9 @@ export const createPairingController = function(page, storage, onState, onSucces
     cancelled = false
     teslaBleApi.reset()
 
-    var ecKey  = storage.getItem('vehicle_ec_public_key')
-    var table  = storage.getItem('vehicle_doublings_table')
-    var mac    = storage.getItem('tesla_ble_mac') || teslaBleApi.savedMAC
+    var ecKey  = storage.vehicleEcPublicKey
+    var table  = storage.vehicleDoublingsTable
+    var mac    = storage.vehicleMac || teslaBleApi.savedMAC
 
     // EC key already fetched but table is missing — skip pairing entirely
     if (ecKey && !table) {
@@ -64,7 +64,7 @@ export const createPairingController = function(page, storage, onState, onSucces
     }
 
     // Key may already be enrolled — skip pairing, just verify
-    if (mac && storage.getItem('watch_public_key') && !ecKey) {
+    if (mac && storage.watchPublicKey && !ecKey) {
       onState('connecting')
       doConnect(mac, 0, doVerify)
       return
@@ -83,7 +83,7 @@ export const createPairingController = function(page, storage, onState, onSucces
 
   // Step 1: ensure watch keypair exists, generate if missing
   function ensureWatchKey() {
-    var existingKey = storage.getItem('watch_public_key')
+    var existingKey = storage.watchPublicKey
     if (existingKey) {
       scanAndConnect()
       return
@@ -95,7 +95,7 @@ export const createPairingController = function(page, storage, onState, onSucces
           onError('Key generation failed')
           return
         }
-        storage.setItem('watch_public_key', result.publicKeyBinary)
+        storage.watchPublicKey = binaryStringToBytes(result.publicKeyBinary)
         scanAndConnect()
       })
       .catch(function(e) {
@@ -106,7 +106,7 @@ export const createPairingController = function(page, storage, onState, onSucces
   // Step 2: find and connect to the vehicle
   function scanAndConnect() {
     if (cancelled) return
-    var savedMAC = storage.getItem('tesla_ble_mac') || teslaBleApi.savedMAC
+    var savedMAC = storage.vehicleMac || teslaBleApi.savedMAC
     if (savedMAC) {
       doConnect(savedMAC, 0)
       return
@@ -146,10 +146,10 @@ export const createPairingController = function(page, storage, onState, onSucces
   function doPair() {
     if (cancelled) return
     onState('pairing')
-    var watchKey = storage.getItem('watch_public_key')
+    var watchKey = storage.watchPublicKey
     if (!watchKey) { onError('No watch key. Please try again.'); return }
 
-    page.request({ method: 'BLE_PAIR', params: { publicKeyBinary: watchKey } })
+    page.request({ method: 'BLE_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
       .then(function(result) {
         if (cancelled) return
         if (!result.success) {
@@ -220,8 +220,12 @@ export const createPairingController = function(page, storage, onState, onSucces
   }
 
   function normalizeVehicleKeyBinary(keyData) {
+    if (keyData instanceof Uint8Array) {
+      if (keyData.length === 65) return keyData
+      return null
+    }
     if (typeof keyData !== 'string') return null
-    if (keyData.length === 65) return keyData
+    if (keyData.length === 65) return binaryStringToBytes(keyData)
     if (keyData.length === 130) {
       const out = new Uint8Array(65)
       for (var i = 0; i < 65; i++) {
@@ -230,7 +234,7 @@ export const createPairingController = function(page, storage, onState, onSucces
         if (isNaN(n)) return null
         out[i] = n
       }
-      return bytesToBinaryString(out)
+      return out
     }
     return null
   }
@@ -240,12 +244,12 @@ export const createPairingController = function(page, storage, onState, onSucces
   // EC key is already saved but the table is missing.
   function computeTableAndPool(ecKeyBinaryOrHex) {
     if (cancelled) return
-    var vehiclePublicKeyBinary = normalizeVehicleKeyBinary(ecKeyBinaryOrHex)
-    if (!vehiclePublicKeyBinary) {
+    var vehiclePublicKeyBytes = normalizeVehicleKeyBinary(ecKeyBinaryOrHex)
+    if (!vehiclePublicKeyBytes) {
       onError('Invalid vehicle public key format. Re-pair with vehicle.')
       return
     }
-    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: vehiclePublicKeyBinary } })
+    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: bytesToBinaryString(vehiclePublicKeyBytes) } })
       .then(function(r) {
         if (cancelled) return
         if (!r.success || !r.table) {
@@ -253,8 +257,8 @@ export const createPairingController = function(page, storage, onState, onSucces
           throw new Error('handled')
         }
         try {
-          storage.setItem('vehicle_ec_public_key', vehiclePublicKeyBinary)
-          storage.setItem('vehicle_doublings_table', r.table)
+          storage.vehicleEcPublicKey = vehiclePublicKeyBytes
+          storage.vehicleDoublingsTable = r.table
         } catch (e) {
           onError('Failed to save session table. Check watch storage.')
           throw new Error('handled')
@@ -264,7 +268,7 @@ export const createPairingController = function(page, storage, onState, onSucces
       .then(function(r) {
         if (cancelled) return
         if (r && r.success && r.pool) {
-          try { storage.setItem('key_pool', r.pool) } catch (e) {}
+          try { storage.keyPool = binaryStringToBytes(r.pool) } catch (e) {}
         }
         onSuccess()
       })
@@ -282,10 +286,10 @@ export const createPairingController = function(page, storage, onState, onSucces
       return
     }
     onState('verifying')
-    var watchKey = storage.getItem('watch_public_key')
+    var watchKey = storage.watchPublicKey
     if (!watchKey) { onError('No watch key'); return }
 
-    page.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: watchKey } })
+    page.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
       .then(function(result) {
         if (cancelled) return
         if (!result.success) {
@@ -321,15 +325,14 @@ export const createPairingController = function(page, storage, onState, onSucces
             onError('Could not read vehicle key. Please try again.')
             return
           }
-          var ecKeyBinary = bytesToBinaryString(ecKey)
           try {
-            storage.setItem('vehicle_ec_public_key', ecKeyBinary)
+            storage.vehicleEcPublicKey = ecKey
           } catch (e) {
             onError('Failed to save vehicle key. Check watch storage.')
             return
           }
 
-          computeTableAndPool(ecKeyBinary)
+          computeTableAndPool(ecKey)
         }
 
         teslaBLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)

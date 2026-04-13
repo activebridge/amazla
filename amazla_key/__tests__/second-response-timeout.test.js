@@ -1,5 +1,5 @@
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import teslaBLE from '../lib/tesla-ble/ble.js'
+import teslaBLE from '../lib/tesla-ble/ble-native.js'
 import { RKE_ACTION_LOCK } from '../lib/tesla-ble/protocol/vcsec.js'
 import { encodeVarintField, encodeBytes } from '../lib/tesla-ble/protocol/protobuf.js'
 
