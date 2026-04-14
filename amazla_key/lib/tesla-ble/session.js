@@ -490,28 +490,14 @@ class TeslaSession {
     }
     teslaBLE.send(message, sessionInfoResponseHandler)
   }
-  buildAuthenticatedCommand(rkeActionOrClosure) {
-    if (!this.established) {
-      throw new Error('Session not established')
-    }
+  // Shared auth message builder: counter++, HMAC tag, SignatureData, RoutableMessage.
+  // Takes a pre-built UnsignedMessage; returns the RoutableMessage bytes ready to send.
+  _buildAuthMessage(unsignedMessage) {
     this.counter++
     const expiresAt = this.clockTime + 60
-    // Build payload: UnsignedMessage → SignedMessage (payload only) → ToVCSECMessage
-    // Per vcsec.proto SignedMessage has only field 2 (payload) and field 3 (signatureType).
-    // For HMAC commands, signatureType is omitted (NONE=0 default); auth is in RoutableMessage.signature_data.
-    let unsignedMessage
-    if (typeof rkeActionOrClosure === 'number') {
-      unsignedMessage = buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
-    } else {
-      // Expect rkeActionOrClosure to be an object { closureMoveRequest: <Uint8Array> }
-      unsignedMessage = buildUnsignedMessage(rkeActionOrClosure)
-    }
     const signedMessage = buildSignedMessage({ payload: unsignedMessage })
     const toVcsec = buildToVCSECMessage(signedMessage)
-    // Compute HMAC tag per Tesla SDK (AuthorizeHMAC): HMAC(subKey, metadata || TAG_END || payload)
-    // subKey = HMAC(sessionKey, "authenticated command"), precomputed in _initHmacPads
     const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, toVcsec)
-    // SignatureData goes in RoutableMessage field 13 (signature_data)
     const signatureData = buildSignatureData(this.ephemeralPublicKey, this.epoch, this.counter, expiresAt, tag)
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
@@ -520,6 +506,17 @@ class TeslaSession {
       signatureData,
       uuid: generateUUID(),
     })
+  }
+  buildAuthenticatedCommand(rkeActionOrClosure) {
+    if (!this.established) {
+      throw new Error('Session not established')
+    }
+    // Per vcsec.proto SignedMessage has only field 2 (payload) and field 3 (signatureType).
+    // For HMAC commands, signatureType is omitted (NONE=0 default); auth is in RoutableMessage.signature_data.
+    const unsignedMessage = typeof rkeActionOrClosure === 'number'
+      ? buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
+      : buildUnsignedMessage(rkeActionOrClosure) // { closureMoveRequest: <Uint8Array> }
+    return this._buildAuthMessage(unsignedMessage)
   }
   sendCommand(rkeActionOrClosure, callback) {
     const doSend = () => {
@@ -598,22 +595,10 @@ class TeslaSession {
       callback({ success: false, error: 'Session not established' })
       return
     }
-    this.counter++
-    const expiresAt = this.clockTime + 60
     const unsignedMessage = buildUnsignedMessage({
       informationRequest: buildInformationRequest(INFO_REQUEST_GET_STATUS),
     })
-    const signedMessage = buildSignedMessage({ payload: unsignedMessage })
-    const toVcsec = buildToVCSECMessage(signedMessage)
-    const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, toVcsec)
-    const signatureData = buildSignatureData(this.ephemeralPublicKey, this.epoch, this.counter, expiresAt, tag)
-    const message = buildRoutableMessage({
-      toDomain: DOMAIN_VEHICLE_SECURITY,
-      routingAddress: this.routingAddress,
-      payload: toVcsec,
-      signatureData,
-      uuid: generateUUID(),
-    })
+    const message = this._buildAuthMessage(unsignedMessage)
     teslaBLE.send(message, (result) => {
       if (!result.success) {
         callback({ success: false, error: result.error })

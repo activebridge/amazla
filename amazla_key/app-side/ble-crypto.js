@@ -39,11 +39,11 @@ function p256PointAdd([x1, y1], [x2, y2]) {
   }
   const lam = ((y2 - y1) * p256modInv(x2 - x1, P256_P)) % P256_P
   const x3 = p256mod(lam * lam - x1 - x2, P256_P)
-  return [p256mod(x3, P256_P), p256mod(lam * (x1 - x3) - y1, P256_P)]
+  return [x3, p256mod(lam * (x1 - x3) - y1, P256_P)]
 }
 
 function p256ScalarMul(k, point) {
-  let result = [0n, 0n], addend = [...point]
+  let result = [0n, 0n], addend = point
   while (k > 0n) {
     if (k & 1n) result = p256PointAdd(result, addend)
     addend = p256PointAdd(addend, addend)
@@ -55,21 +55,38 @@ function p256ScalarMul(k, point) {
 function bigIntToBytes32(n) {
   const hex = n.toString(16).padStart(64, '0')
   const b = new Uint8Array(32)
-  for (let i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16)
+  for (let i = 0; i < 32; i++) b[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   return b
+}
+
+// Generate one ephemeral P-256 keypair. Returns { privBytes, pubBytes }.
+function generateKeypair() {
+  const privRaw = new Uint8Array(32)
+  for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
+  let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
+  if (k === 0n) k = 1n
+  const privBytes = bigIntToBytes32(k)
+
+  const pt = p256ScalarMul(k, [P256_GX, P256_GY])
+  const pubBytes = new Uint8Array(65)
+  pubBytes[0] = 0x04
+  pubBytes.set(bigIntToBytes32(pt[0]), 1)
+  pubBytes.set(bigIntToBytes32(pt[1]), 33)
+
+  return { privBytes, pubBytes }
 }
 
 // ============================================
 // Protobuf encoding helpers
 // ============================================
 
-import { encodeVarint, encodeBytes, encodeEnum, encodeVarintField, concat, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
+import { encodeBytes, encodeEnum, encodeVarintField, concat } from '../lib/tesla-ble/protocol/protobuf.js'
+import { buildSignedMessage, buildToVCSECMessage } from '../lib/tesla-ble/protocol/vcsec.js'
 
 // ============================================
 // Tesla VCSEC Protocol Constants
 // ============================================
 
-const DOMAIN_VEHICLE_SECURITY = 2
 const SIGNATURE_TYPE_PRESENT_KEY = 2  // No HMAC needed for pairing
 
 // Key form factors (vcsec.proto KeyFormFactor enum — DO NOT CHANGE)
@@ -90,20 +107,6 @@ function buildPublicKey(publicKeyBytes) {
 function buildKeyMetadata(keyFormFactor) {
   // KeyMetadata { keyFormFactor (field 1) = enum }
   return encodeEnum(1, keyFormFactor)
-}
-
-// SignedMessage has ONLY fields 2 and 3 per vcsec.proto (verified from Tesla Go SDK).
-// For pairing (PRESENT_KEY) we only use these two fields anyway.
-function buildSignedMessage(options) {
-  const parts = []
-  if (options.payload) parts.push(encodeBytes(2, options.payload))
-  if (options.signatureType !== undefined) parts.push(encodeEnum(3, options.signatureType))
-  return concat(...parts)
-}
-
-function buildToVCSECMessage(signedMessage) {
-  // ToVCSECMessage { signedMessage (field 1) }
-  return encodeBytes(1, signedMessage)
 }
 
 // ============================================
@@ -158,28 +161,15 @@ class BLECryptoSession {
   // Watch stores this directly and pops one key (97 bytes) per session.
   generateKeyPool(count) {
     const n = count || 5
-    let pool = ''
+    const buf = new Uint8Array(n * 97)
 
     for (let i = 0; i < n; i++) {
-      // Generate random 32-byte scalar in [1, n-1]
-      const privRaw = new Uint8Array(32)
-      for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
-      let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
-      if (k === 0n) k = 1n
-      const privBytes = bigIntToBytes32(k)
-
-      // Compute public key: k * G → uncompressed 04 || x || y (65 bytes)
-      const pt = p256ScalarMul(k, [P256_GX, P256_GY])
-      const pubBytes = new Uint8Array(65)
-      pubBytes[0] = 0x04
-      pubBytes.set(bigIntToBytes32(pt[0]), 1)
-      pubBytes.set(bigIntToBytes32(pt[1]), 33)
-
-      // Store as binary string (97 bytes per key: 32 priv + 65 pub)
-      pool += bytesToBinaryString(privBytes) + bytesToBinaryString(pubBytes)
+      const { privBytes, pubBytes } = generateKeypair()
+      buf.set(privBytes, i * 97)
+      buf.set(pubBytes, i * 97 + 32)
     }
 
-    return { success: true, pool }
+    return { success: true, pool: bytesToBinaryString(buf) }
   }
 
   // Precompute doublings table for vehicle's fixed public key.
@@ -226,7 +216,7 @@ class BLECryptoSession {
   // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,
   //               FromVCSECMessage { commandStatus (field 4) } if not enrolled.
   // Returns binary string instead of hex for 50% transport reduction
-  buildWhitelistQueryMessage(publicKeyBinary) {
+  buildWhitelistQueryMessage() {
     // InformationRequest { type (field 1) = GET_WHITELIST_ENTRY_INFO(6), slot (field 4) = 0 }
     // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE, verified from vcsec.proto InformationRequestType enum
     // Use slot=0 to fetch first/only enrolled key (Tesla SDK uses slot, not publicKey)
@@ -254,27 +244,12 @@ class BLECryptoSession {
   // Generate a new enrolled P-256 key pair, store it, and return public key for watch
   generateEnrolledKeyPair() {
     try {
-      // Generate random 32-byte scalar in [1, n-1]
-      const privRaw = new Uint8Array(32)
-      for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
-      let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
-      if (k === 0n) k = 1n
-      const privBytes = bigIntToBytes32(k)
-      const privKeyBinary = bytesToBinaryString(privBytes)
-
-      // Compute public key: k * G → uncompressed 04 || x || y (65 bytes)
-      const pt = p256ScalarMul(k, [P256_GX, P256_GY])
-      const pubBytes = new Uint8Array(65)
-      pubBytes[0] = 0x04
-      pubBytes.set(bigIntToBytes32(pt[0]), 1)
-      pubBytes.set(bigIntToBytes32(pt[1]), 33)
-      const pubKeyBinary = bytesToBinaryString(pubBytes)
-
+      const { privBytes, pubBytes } = generateKeypair()
       console.log('[BLE] Generated new enrolled key pair')
       return {
         success: true,
-        publicKeyBinary: pubKeyBinary,
-        privateKeyBinary: privKeyBinary
+        publicKeyBinary: bytesToBinaryString(pubBytes),
+        privateKeyBinary: bytesToBinaryString(privBytes)
       }
     } catch (e) {
       return { success: false, error: e.message }

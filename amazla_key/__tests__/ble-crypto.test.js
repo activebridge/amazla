@@ -224,4 +224,102 @@ describe('BLECryptoSession', () => {
       }
     })
   })
+
+  describe('generateEnrolledKeyPair', () => {
+    test('returns success with publicKeyBinary and privateKeyBinary', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      expect(result.success).toBe(true)
+      expect(typeof result.publicKeyBinary).toBe('string')
+      expect(typeof result.privateKeyBinary).toBe('string')
+    })
+
+    test('publicKeyBinary is 65 bytes', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      expect(result.publicKeyBinary.length).toBe(65)
+    })
+
+    test('privateKeyBinary is 32 bytes', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      expect(result.privateKeyBinary.length).toBe(32)
+    })
+
+    test('public key starts with 0x04 (uncompressed point)', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      expect(result.publicKeyBinary.charCodeAt(0)).toBe(0x04)
+    })
+
+    test('private key is non-zero', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      const allZero = Array.from({ length: 32 }, (_, i) => result.privateKeyBinary.charCodeAt(i)).every(b => b === 0)
+      expect(allZero).toBe(false)
+    })
+
+    test('successive calls produce different keypairs', () => {
+      const r1 = bleCryptoSession.generateEnrolledKeyPair()
+      const r2 = bleCryptoSession.generateEnrolledKeyPair()
+      expect(r1.privateKeyBinary).not.toBe(r2.privateKeyBinary)
+      expect(r1.publicKeyBinary).not.toBe(r2.publicKeyBinary)
+    })
+
+    test('public key can be fed into buildDoublingsTable', () => {
+      const result = bleCryptoSession.generateEnrolledKeyPair()
+      const tableResult = bleCryptoSession.buildDoublingsTable(result.publicKeyBinary)
+      expect(tableResult.success).toBe(true)
+      expect(tableResult.buffer.byteLength).toBe(16384)
+    })
+  })
+
+  describe('generateKeyPool', () => {
+    test('default count produces 5 keys (5 × 97 bytes)', () => {
+      const result = bleCryptoSession.generateKeyPool()
+      expect(result.success).toBe(true)
+      expect(result.pool.length).toBe(5 * 97)
+    })
+
+    test('custom count produces N × 97 bytes', () => {
+      for (const n of [1, 3, 10]) {
+        const result = bleCryptoSession.generateKeyPool(n)
+        expect(result.pool.length).toBe(n * 97)
+      }
+    })
+
+    test('pool is a binary string', () => {
+      const result = bleCryptoSession.generateKeyPool(1)
+      expect(typeof result.pool).toBe('string')
+    })
+
+    test('each key slot: 32-byte private then 65-byte public starting with 0x04', () => {
+      const n = 5
+      const result = bleCryptoSession.generateKeyPool(n)
+      for (let i = 0; i < n; i++) {
+        const pubOffset = i * 97 + 32
+        expect(result.pool.charCodeAt(pubOffset)).toBe(0x04)
+      }
+    })
+
+    test('each private key slot is non-zero', () => {
+      const n = 3
+      const result = bleCryptoSession.generateKeyPool(n)
+      for (let i = 0; i < n; i++) {
+        const privBytes = Array.from({ length: 32 }, (_, j) => result.pool.charCodeAt(i * 97 + j))
+        expect(privBytes.every(b => b === 0)).toBe(false)
+      }
+    })
+
+    test('successive calls produce different pools', () => {
+      const r1 = bleCryptoSession.generateKeyPool(3)
+      const r2 = bleCryptoSession.generateKeyPool(3)
+      expect(r1.pool).not.toBe(r2.pool)
+    })
+
+    test('all public keys in pool can be fed into buildDoublingsTable', () => {
+      const n = 2
+      const result = bleCryptoSession.generateKeyPool(n)
+      for (let i = 0; i < n; i++) {
+        const pubBinary = result.pool.slice(i * 97 + 32, i * 97 + 97)
+        const tableResult = bleCryptoSession.buildDoublingsTable(pubBinary)
+        expect(tableResult.success).toBe(true)
+      }
+    })
+  })
 })

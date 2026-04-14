@@ -30,7 +30,7 @@ const CONNECTION_CONFIG  = {
 // MAC string "AA:BB:CC:DD:EE:FF" → 6-byte ArrayBuffer (no split/array allocation)
 const _macToBuffer = (mac) => {
   const buf = new Uint8Array(6)
-  for (let i = 0; i < 6; i++) buf[i] = parseInt(mac.substr(i * 3, 2), 16)
+  for (let i = 0; i < 6; i++) buf[i] = parseInt(mac.slice(i * 3, i * 3 + 2), 16)
   return buf.buffer
 }
 

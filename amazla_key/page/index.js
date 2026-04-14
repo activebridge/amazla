@@ -249,7 +249,7 @@ const onSimulatePair = () => {
       }
       store.vehicleDoublingsTable = binaryStringToBytes(r.table)
       hmUI.updateStatusBarTitle('Generating keys...')
-      return currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+      return currentPage.request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
     })
     .then(function(r) {
       if (r && r.success && r.pool) {

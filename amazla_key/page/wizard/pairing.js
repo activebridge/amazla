@@ -88,7 +88,7 @@ export const createPairingController = function(page, storage, onState, onSucces
       scanAndConnect()
       return
     }
-    page.request({ method: 'BLE_SYNC_KEYS', params: { forceNew: false } })
+    page.request({ method: 'BLE_SYNC_KEYS', params: {} })
       .then(function(result) {
         if (cancelled) return
         if (!result.success || !result.publicKeyBinary) {
@@ -264,7 +264,7 @@ export const createPairingController = function(page, storage, onState, onSucces
           onError('Failed to save session table. Check watch storage.')
           throw new Error('handled')
         }
-        return page.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+        return page.request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
       })
       .then(function(r) {
         if (cancelled) return

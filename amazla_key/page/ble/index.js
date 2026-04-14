@@ -264,12 +264,12 @@ function doVerify() {
                 addLog(`Table failed: ${r.error || '?'}`, 0xffaa44)
               }
               addLog('Generating key pool...', 0x666666)
-              return currentPage.request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 20 } })
+              return currentPage.request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
             })
             .then((r) => {
               if (r.success && r.pool) {
                 store.keyPool = binaryStringToBytes(r.pool)
-                addLog('✓ Pool:20 keys ready', 0x44ff44)
+                addLog('✓ Pool ready', 0x44ff44)
               } else {
                 addLog(`Pool gen failed: ${r.error || '?'}`, 0xffaa44)
               }
@@ -345,7 +345,7 @@ function decodeRawFields(data) {
 function onGenKey() {
   addLog('Generating keys...', 0xffcc00)
   currentPage
-    .request({ method: 'BLE_SYNC_KEYS', params: { forceNew: true } })
+    .request({ method: 'BLE_SYNC_KEYS', params: {} })
     .then((result) => {
       if (result.success && result.publicKeyBinary) {
         // Store binary string directly
@@ -353,11 +353,11 @@ function onGenKey() {
         addLog('✓ Watch key ready', 0x44ff44)
         addLog('Generating pool...', 0x888888)
         currentPage
-          .request({ method: 'BLE_GENERATE_SESSION_KEYS', params: { count: 5 } })
+          .request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
           .then((r) => {
             if (r.success && r.pool) {
               store.keyPool = binaryStringToBytes(r.pool)
-              addLog('✓ Pool:5 keys ready', 0x44ff44)
+              addLog('✓ Pool ready', 0x44ff44)
             } else {
               addLog('Pool gen failed', 0xff8800)
             }
