@@ -4,13 +4,14 @@ import UI, { button as uiButton, rect as uiRect, text as uiText } from '../../..
 import { keepScreenOn } from '../../../zeppify/index.js'
 import store from '../../lib/store.js'
 import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
-import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
+import BLE from '../../lib/tesla-ble/index.js'
+import teslaBLE from '../../lib/tesla-ble/ble-native.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 
 // Store initialization flag on the imported module (survives re-evaluation)
-if (teslaBleApi.__blePageInit === undefined) {
-  teslaBleApi.__blePageInit = false
+if (BLE.__blePageInit === undefined) {
+  BLE.__blePageInit = false
 }
 
 function dumpHex(bytes, n) {
@@ -121,7 +122,7 @@ function doPair() {
       var msgBytes = binaryStringToBytes(result.message)
       addLog(`TX[${msgBytes.length}]:${dumpHex(msgBytes, 6)}`, 0xaaaaaa)
       var sawTapRequired = false
-      teslaBLE.sendAndWaitForResponse(
+      BLE.sendAndWaitForResponse(
         msgBytes,
         (r) => {
           if (!r.success) {
@@ -157,7 +158,7 @@ function doPair() {
         15000,
       )
       function waitForResult() {
-        teslaBLE.waitForNextResponse(60000, (r2) => {
+        BLE.waitForNextResponse(60000, (r2) => {
           if (!r2.success) {
             addLog('NFC timeout', 0x888888)
             return
@@ -200,7 +201,7 @@ function doPair() {
     })
 }
 function doVerify() {
-  if (!teslaBleApi.isConnected()) {
+  if (!BLE.isConnected) {
     state = 'IDLE'
     updateStatus('CONN LOST', 0xff4444)
     addLog('BLE dropped - reconnect', 0xff8800)
@@ -234,7 +235,7 @@ function doVerify() {
         addLog(`f:${fkeys}`, 0x4488ff)
         if (fkeys === '3' && attempt < 3) {
           addLog(`Ambient#${attempt + 1} skip`, 0x888888)
-          teslaBLE.waitForNextResponse(6000, (r2) => {
+          BLE.waitForNextResponse(6000, (r2) => {
             handleQueryResponse(r2, attempt + 1)
           })
           return
@@ -288,7 +289,7 @@ function doVerify() {
         addLog('Key enrolled!', 0x00cc44)
         updateChecklist()
       }
-      teslaBLE.sendAndWaitForResponse(
+      BLE.sendAndWaitForResponse(
         msgBytes,
         (r) => {
           handleQueryResponse(r, 0)
@@ -382,7 +383,7 @@ function onPair() {
     return
   }
   addLog('Starting pairing...', 0xffcc00)
-  var savedMAC = store.vehicleMac || teslaBleApi.savedMAC
+  var savedMAC = store.vehicleMac
   if (savedMAC) {
     doConnect(savedMAC, 0, doPair)
     return
@@ -390,7 +391,7 @@ function onPair() {
   state = 'SCANNING'
   updateStatus('SCANNING...', 0xffcc00)
   addLog('Scanning 15s...', 0xcccccc)
-  teslaBleApi.scan((result) => {
+  BLE.scan((result) => {
     if (result.type === 'found') {
       foundMAC = result.device.mac || null
       addLog(`FND: ${result.device.name || '?'}`, 0x00cc44)
@@ -416,7 +417,7 @@ function onPair() {
         /* non-fatal */
       }
 
-      teslaBleApi.stopScan()
+      BLE.stopScan()
       state = 'IDLE'
       scheduleTimeout(() => {
         doConnect(foundMAC, 0, doPair)
@@ -435,7 +436,7 @@ function doConnect(mac, attempt, onConnected) {
   state = 'CONNECTING'
   updateStatus('CONNECTING...', 0xffcc00)
   addLog(`Connecting ${mac.slice(-8)}...`, 0xcccccc)
-  teslaBleApi.connect(mac, (result) => {
+  BLE.connect(mac, (result) => {
     if (!result.success) {
       if (attempt < 1) {
         scheduleTimeout(() => {
@@ -592,7 +593,7 @@ function onTestBLE() {
   }, 3000)
 }
 function onClear() {
-  teslaBleApi.clear()
+  BLE.clear()
   teslaSession.reset()
   state = 'IDLE'
   foundMAC = null
@@ -605,7 +606,7 @@ Page(
   BasePage({
     build() {
       console.log(
-        `[BLE-LIFECYCLE] build() called, __blePageInit=${teslaBleApi.__blePageInit}, __pageBuilt=${__pageBuilt}`,
+        `[BLE-LIFECYCLE] build() called, __blePageInit=${BLE.__blePageInit}, __pageBuilt=${__pageBuilt}`,
       )
 
       // Guard against duplicate builds (ZeppOS garbage collection or router issues)
@@ -622,19 +623,8 @@ Page(
       UI.reset()
       currentPage = this
 
-      // CRITICAL: Clean up any pending operations from main page before initializing BLE here
-      console.log('[BLE-LIFECYCLE] Resetting BLE and session from main page interference')
-      teslaBleApi.reset()
+      BLE.reset()
       teslaSession.reset()
-
-      if (!teslaBleApi.__blePageInit) {
-        console.log('[BLE-LIFECYCLE] First initialization - calling teslaBleApi.init()')
-        teslaBleApi.init()
-        teslaBleApi.__blePageInit = true
-      } else {
-        console.log('[BLE-LIFECYCLE] Re-entry - skipping teslaBleApi.init()')
-      }
-      console.log('[BLE-LIFECYCLE] Setting session storage')
 
       teslaSession.onPoolLow = () => {
         var currentCount = store.keyPoolCount
@@ -660,18 +650,9 @@ Page(
           try {
             if (result.success && result.publicKeyBinary) {
               // If we don't have a local key, store and log. If we do, only update/log when it changed.
-              var existingBytes = store.watchPublicKey
-              if (!existingBytes) {
+              if (!store.watchPublicKey) {
                 store.watchPublicKey = result.publicKeyBinary
                 addLog('✓ Watch key synced', 0x44ff44)
-              } else {
-                // Compare by converting existing bytes to binary string
-                var existingBin = bytesToBinaryString(existingBytes)
-                if (existingBin !== result.publicKeyBinary) {
-                  store.watchPublicKey = result.publicKeyBinary
-                  addLog('✓ Watch key updated', 0x44ff44)
-                }
-                // otherwise unchanged — no log
               }
             }
           } catch (e) {
@@ -894,7 +875,7 @@ Page(
         click_func: onTestBLE,
         centered: false,
       })
-      teslaBleApi.onDisconnect = () => {
+      BLE.onDisconnect = () => {
         if (state === 'WAITING_KEYCARD' || state === 'PAIRING') {
           state = 'IDLE'
           updateStatus('DISCONNECTED', 0xff4444)
@@ -906,12 +887,12 @@ Page(
       keepScreenOn(true, 600000)
     },
     onDestroy() {
-      console.log(`[BLE-LIFECYCLE] onDestroy() called, __blePageInit=${teslaBleApi.__blePageInit}`)
+      console.log(`[BLE-LIFECYCLE] onDestroy() called, __blePageInit=${BLE.__blePageInit}`)
       __pageBuilt = false // Allow rebuild when page is re-created
       keepScreenOn(false)
-      console.log('[BLE-LIFECYCLE] Calling teslaBleApi.reset()')
-      teslaBleApi.reset()
-      teslaBleApi.onDisconnect = null
+      console.log('[BLE-LIFECYCLE] Calling BLE.reset()')
+      BLE.reset()
+      BLE.onDisconnect = null
       console.log('[BLE-LIFECYCLE] Calling teslaSession.reset()')
       teslaSession.reset()
       console.log('[BLE-LIFECYCLE] Clearing timers')

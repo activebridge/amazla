@@ -1,6 +1,7 @@
 import {
   DOMAIN_VEHICLE_SECURITY,
   INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
+  buildHMACTagInput,
   buildUnsignedMessage,
   buildInformationRequest,
   buildSignedMessage,
@@ -481,6 +482,68 @@ describe('VCSEC Protocol', () => {
       expect(parsed.success).toBe(true)
       expect(parsed.status).toBe('pending')
       expect(parsed.dbg.path).toBe('f1B')
+    })
+  })
+
+  describe('buildHMACTagInput', () => {
+    const epoch   = new Uint8Array(16).fill(0xee)
+    const payload = new Uint8Array([0xaa])
+
+    test('returns a Uint8Array', () => {
+      expect(buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, payload)).toBeInstanceOf(Uint8Array)
+    })
+
+    test('different epochs produce different buffers', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), new Uint8Array(16).fill(0x01), 1, 100, payload)
+      const b2 = buildHMACTagInput(new Uint8Array(0), new Uint8Array(16).fill(0x02), 1, 100, payload)
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('different counters produce different buffers', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, payload)
+      const b2 = buildHMACTagInput(new Uint8Array(0), epoch, 2, 100, payload)
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('different expiresAt produce different buffers', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, payload)
+      const b2 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 200, payload)
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('different payloads produce different buffers', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, new Uint8Array([0x01]))
+      const b2 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, new Uint8Array([0x02]))
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('different VINs produce different buffers', () => {
+      const vin1 = new Uint8Array([0x41, 0x42, 0x43]) // ABC
+      const vin2 = new Uint8Array([0x58, 0x59, 0x5a]) // XYZ
+      const b1 = buildHMACTagInput(vin1, epoch, 1, 100, payload)
+      const b2 = buildHMACTagInput(vin2, epoch, 1, 100, payload)
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('empty VIN vs populated VIN produce different buffers', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, payload)
+      const b2 = buildHMACTagInput(new Uint8Array([0x41, 0x42]), epoch, 1, 100, payload)
+      expect(Array.from(b1)).not.toEqual(Array.from(b2))
+    })
+
+    test('TAG_END byte (0xFF) precedes payload', () => {
+      const p = new Uint8Array([0xde, 0xad])
+      const buf = buildHMACTagInput(new Uint8Array(0), epoch, 1, 100, p)
+      // Last 3 bytes: 0xFF, 0xDE, 0xAD
+      expect(buf[buf.length - 3]).toBe(0xff)
+      expect(buf[buf.length - 2]).toBe(0xde)
+      expect(buf[buf.length - 1]).toBe(0xad)
+    })
+
+    test('non-Uint8Array epoch treated as empty', () => {
+      const b1 = buildHMACTagInput(new Uint8Array(0), null, 1, 100, payload)
+      const b2 = buildHMACTagInput(new Uint8Array(0), new Uint8Array(0), 1, 100, payload)
+      expect(Array.from(b1)).toEqual(Array.from(b2))
     })
   })
 })

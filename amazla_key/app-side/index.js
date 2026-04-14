@@ -1,5 +1,4 @@
 import { BaseSideService } from '@zeppos/zml/base-side'
-import TeslaSession from '../../app-side/tesla/session'
 import bleCrypto, { bytesToBinaryString } from './ble-crypto.js'
 
 const dispatch = async (method, response, params = {}) => {
@@ -20,22 +19,22 @@ const actions = {
   // Return existing enrolled keypair, or generate and store one if missing.
   BLE_SYNC_KEYS: async () => {
     console.log('[App] Syncing BLE keys to watch')
-    try {
-      const pubKey = TeslaSession.getPublicKey()
+    const stored = settings.settingsStorage.getItem('tesla_public_key')
+    if (stored) {
       console.log('[App] Sending existing watch public key to watch')
-      return { success: true, publicKeyBinary: bytesToBinaryString(pubKey) }
-    } catch (error) {
-      console.log(`[App] No keys found, generating new pair: ${error.message}`)
-      const result = bleCrypto.generateEnrolledKeyPair()
-      if (!result.success) return result
-      try {
-        TeslaSession.setKeys(result.privateKeyBinary, result.publicKeyBinary)
-        console.log('[App] ✓ Stored enrolled key pair')
-        return { success: true, publicKeyBinary: result.publicKeyBinary }
-      } catch (storeError) {
-        console.log(`[App] Failed to store keys: ${storeError.message}`)
-        return { success: false, message: 'Failed to store keys' }
-      }
+      return { success: true, publicKeyBinary: stored }
+    }
+    console.log('[App] No keys found, generating new pair')
+    const result = bleCrypto.generateEnrolledKeyPair()
+    if (!result.success) return result
+    try {
+      settings.settingsStorage.setItem('tesla_private_key', result.privateKeyBinary)
+      settings.settingsStorage.setItem('tesla_public_key', result.publicKeyBinary)
+      console.log('[App] ✓ Stored enrolled key pair')
+      return { success: true, publicKeyBinary: result.publicKeyBinary }
+    } catch (storeError) {
+      console.log(`[App] Failed to store keys: ${storeError.message}`)
+      return { success: false, message: 'Failed to store keys' }
     }
   },
 

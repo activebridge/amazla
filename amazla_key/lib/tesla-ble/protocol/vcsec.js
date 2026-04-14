@@ -82,6 +82,37 @@ const buildSignatureData = (signerPublicKey, epoch, counter, expiresAt, tag) => 
   )
 }
 const buildToVCSECMessage = (signedMessage) => encodeBytes(1, signedMessage)
+
+// Builds the HMAC input buffer for an authenticated command per Tesla SDK metadata scheme.
+// Layout: TLV metadata fields || 0xFF || payloadBytes
+//   TAG_SIGNATURE_TYPE(0): HMAC_PERSONALIZED=8
+//   TAG_DOMAIN(1): VEHICLE_SECURITY=2
+//   TAG_PERSONALIZATION(2): VIN bytes (empty if not set)
+//   TAG_EPOCH(3): 16-byte epoch
+//   TAG_EXPIRES_AT(4): uint32 big-endian
+//   TAG_COUNTER(5): uint32 big-endian
+//   TAG_END(0xFF)
+//   payload bytes (ToVCSECMessage)
+const buildHMACTagInput = (vin, epoch, counter, expiresAt, payloadBytes) => {
+  const vinBytes = vin instanceof Uint8Array ? vin : new Uint8Array(0)
+  const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
+  const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
+  const expiresAtBytes = u32be(expiresAt)
+  const counterBytes = u32be(counter)
+  const totalLen = 3 + 3 + 2 + vinBytes.length + 2 + epochBytes.length + 6 + 6 + 1 + payloadBytes.length
+  const buf = new Uint8Array(totalLen)
+  let off = 0
+  const wb = (byte) => { buf[off++] = byte }
+  const wBytes = (bytes) => { buf.set(bytes, off); off += bytes.length }
+  wb(0x00); wb(0x01); wb(0x08)           // TAG_SIGNATURE_TYPE: HMAC_PERSONALIZED=8
+  wb(0x01); wb(0x01); wb(0x02)           // TAG_DOMAIN: VEHICLE_SECURITY=2
+  wb(0x02); wb(vinBytes.length); wBytes(vinBytes)    // TAG_PERSONALIZATION: VIN
+  wb(0x03); wb(epochBytes.length); wBytes(epochBytes) // TAG_EPOCH
+  wb(0x04); wb(0x04); wBytes(expiresAtBytes)          // TAG_EXPIRES_AT
+  wb(0x05); wb(0x04); wBytes(counterBytes)            // TAG_COUNTER
+  wb(0xff); wBytes(payloadBytes)                      // TAG_END + payload
+  return buf
+}
 const buildRoutableMessage = ({ toDomain, routingAddress, payload, sessionInfoRequest, signatureData, uuid }) => {
   const parts = []
   if (toDomain !== undefined) {
@@ -236,6 +267,7 @@ export {
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
+  buildHMACTagInput,
   buildKeyIdentity,
   buildHMACPersonalizedData,
   buildClosureMoveRequest,

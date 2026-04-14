@@ -10,7 +10,6 @@ import {
   buildSessionInfoRequest,
   buildClosureMoveRequest,
   buildSignedMessage,
-  buildToVCSECMessage,
   buildUnsignedMessage,
   buildKeyIdentity,
   buildHMACPersonalizedData,
@@ -21,16 +20,21 @@ import {
   generateRoutingAddress,
   DOMAIN_VEHICLE_SECURITY,
 } from '../lib/tesla-ble/protocol/vcsec.js'
-import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
+import { decodeMessage, encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import { createHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
+import { createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 import teslaBLE from '../lib/tesla-ble/ble-native.js'
 import { hexToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
 import store from '../lib/store.js'
 
 function bytesToHex(b) {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
+}
+
+function initSessionHmacs(s) {
+  const { cmdHmac } = createSessionHmacs(s.sessionKey)
+  s._cmdHmacFn = cmdHmac
 }
 
 // ── vcsec session builders ──────────────────────────────────────────────────
@@ -772,90 +776,35 @@ describe('loadDoublingsTable parsing logic', () => {
 // _hmac uses pads pre-computed from sessionKey to avoid allocating innerPad/outerPad
 // on every command. Must match hmacSha256(sessionKey, message) exactly.
 
-describe('TeslaSession._hmac pre-computed pads', () => {
-  function makeSession(keyHex) {
+describe('TeslaSession HMAC lifecycle', () => {
+  const KEY = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'
+
+  test('_cmdHmacFn null before session established', () => {
     const s = new TeslaSession()
-    s.sessionKey = hexToBytes(keyHex)
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
-    return s
-  }
-
-  // RFC 4231 TC1: key=20×0x0b, data="Hi There"
-  const TC1_KEY  = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'
-  const TC1_DATA = new Uint8Array([0x48,0x69,0x20,0x54,0x68,0x65,0x72,0x65])
-  const TC1_MAC  = 'b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7'
-
-  // RFC 4231 TC2: key="Jefe", data="what do ya want for nothing?"
-  const TC2_KEY  = '4a656665'
-  const TC2_STR  = 'what do ya want for nothing?'
-  const TC2_DATA = new Uint8Array(TC2_STR.length).map((_, i) => TC2_STR.charCodeAt(i))
-  const TC2_MAC  = '5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843'
-
-  test('matches hmacSha256 for RFC 4231 TC1 (20-byte key)', () => {
-    const s = makeSession(TC1_KEY)
-    expect(bytesToHex(s._hmac(TC1_DATA))).toBe(TC1_MAC)
-  })
-
-  test('matches RFC 4231 TC1 output directly — TC1', () => {
-    const s = makeSession(TC1_KEY)
-    const { hmac } = createHmac(hexToBytes(TC1_KEY))
-    const expected = hmac(TC1_DATA)
-    expect(s._hmac(TC1_DATA)).toEqual(expected)
-  })
-
-  test('matches hmacSha256 for RFC 4231 TC2 (4-byte key)', () => {
-    const s = makeSession(TC2_KEY)
-    expect(bytesToHex(s._hmac(TC2_DATA))).toBe(TC2_MAC)
-  })
-
-  test('16-byte session key (typical Tesla session)', () => {
-    const key = new Uint8Array(16).fill(0xab)
-    const s = new TeslaSession()
-    s.sessionKey = key
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
-    const msg = new Uint8Array([1, 2, 3, 4, 5])
-    {
-    const { hmac } = createHmac(key)
-    expect(s._hmac(msg)).toEqual(hmac(msg))
-  }
-  })
-
-  test('different messages produce different MACs', () => {
-    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    const r1 = bytesToHex(s._hmac(new Uint8Array([1, 2, 3])))
-    const r2 = bytesToHex(s._hmac(new Uint8Array([4, 5, 6])))
-    expect(r1).not.toBe(r2)
-  })
-
-  test('hmac function null before _initHmacPads called', () => {
-    const s = new TeslaSession()
-    expect(s._hmac).toBeUndefined()
-  })
-
-  test('hmac function cleared on reset()', () => {
-    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    expect(s._hmac).not.toBeNull()
-    s.reset()
-    // Command-level HMAC cleared by session.reset(); raw session HMAC was externalized
     expect(s._cmdHmacFn).toBeNull()
   })
 
-  test('pads re-initialized after reset + re-establish', () => {
-    const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    expect(s._hmac).not.toBeNull()
+  test('_cmdHmacFn null after reset()', () => {
+    const s = new TeslaSession()
+    s.sessionKey = hexToBytes(KEY)
+    initSessionHmacs(s)
+    expect(s._cmdHmacFn).not.toBeNull()
     s.reset()
-    // command-level HMAC cleared by reset
     expect(s._cmdHmacFn).toBeNull()
-    // Re-establish with same key
-    s.sessionKey = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
-    expect(s._hmac).not.toBeNull()
+  })
+
+  test('_cmdHmacFn restored and correct after re-establish', () => {
+    const s = new TeslaSession()
+    s.sessionKey = hexToBytes(KEY)
+    initSessionHmacs(s)
+    s.reset()
+    s.sessionKey = hexToBytes(KEY)
+    initSessionHmacs(s)
+    expect(s._cmdHmacFn).not.toBeNull()
     const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-    const { hmac: expectedHmac } = createHmac(s.sessionKey)
-    expect(s._hmac(msg)).toEqual(expectedHmac(msg))
+    const { cmdHmac } = createSessionHmacs(hexToBytes(KEY))
+    expect(s._cmdHmacFn(msg)).toEqual(cmdHmac(msg))
   })
-
-
 })
 
 // ── requestVehiclePublicKey message structure ──────────────────────────────
@@ -866,11 +815,10 @@ describe('TeslaSession._hmac pre-computed pads', () => {
 // response lacks the vehicle public key).
 
 describe('requestVehiclePublicKey — sends valid PRESENT_KEY whitelist query', () => {
-  let capturedMsg, origSend
+  let capturedMsg
 
   beforeEach(() => {
     capturedMsg = undefined
-    origSend = teslaBLE.send.bind(teslaBLE)
     teslaBLE.connected = true
     teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
   })
@@ -949,8 +897,7 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     s.clockTime    = 1000
     s.routingAddress = new Uint8Array(16).fill(0x01)
     s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    s.vin          = new Uint8Array(0)
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
+    initSessionHmacs(s)
     return s
   }
 
@@ -1053,8 +1000,6 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
 // HMAC auth data in RoutableMessage.signature_data (field 13), not in vcsec.proto SignedMessage.
 
 describe('buildAuthenticatedCommand — SignatureData structure', () => {
-  let capturedMsg
-
   function makeSession() {
     const s = new TeslaSession()
     s.established  = true
@@ -1064,21 +1009,9 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
     s.clockTime    = 2000
     s.routingAddress = new Uint8Array(16).fill(0x02)
     s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    s.vin          = new Uint8Array(0)
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
+    initSessionHmacs(s)
     return s
   }
-
-  beforeEach(() => {
-    capturedMsg = undefined
-    teslaBLE.connected = true
-    teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
-  })
-
-  afterEach(() => {
-    teslaBLE.connected = false
-    delete teslaBLE.send
-  })
 
   test('increments counter by 1', () => {
     const s = makeSession()
@@ -1155,78 +1088,40 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
   })
 })
 
-// ── _buildHMACTag — metadata format ──────────────────────────────────────
-// Tag = HMAC-SHA256(subKey, metadata || 0xFF || payload)
-// subKey = HMAC-SHA256(sessionKey, "authenticated command")
+// ── _buildHMACTag — session wiring ───────────────────────────────────────
+// Input construction is tested in vcsec.test.js (buildHMACTagInput).
+// Here we verify session-specific concerns: HMAC application and store.vehicleVin wiring.
 
-describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
-  function hexToBytes(h) {
-    const b = new Uint8Array(h.length / 2)
-    for (let i = 0; i < h.length; i += 2) b[i / 2] = parseInt(h.substr(i, 2), 16)
-    return b
-  }
-
+describe('TeslaSession._buildHMACTag — session wiring', () => {
   function makeSession() {
     store.vehicleVin = null
     const s = new TeslaSession()
     s.sessionKey = new Uint8Array(16).fill(0x0b)
-    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
+    initSessionHmacs(s)
     return s
   }
 
-  test('returns 32-byte tag', () => {
-    const s = makeSession()
-    const tag = s._buildHMACTag(new Uint8Array(16).fill(0xee), 1, 100, new Uint8Array([0x01]))
+  test('returns 32-byte HMAC tag', () => {
+    const tag = makeSession()._buildHMACTag(new Uint8Array(16).fill(0xee), 1, 100, new Uint8Array([0x01]))
     expect(tag.length).toBe(32)
   })
 
-  test('different epochs produce different tags', () => {
-    const s = makeSession()
-    const payload = new Uint8Array([0xaa])
-    const t1 = s._buildHMACTag(new Uint8Array(16).fill(0x01), 1, 100, payload)
-    const t2 = s._buildHMACTag(new Uint8Array(16).fill(0x02), 1, 100, payload)
-    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  test('throws when _cmdHmacFn not initialized', () => {
+    const s = new TeslaSession()
+    expect(() => s._buildHMACTag(new Uint8Array(16), 1, 100, new Uint8Array([0x01]))).toThrow('Command HMAC not initialized')
   })
 
-  test('different counters produce different tags', () => {
-    const s = makeSession()
-    const epoch = new Uint8Array(16).fill(0xee)
-    const payload = new Uint8Array([0xbb])
-    const t1 = s._buildHMACTag(epoch, 1, 100, payload)
-    const t2 = s._buildHMACTag(epoch, 2, 100, payload)
-    expect(Array.from(t1)).not.toEqual(Array.from(t2))
-  })
-
-  test('different payloads produce different tags', () => {
-    const s = makeSession()
-    const epoch = new Uint8Array(16).fill(0xee)
-    const t1 = s._buildHMACTag(epoch, 1, 100, new Uint8Array([0x01]))
-    const t2 = s._buildHMACTag(epoch, 1, 100, new Uint8Array([0x02]))
-    expect(Array.from(t1)).not.toEqual(Array.from(t2))
-  })
-
-  test('different session keys produce different tags (subKey is session-specific)', () => {
+  test('different session keys produce different tags', () => {
     const s1 = makeSession()
     const s2 = new TeslaSession()
     s2.sessionKey = new Uint8Array(16).fill(0xcc)
-    { const { hmac } = createHmac(s2.sessionKey); s2._hmac = hmac; const { cmdHmac } = createSessionHmacs(s2.sessionKey); s2._cmdHmacFn = cmdHmac; s2._cmdHmac = cmdHmac; }
+    initSessionHmacs(s2)
     const epoch = new Uint8Array(16).fill(0xee)
     const payload = new Uint8Array([0xaa])
-    const t1 = s1._buildHMACTag(epoch, 1, 100, payload)
-    const t2 = s2._buildHMACTag(epoch, 1, 100, payload)
-    expect(Array.from(t1)).not.toEqual(Array.from(t2))
+    expect(Array.from(s1._buildHMACTag(epoch, 1, 100, payload))).not.toEqual(Array.from(s2._buildHMACTag(epoch, 1, 100, payload)))
   })
 
-  test('_cmdHmac(x) != _hmac(x) — subKey != sessionKey', () => {
-    const s = makeSession()
-    const msg = new Uint8Array([0x01, 0x02, 0x03])
-    // _cmdHmac uses subKey = HMAC(sessionKey, "authenticated command")
-    // _hmac uses raw sessionKey
-    // They should produce different results for the same input
-    expect(Array.from(s._cmdHmac(msg))).not.toEqual(Array.from(s._hmac(msg)))
-  })
-
-  test('different VINs produce different HMAC tags', () => {
+  test('uses store.vehicleVin — different VINs produce different tags', () => {
     const s = makeSession()
     const epoch = new Uint8Array(16).fill(0xee)
     const payload = new Uint8Array([0x01])
@@ -1236,16 +1131,4 @@ describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
     const t2 = s._buildHMACTag(epoch, 1, 100, payload)
     expect(Array.from(t1)).not.toEqual(Array.from(t2))
   })
-
-  test('empty VIN vs populated VIN produce different tags', () => {
-    const s = makeSession()
-    const epoch = new Uint8Array(16).fill(0xee)
-    const payload = new Uint8Array([0xab])
-    store.vehicleVin = null
-    const te = s._buildHMACTag(epoch, 2, 200, payload)
-    store.vehicleVin = 'ABCDEFGH'
-    const tw = s._buildHMACTag(epoch, 2, 200, payload)
-    expect(Array.from(te)).not.toEqual(Array.from(tw))
-  })
-}
-)
+})

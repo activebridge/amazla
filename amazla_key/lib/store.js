@@ -123,6 +123,17 @@ const store = {
   set vehicleVin(value) {
     set('vehicleVin', value)
   },
+  // True iff all artifacts required for passive entry are present.
+  // Computed — cannot get out of sync after reset or partial writes.
+  get isPaired() {
+    return !!(
+      this.watchPublicKey &&
+      this.vehicleEcPublicKey &&
+      this.hasDoublingsTable &&
+      this.keyPoolCount > 0 &&
+      this.vehicleVin
+    )
+  },
   get vehicleName() {
     return localStorage.getItem('vehicleName')
   },

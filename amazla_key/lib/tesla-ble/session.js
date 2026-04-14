@@ -1,10 +1,11 @@
 import store from '../store.js'
 import teslaBLE from './ble-native.js'
-import { createSessionHmacs, createHmac } from './crypto/hmac.js'
+import { createSessionHmacs } from './crypto/hmac.js'
 import { ecdhFixed } from './crypto/p256.js'
 import { sha1 } from './crypto/sha256.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
+  buildHMACTagInput,
   buildInformationRequest,
   buildRoutableMessage,
   buildSessionInfoRequest,
@@ -48,55 +49,9 @@ class TeslaSession {
       this._secondResponseTimer = null
     }
   }
-  // Builds the HMAC tag for an authenticated command per Tesla SDK metadata scheme.
-  // Input: HMAC-SHA256(subKey, metadata || 0xFF || payloadBytes)
-  // Metadata TLV fields (tag 1B | len 1B | value):
-  //   TAG_SIGNATURE_TYPE(0): HMAC_PERSONALIZED=8
-  //   TAG_DOMAIN(1): VEHICLE_SECURITY=2
-  //   TAG_PERSONALIZATION(2): VIN bytes (empty if VIN not set)
-  //   TAG_EPOCH(3): 16-byte epoch
-  //   TAG_EXPIRES_AT(4): uint32 big-endian
-  //   TAG_COUNTER(5): uint32 big-endian
-  //   TAG_END(0xFF)
-  //   payload bytes (ToVCSECMessage)
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
-    const vin = store.vehicleVin || new Uint8Array(0)
-    const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
-    const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
-    const expiresAtBytes = u32be(expiresAt)
-    const counterBytes = u32be(counter)
-    const totalLen = 3 + 3 + 2 + vin.length + 2 + epochBytes.length + 6 + 6 + 1 + payloadBytes.length
-    const hmacInput = new Uint8Array(totalLen)
-    let off = 0
-    const wb = (byte) => {
-      hmacInput[off++] = byte
-    }
-    const wBytes = (bytes) => {
-      hmacInput.set(bytes, off)
-      off += bytes.length
-    }
-    wb(0x00)
-    wb(0x01)
-    wb(0x08) // TAG_SIGNATURE_TYPE: HMAC_PERSONALIZED=8
-    wb(0x01)
-    wb(0x01)
-    wb(0x02) // TAG_DOMAIN: VEHICLE_SECURITY=2
-    wb(0x02)
-    wb(vin.length)
-    wBytes(vin) // TAG_PERSONALIZATION: VIN
-    wb(0x03)
-    wb(epochBytes.length)
-    wBytes(epochBytes) // TAG_EPOCH
-    wb(0x04)
-    wb(0x04)
-    wBytes(expiresAtBytes) // TAG_EXPIRES_AT (big-endian)
-    wb(0x05)
-    wb(0x04)
-    wBytes(counterBytes) // TAG_COUNTER (big-endian)
-    wb(0xff) // TAG_END
-    wBytes(payloadBytes) // payload (ToVCSECMessage bytes)
     if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
-    return this._cmdHmacFn(hmacInput)
+    return this._cmdHmacFn(buildHMACTagInput(store.vehicleVin || new Uint8Array(0), epoch, counter, expiresAt, payloadBytes))
   }
   requestVehiclePublicKey(callback) {
     const ensureConnectedAndFetch = () => {
@@ -277,7 +232,9 @@ class TeslaSession {
         console.log(`[SESSION] Raw response: ${result.data.length} bytes`)
 
         const rawFields = decodeMessage(result.data)
-        const fieldKeys = Object.keys(rawFields).sort((a, b) => a - b).join(',')
+        const fieldKeys = Object.keys(rawFields)
+          .sort((a, b) => a - b)
+          .join(',')
         const response = parseRoutableMessage(result.data)
 
         // If no sessionInfo, payload, or status — this is an intermediate ack from the vehicle.
@@ -494,10 +451,6 @@ class TeslaSession {
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
   }
-  isPaired() {
-    // Check if pairing data exists (means user completed pairing flow)
-    return store.keyPoolCount > 0 && !!store.vehicleEcPublicKey
-  }
   ensureSessionEstablished(callback) {
     // If session already established, call callback immediately
     if (this.established) {
@@ -505,7 +458,7 @@ class TeslaSession {
       return
     }
     // If not paired yet, return error
-    if (!this.isPaired()) {
+    if (!store.isPaired) {
       callback({ success: false, error: 'Not paired - go to BLE page first' })
       return
     }

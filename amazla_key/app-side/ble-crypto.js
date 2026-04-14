@@ -2,23 +2,31 @@
 // Builds VCSEC protobuf messages for pairing (key enrollment) only.
 // Also generates ephemeral P-256 keypair pools for watch-side passive entry.
 
-import { bytesToHex, bytesToBinaryString, hexToBytes, binaryStringToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
+import {
+  binaryStringToBytes,
+  bytesToBinaryString,
+  bytesToHex,
+  hexToBytes,
+} from '../lib/tesla-ble/crypto/binary-utils.js'
 
 // ============================================
 // P-256 keypair generation (BigInt, phone-side only)
 // ============================================
 
-const P256_P  = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
-const P256_A  = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
-const P256_N  = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
+const P256_P = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
+const P256_A = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
+const P256_N = BigInt('0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551')
 const P256_GX = BigInt('0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296')
 const P256_GY = BigInt('0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5')
 
-function p256mod(a, m) { return ((a % m) + m) % m }
+function p256mod(a, m) {
+  return ((a % m) + m) % m
+}
 
 function p256modInv(a, m) {
   if (a < 0n) a = p256mod(a, m)
-  let [old_r, r] = [a, m], [old_s, s] = [1n, 0n]
+  let [old_r, r] = [a, m],
+    [old_s, s] = [1n, 0n]
   while (r !== 0n) {
     const q = old_r / r
     ;[old_r, r] = [r, old_r - q * r]
@@ -43,7 +51,8 @@ function p256PointAdd([x1, y1], [x2, y2]) {
 }
 
 function p256ScalarMul(k, point) {
-  let result = [0n, 0n], addend = point
+  let result = [0n, 0n],
+    addend = point
   while (k > 0n) {
     if (k & 1n) result = p256PointAdd(result, addend)
     addend = p256PointAdd(addend, addend)
@@ -63,7 +72,7 @@ function bigIntToBytes32(n) {
 function generateKeypair() {
   const privRaw = new Uint8Array(32)
   for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
-  let k = BigInt('0x' + bytesToHex(privRaw)) % P256_N
+  let k = BigInt(`0x${bytesToHex(privRaw)}`) % P256_N
   if (k === 0n) k = 1n
   const privBytes = bigIntToBytes32(k)
 
@@ -80,20 +89,20 @@ function generateKeypair() {
 // Protobuf encoding helpers
 // ============================================
 
-import { encodeBytes, encodeEnum, encodeVarintField, concat } from '../lib/tesla-ble/protocol/protobuf.js'
+import { concat, encodeBytes, encodeEnum, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
 import { buildSignedMessage, buildToVCSECMessage } from '../lib/tesla-ble/protocol/vcsec.js'
 
 // ============================================
 // Tesla VCSEC Protocol Constants
 // ============================================
 
-const SIGNATURE_TYPE_PRESENT_KEY = 2  // No HMAC needed for pairing
+const SIGNATURE_TYPE_PRESENT_KEY = 2 // No HMAC needed for pairing
 
 // Key form factors (vcsec.proto KeyFormFactor enum — DO NOT CHANGE)
-const KEY_FORM_FACTOR_ANDROID_DEVICE = 7  // Triggers NFC keycard tap UI on car touchscreen
+const KEY_FORM_FACTOR_ANDROID_DEVICE = 7 // Triggers NFC keycard tap UI on car touchscreen
 
 // Key roles (keys.proto Role enum — DO NOT CHANGE)
-const ROLE_OWNER = 2  // ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3
+const ROLE_OWNER = 2 // ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3
 
 // ============================================
 // Tesla VCSEC Message Builders
@@ -125,19 +134,13 @@ class BLECryptoSession {
 
     // PermissionChange { key (field 1), keyRole (field 4) = ROLE_OWNER }
     // keys.proto: ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3 — DO NOT CHANGE
-    const permissionChange = concat(
-      encodeBytes(1, publicKeyMsg),
-      encodeEnum(4, ROLE_OWNER)
-    )
+    const permissionChange = concat(encodeBytes(1, publicKeyMsg), encodeEnum(4, ROLE_OWNER))
 
     // WhitelistOperation:
     //   addKeyToWhitelistAndAddPermissions (field 5) = PermissionChange — DO NOT CHANGE TO FIELD 1
     //   metadataForKey (field 6) = KeyMetadata — DO NOT CHANGE TO FIELD 16
     const metadata = buildKeyMetadata(KEY_FORM_FACTOR_ANDROID_DEVICE)
-    const whitelistOp = concat(
-      encodeBytes(5, permissionChange),
-      encodeBytes(6, metadata)
-    )
+    const whitelistOp = concat(encodeBytes(5, permissionChange), encodeBytes(6, metadata))
 
     // UnsignedMessage { WhitelistOperation (field 16) }
     const unsignedMessage = encodeBytes(16, whitelistOp)
@@ -145,13 +148,13 @@ class BLECryptoSession {
     // SignedMessage { payload (field 2), signatureType (field 3) = PRESENT_KEY }
     const signedMsg = buildSignedMessage({
       payload: unsignedMessage,
-      signatureType: SIGNATURE_TYPE_PRESENT_KEY
+      signatureType: SIGNATURE_TYPE_PRESENT_KEY,
     })
 
     const messageBytes = buildToVCSECMessage(signedMsg)
     return {
       success: true,
-      message: bytesToBinaryString(messageBytes)
+      message: bytesToBinaryString(messageBytes),
     }
   }
 
@@ -182,7 +185,8 @@ class BLECryptoSession {
       }
       // Debug: log first byte and length
       // console.log('[DBG] buildDoublingsTable', vehiclePublicKeyBinary.length, vehiclePublicKeyBinary.charCodeAt(0), vehiclePublicKeyBinary.charCodeAt(1))
-      let x = 0n, y = 0n
+      let x = 0n,
+        y = 0n
       for (let i = 0; i < 32; i++) {
         x = (x << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(1 + i) & 0xff)
         y = (y << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(33 + i) & 0xff)
@@ -199,8 +203,8 @@ class BLECryptoSession {
         const tbase = i * 16
         for (let j = 0; j < 8; j++) {
           const bo = 28 - j * 4
-          table[tbase + j]     = ((xb[bo] << 24) | (xb[bo+1] << 16) | (xb[bo+2] << 8) | xb[bo+3]) >>> 0
-          table[tbase + 8 + j] = ((yb[bo] << 24) | (yb[bo+1] << 16) | (yb[bo+2] << 8) | yb[bo+3]) >>> 0
+          table[tbase + j] = ((xb[bo] << 24) | (xb[bo + 1] << 16) | (xb[bo + 2] << 8) | xb[bo + 3]) >>> 0
+          table[tbase + 8 + j] = ((yb[bo] << 24) | (yb[bo + 1] << 16) | (yb[bo + 2] << 8) | yb[bo + 3]) >>> 0
         }
         if (i < 255) current = p256PointAdd(current, current)
       }
@@ -221,8 +225,8 @@ class BLECryptoSession {
     // GET_WHITELIST_ENTRY_INFO = 6 — DO NOT CHANGE, verified from vcsec.proto InformationRequestType enum
     // Use slot=0 to fetch first/only enrolled key (Tesla SDK uses slot, not publicKey)
     const infoReq = concat(
-      encodeEnum(1, 6),              // GET_WHITELIST_ENTRY_INFO = 6
-      encodeVarintField(4, 0)        // slot = 0 (fetch first enrolled key)
+      encodeEnum(1, 6), // GET_WHITELIST_ENTRY_INFO = 6
+      encodeVarintField(4, 0), // slot = 0 (fetch first enrolled key)
     )
 
     // UnsignedMessage { InformationRequest (field 1) }
@@ -231,13 +235,13 @@ class BLECryptoSession {
 
     const signedMsg = buildSignedMessage({
       payload: unsignedMessage,
-      signatureType: SIGNATURE_TYPE_PRESENT_KEY
+      signatureType: SIGNATURE_TYPE_PRESENT_KEY,
     })
 
     const messageBytes = buildToVCSECMessage(signedMsg)
     return {
       success: true,
-      message: bytesToBinaryString(messageBytes)
+      message: bytesToBinaryString(messageBytes),
     }
   }
 
@@ -249,7 +253,7 @@ class BLECryptoSession {
       return {
         success: true,
         publicKeyBinary: bytesToBinaryString(pubBytes),
-        privateKeyBinary: bytesToBinaryString(privBytes)
+        privateKeyBinary: bytesToBinaryString(privBytes),
       }
     } catch (e) {
       return { success: false, error: e.message }

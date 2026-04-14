@@ -1,4 +1,4 @@
-import teslaBleApi, { teslaBLE } from '../../lib/tesla-ble/index.js'
+import BLE from '../../lib/tesla-ble/index.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
 
@@ -50,11 +50,11 @@ export const createPairingController = function(page, storage, onState, onSucces
 
   function start() {
     cancelled = false
-    teslaBleApi.reset()
+    BLE.reset()
 
     var ecKey  = storage.vehicleEcPublicKey
     var table  = storage.vehicleDoublingsTable
-    var mac    = storage.vehicleMac || teslaBleApi.savedMAC
+    var mac    = storage.vehicleMac
 
     // EC key already fetched but table is missing — skip pairing entirely
     if (ecKey && !table) {
@@ -77,8 +77,8 @@ export const createPairingController = function(page, storage, onState, onSucces
 
   function cancel() {
     cancelled = true
-    try { teslaBleApi.stopScan() } catch (e) {}
-    try { teslaBleApi.disconnect() } catch (e) {}
+    try { BLE.stopScan() } catch (e) {}
+    try { BLE.disconnect() } catch (e) {}
   }
 
   // Step 1: ensure watch keypair exists, generate if missing
@@ -107,17 +107,17 @@ export const createPairingController = function(page, storage, onState, onSucces
   // Step 2: find and connect to the vehicle
   function scanAndConnect() {
     if (cancelled) return
-    var savedMAC = storage.vehicleMac || teslaBleApi.savedMAC
+    var savedMAC = storage.vehicleMac
     if (savedMAC) {
       doConnect(savedMAC, 0)
       return
     }
     var foundMAC = null
-    teslaBleApi.scan(function(result) {
+    BLE.scan(function(result) {
       if (cancelled) return
       if (result.type === 'found') {
         foundMAC = result.device.mac || null
-        teslaBleApi.stopScan()
+        BLE.stopScan()
         setTimeout(function() { doConnect(foundMAC, 0) }, 500)
       }
       // Only report "not found" if scan completed without ever finding a device
@@ -129,7 +129,7 @@ export const createPairingController = function(page, storage, onState, onSucces
 
   function doConnect(mac, attempt) {
     if (cancelled) return
-    teslaBleApi.connect(mac, function(result) {
+    BLE.connect(mac, function(result) {
       if (cancelled) return
       if (!result.success) {
         if (attempt < 1) {
@@ -163,7 +163,7 @@ export const createPairingController = function(page, storage, onState, onSucces
         // Prompt user to tap NFC card while we wait for the vehicle's first response
         onState('confirming')
 
-        teslaBLE.sendAndWaitForResponse(msgBytes, function(r) {
+        BLE.sendAndWaitForResponse(msgBytes, function(r) {
           if (cancelled) return
           if (!r.success) {
             // Timeout — vehicle may have accepted already, try verify
@@ -194,7 +194,7 @@ export const createPairingController = function(page, storage, onState, onSucces
             onError('NFC card not detected. Hold the card on the steering column.')
             return
           }
-          teslaBLE.waitForNextResponse(60000, function(r2) {
+          BLE.waitForNextResponse(60000, function(r2) {
             if (cancelled) return
             if (!r2.success) {
               onError('NFC card not detected. Hold the card on the steering column.')
@@ -282,7 +282,7 @@ export const createPairingController = function(page, storage, onState, onSucces
   // Step 4: verify enrollment, fetch vehicle EC key, compute table, generate pool
   function doVerify() {
     if (cancelled) return
-    if (!teslaBleApi.isConnected()) {
+    if (!BLE.isConnected) {
       onError('Connection lost. Please try again.')
       return
     }
@@ -309,7 +309,7 @@ export const createPairingController = function(page, storage, onState, onSucces
           var fkeys = Object.keys(fields).join(',')
           // Field 3 alone = ambient/heartbeat message, skip up to 3 times
           if (fkeys === '3' && attempt < 3) {
-            teslaBLE.waitForNextResponse(6000, function(r2) { handleQueryResponse(r2, attempt + 1) })
+            BLE.waitForNextResponse(6000, function(r2) { handleQueryResponse(r2, attempt + 1) })
             return
           }
           if (!fields[17]) {
@@ -336,7 +336,7 @@ export const createPairingController = function(page, storage, onState, onSucces
           computeTableAndPool(ecKey)
         }
 
-        teslaBLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)
+        BLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)
       })
       .catch(function(err) {
         if (!cancelled) onError('Verify failed: ' + (err.message || '?'))

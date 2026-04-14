@@ -1,7 +1,7 @@
 // HMAC-SHA256, SHA-256, and SHA-1 correctness tests
 // Vectors verified against Node.js crypto module and RFC 3174 / RFC 4231
 
-import { createHmac } from '../lib/tesla-ble/crypto/hmac.js'
+import { createHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 import { hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/binary-utils.js'
 import { sha1, sha256 } from '../lib/tesla-ble/crypto/sha256.js'
 
@@ -184,6 +184,35 @@ describe('HMAC-SHA256', () => {
     const data = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
     const { hmac } = createHmac(key)
     expect(bytesToHex(hmac(data))).toBe(bytesToHex(hmac(data)))
+  })
+})
+
+describe('createSessionHmacs', () => {
+  test('returns hmac and cmdHmac functions', () => {
+    const { hmac, cmdHmac } = createSessionHmacs(new Uint8Array(16).fill(0x42))
+    expect(typeof hmac).toBe('function')
+    expect(typeof cmdHmac).toBe('function')
+  })
+
+  test('cmdHmac differs from raw hmac — subKey is HMAC-derived', () => {
+    const key = new Uint8Array(16).fill(0x0b)
+    const { hmac, cmdHmac } = createSessionHmacs(key)
+    const msg = new Uint8Array([0x01, 0x02, 0x03])
+    expect(Array.from(cmdHmac(msg))).not.toEqual(Array.from(hmac(msg)))
+  })
+
+  // CMD_LABEL = "authenticated command" (ASCII bytes)
+  test('cmdHmac uses subKey = HMAC(sessionKey, "authenticated command")', () => {
+    const key = new Uint8Array(16).fill(0x0b)
+    const { hmac, cmdHmac } = createSessionHmacs(key)
+    const CMD_LABEL = new Uint8Array([
+      97, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 101, 100, 32,
+      99, 111, 109, 109, 97, 110, 100,
+    ])
+    const subKey = hmac(CMD_LABEL)
+    const { hmac: expectedCmdHmac } = createHmac(subKey)
+    const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+    expect(Array.from(cmdHmac(msg))).toEqual(Array.from(expectedCmdHmac(msg)))
   })
 })
 

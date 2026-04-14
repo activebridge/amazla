@@ -287,6 +287,62 @@ describe('lib/store.js', () => {
     expect(store.keyPoolCount).toBe(7)
   })
 
+  // ── isPaired ──────────────────────────────────────────────────────────────
+
+  function setupFullyPaired() {
+    store.watchPublicKey        = bytesToBinaryString(new Uint8Array(65).fill(0x04))
+    store.vehicleEcPublicKey    = new Uint8Array(65).fill(0x04)
+    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
+    store.keyPool               = new Uint8Array(1 * 97)
+    store.vehicleVin            = '5YJ3E1EA6JF020598'
+  }
+
+  test('isPaired: false when nothing stored', () => {
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: true when all artifacts present', () => {
+    setupFullyPaired()
+    expect(store.isPaired).toBe(true)
+  })
+
+  test('isPaired: false when watchPublicKey missing', () => {
+    setupFullyPaired()
+    store.watchPublicKey = null
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: false when vehicleEcPublicKey missing', () => {
+    setupFullyPaired()
+    store.removeItem('vehicleEcPublicKey')
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: false when doublingsTable missing', () => {
+    setupFullyPaired()
+    store.vehicleDoublingsTable = null
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: false when keyPool empty', () => {
+    setupFullyPaired()
+    store.removeBinary('key_pool')
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: false when VIN missing', () => {
+    setupFullyPaired()
+    store.vehicleVin = null
+    expect(store.isPaired).toBe(false)
+  })
+
+  test('isPaired: false after reset()', () => {
+    setupFullyPaired()
+    expect(store.isPaired).toBe(true)
+    store.reset()
+    expect(store.isPaired).toBe(false)
+  })
+
   // ── reset ─────────────────────────────────────────────────────────────────
 
   test('reset clears all localStorage keys without throwing', () => {
