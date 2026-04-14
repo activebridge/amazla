@@ -73,13 +73,9 @@ function clearAllTimers() {
 function updateChecklist() {
   var watchKey = store.watchPublicKey
   var ecKey = store.vehicleEcPublicKey
-  var hasTable = !!store.vehicleDoublingsTable
+  var hasTable = store.hasDoublingsTable
   var mac = store.vehicleMac
-  var poolSize = 0
-  try {
-    var poolBinary = store.keyPool
-    if (poolBinary) poolSize = (poolBinary.length / 97) | 0
-  } catch (_e) {}
+  var poolSize = store.keyPoolCount
   if (chkKeyWidget)
     chkKeyWidget.setProperty(hmUI.prop.TEXT, `${watchKey ? '✓' : '✗'} KEY:${watchKey ? watchKey.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)

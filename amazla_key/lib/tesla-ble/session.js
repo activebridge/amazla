@@ -454,7 +454,7 @@ class TeslaSession {
             callback({ success: false, error: `Invalid vehicle public key: ${actualLength} bytes` })
             return
           }
-          const _ecdhTable = this.loadDoublingsTable()
+          const _ecdhTable = store.vehicleDoublingsTable
           if (!_ecdhTable) {
             callback({ success: false, error: 'No ECDH table — re-pair to generate' })
             return

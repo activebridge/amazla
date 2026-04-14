@@ -178,6 +178,51 @@ describe('lib/store.js', () => {
     expect(t1).toBe(t2) // same reference
   })
 
+  // ── hasDoublingsTable ─────────────────────────────────────────────────────
+
+  test('hasDoublingsTable: false when nothing stored', () => {
+    expect(store.hasDoublingsTable).toBe(false)
+  })
+
+  test('hasDoublingsTable: true after storing valid table', () => {
+    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
+    expect(store.hasDoublingsTable).toBe(true)
+  })
+
+  test('hasDoublingsTable: true after first cache load (no extra file I/O)', () => {
+    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
+    store.vehicleDoublingsTable // loads and caches
+    // Force cache clear — but LocalStorage flag still set
+    // We can't clear _doublingsTableCache directly; re-test from LocalStorage flag
+    expect(store.hasDoublingsTable).toBe(true)
+  })
+
+  // ── keyPoolCount ──────────────────────────────────────────────────────────
+
+  test('keyPoolCount: 0 when nothing stored', () => {
+    expect(store.keyPoolCount).toBe(0)
+  })
+
+  test('keyPoolCount: updated when pool is written', () => {
+    const pool = new Uint8Array(33 * 97)
+    store.keyPool = pool
+    expect(store.keyPoolCount).toBe(33)
+  })
+
+  test('keyPoolCount: updates to 0 when pool is removed', () => {
+    store.keyPool = new Uint8Array(5 * 97)
+    expect(store.keyPoolCount).toBe(5)
+    store.removeBinary('key_pool')
+    expect(store.keyPoolCount).toBe(0)
+  })
+
+  test('keyPoolCount: reflects partial pool', () => {
+    store.keyPool = new Uint8Array(10 * 97)
+    expect(store.keyPoolCount).toBe(10)
+    store.keyPool = new Uint8Array(7 * 97)
+    expect(store.keyPoolCount).toBe(7)
+  })
+
   // ── reset ─────────────────────────────────────────────────────────────────
 
   test('reset clears all localStorage keys without throwing', () => {
@@ -187,6 +232,8 @@ describe('lib/store.js', () => {
     store.vehicleMac   = 'MAC'
     store.vehicleEcPublicKey = new Uint8Array(65)
     store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65))
+    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
+    store.keyPool = new Uint8Array(5 * 97)
 
     expect(() => store.reset()).not.toThrow()
 
@@ -196,5 +243,7 @@ describe('lib/store.js', () => {
     expect(store.vehicleMac).toBeNull()
     expect(store.vehicleEcPublicKey).toBeNull()
     expect(store.watchPublicKey).toBeNull()
+    expect(store.hasDoublingsTable).toBe(false)
+    expect(store.keyPoolCount).toBe(0)
   })
 })

@@ -65,12 +65,28 @@ const store = {
   set vehicleDoublingsTable(value) {
     _doublingsTableCache = null
     writeBinary('vehicle_doublings_table', value)
+    set('hasDoublingsTable', value ? '1' : null)
+  },
+  // Lightweight existence check — no file I/O if table is already cached or flag is set.
+  // Use this in UI code (updateChecklist) instead of !!vehicleDoublingsTable.
+  get hasDoublingsTable() {
+    if (_doublingsTableCache) return true
+    try { return localStorage.getItem('hasDoublingsTable') === '1' } catch (_e) { return false }
   },
   get keyPool() {
     return readBinary('key_pool')
   },
   set keyPool(value) {
     writeBinary('key_pool', value)
+    localStorage.setItem('keyPoolCount', String(value ? (value.length / 97) | 0 : 0))
+  },
+  // Lightweight pool count — reads from LocalStorage, no file I/O.
+  // Use this in UI code (updateChecklist) instead of reading the pool file.
+  get keyPoolCount() {
+    try {
+      const n = parseInt(localStorage.getItem('keyPoolCount') || '0', 10)
+      return isNaN(n) ? 0 : n
+    } catch (_e) { return 0 }
   },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')
@@ -103,6 +119,8 @@ const store = {
     } catch (_e) {
       // ignore
     }
+    if (key === 'key_pool') localStorage.setItem('keyPoolCount', '0')
+    if (key === 'vehicle_doublings_table') localStorage.removeItem('hasDoublingsTable')
   },
 
   removeItem: (key) => {
@@ -116,6 +134,8 @@ const store = {
     localStorage.removeItem('vehicleMac')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
+    localStorage.removeItem('hasDoublingsTable')
+    localStorage.removeItem('keyPoolCount')
     _doublingsTableCache = null
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('key_pool')
