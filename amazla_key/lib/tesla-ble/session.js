@@ -1,6 +1,6 @@
 import store from '../store.js'
 import teslaBLE from './ble-native.js'
-import { createHmac } from './crypto/hmac.js'
+import { createSessionHmacs, createHmac } from './crypto/hmac.js'
 import { ecdhFixed } from './crypto/p256.js'
 import { sha1 } from './crypto/sha256.js'
 import { decodeMessage } from './protocol/protobuf.js'
@@ -24,8 +24,6 @@ import {
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
 
-const HARDCODED_DEV_VIN = '5YJ3E1EA6JF020598'
-
 class TeslaSession {
   constructor() {
     this.onPoolLow = null // Callback when pool gets low - receives callback(count) to request from phone
@@ -41,38 +39,14 @@ class TeslaSession {
     this.sessionKey = null
     this.routingAddress = null
     this.established = false
-    this.replenishingPool = false
     this._connecting = false // guard against duplicate connection attempts
     this.pendingCallbacks = null
-    this._hmac = null // instance hmac function for sessionKey
-    this._cmdHmacFn = null // instance hmac function for command subKey
-    this.vin = null // vehicle VIN as Uint8Array for HMAC personalization
+    this._cmdHmacFn = null
     this._waitingForSecondResponse = false
     if (this._secondResponseTimer) {
       clearTimeout(this._secondResponseTimer)
       this._secondResponseTimer = null
     }
-  }
-  _initHmacPads() {
-    // Precompute HMAC functions for session key and command sub-key
-    const { hmac } = createHmac(this.sessionKey)
-    // instance-level hmac function (overrides prototype method)
-    this._hmac = hmac
-
-    // Command HMAC sub-key — per Tesla SDK:
-    //   subKey = HMAC-SHA256(sessionKey, "authenticated command")
-    const LABEL = new Uint8Array([
-      97, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 101, 100, 32, 99, 111, 109, 109, 97, 110, 100,
-    ])
-    const subKey = this._hmac(LABEL) // 32-byte derived key
-    const { hmac: cmdHmac } = createHmac(subKey)
-    this._cmdHmacFn = cmdHmac
-  }
-  // HMAC-SHA256 using the command sub-key (HMAC(sessionKey, "authenticated command")).
-  // Used for command authentication per Tesla SDK (AuthorizeHMAC path).
-  _cmdHmac(message) {
-    if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
-    return this._cmdHmacFn(message)
   }
   // Builds the HMAC tag for an authenticated command per Tesla SDK metadata scheme.
   // Input: HMAC-SHA256(subKey, metadata || 0xFF || payloadBytes)
@@ -86,7 +60,7 @@ class TeslaSession {
   //   TAG_END(0xFF)
   //   payload bytes (ToVCSECMessage)
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
-    const vin = this.vin || new Uint8Array(0)
+    const vin = store.vehicleVin || new Uint8Array(0)
     const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
     const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
     const expiresAtBytes = u32be(expiresAt)
@@ -121,98 +95,8 @@ class TeslaSession {
     wBytes(counterBytes) // TAG_COUNTER (big-endian)
     wb(0xff) // TAG_END
     wBytes(payloadBytes) // payload (ToVCSECMessage bytes)
-    return this._cmdHmac(hmacInput)
-  }
-  popKeyFromPool() {
-    try {
-      const data = store.keyPool
-      if (!data || data.length < 97) {
-        if (this.onPoolLow && !this.replenishingPool) {
-          this.replenishingPool = true
-          this.onPoolLow(15)
-        }
-        return null
-      }
-
-      // Binary storage: 97 bytes per key (32 priv + 65 pub)
-      const privBytes = data.slice(0, 32)
-      const pubBytes = data.slice(32, 97)
-      const rest = data.slice(97)
-      const poolSize = (rest.length / 97) | 0
-
-      if (rest.length > 0) {
-        store.keyPool = rest
-      } else {
-        store.removeBinary('key_pool')
-      }
-
-      if (poolSize < 5 && this.onPoolLow && !this.replenishingPool) {
-        this.replenishingPool = true
-        this.onPoolLow(15)
-      }
-
-      return { privateKeyBytes: privBytes, publicKeyBytes: pubBytes }
-    } catch (e) {
-      console.log('[Session] popKeyFromPool error:', e.message)
-      return null
-    }
-  }
-  completePoolReplenishment() {
-    this.replenishingPool = false
-  }
-  getPoolSize() {
-    try {
-      const data = store.keyPool
-      return data ? (data.length / 97) | 0 : 0
-    } catch (e) {
-      console.log('[Session] getPoolSize error:', e.message)
-      return 0
-    }
-  }
-  loadVehiclePublicKey() {
-    try {
-      const pubKeyData = store.vehicleEcPublicKey
-      if (pubKeyData && pubKeyData.length === 65) {
-        // Binary storage: 65 bytes
-        this.vehiclePublicKey = pubKeyData
-        console.log('[SESSION] Loaded vehicle public key from storage (65 bytes)')
-        return true
-      }
-
-      console.log('[SESSION] Vehicle public key not found in storage (pair with vehicle first)')
-      return false
-    } catch (e) {
-      console.log('[SESSION] Error loading vehicle public key:', e.message)
-      return false
-    }
-  }
-  loadVehicleVIN() {
-    try {
-      const vin = store.vehicleVin
-      if (vin && vin.length === 17) {
-        this.vin = new Uint8Array(vin.length)
-        for (let i = 0; i < vin.length; i++) this.vin[i] = vin.charCodeAt(i) & 0x7f
-        console.log('[SESSION] Loaded VIN for HMAC personalization')
-        return true
-      }
-      if (vin && vin.length !== 17) {
-        console.log(`[SESSION] Stored VIN has invalid length (${vin.length}), expected 17 — replacing with fallback`)
-      }
-      this.setVehicleVIN(HARDCODED_DEV_VIN)
-      console.log('[SESSION] VIN not stored — using hardcoded VIN fallback for HMAC personalization')
-      return true
-    } catch (_e) {
-      this.vin = new Uint8Array(0)
-      return false
-    }
-  }
-  setVehicleVIN(vinString) {
-    if (!vinString || vinString.length !== 17) {
-      throw new Error('VIN must be 17 characters')
-    }
-    this.vin = new Uint8Array(vinString.length)
-    for (let i = 0; i < vinString.length; i++) this.vin[i] = vinString.charCodeAt(i) & 0x7f
-    store.vehicleVin = vinString
+    if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
+    return this._cmdHmacFn(hmacInput)
   }
   requestVehiclePublicKey(callback) {
     const ensureConnectedAndFetch = () => {
@@ -338,7 +222,7 @@ class TeslaSession {
 
     const proceedWithSession = () => {
       if (!this.vehiclePublicKey) {
-        this.loadVehiclePublicKey() // Loads from storage if available
+        this.vehiclePublicKey = store.vehicleEcPublicKey || null
         if (!this.vehiclePublicKey) {
           console.log('[SESSION] Vehicle EC key not in storage, attempting to fetch via GetWhitelistEntryInfo...')
           return this.requestVehiclePublicKey((keyResult) => {
@@ -358,12 +242,12 @@ class TeslaSession {
     ensureConnected()
   }
   _doSessionInfoRequest(callback) {
-    const keypair = this.popKeyFromPool()
+    const keypair = store.popKey()
     if (!keypair) {
       callback({ success: false, error: 'Key pool empty — sync from phone (GEN POOL)' })
       return
     }
-    console.log(`[SESSION] Popped ephemeral key, pool remaining: ${this.getPoolSize()}`)
+    console.log(`[SESSION] Popped ephemeral key, pool remaining: ${store.keyPoolCount}`)
     this.ephemeralPrivateKey = keypair.privateKeyBytes // Uint8Array[32]
     this.ephemeralPublicKey = keypair.publicKeyBytes // Uint8Array[65]
     this.routingAddress = generateRoutingAddress()
@@ -392,15 +276,9 @@ class TeslaSession {
         }
         console.log(`[SESSION] Raw response: ${result.data.length} bytes`)
 
-        const response = parseRoutableMessage(result.data)
-        console.log(
-          `[SESSION] Response fields: sessionInfo=${!!response.sessionInfo}, payload=${!!response.payload}, status=${!!response.signedMessageStatus}`,
-        )
         const rawFields = decodeMessage(result.data)
-        const fieldKeys = Object.keys(rawFields)
-          .sort((a, b) => a - b)
-          .join(',')
-        console.log(`[SESSION] Raw fields in response: [${fieldKeys}]`)
+        const fieldKeys = Object.keys(rawFields).sort((a, b) => a - b).join(',')
+        const response = parseRoutableMessage(result.data)
 
         // If no sessionInfo, payload, or status — this is an intermediate ack from the vehicle.
         // Signal _requeue so wrappedCallback re-registers sessionInfoResponseHandler for the real response.
@@ -421,14 +299,11 @@ class TeslaSession {
             }
           } else {
             console.log('[SESSION] SessionInfo response has no valid public key')
+            if (!this.vehiclePublicKey) this.vehiclePublicKey = store.vehicleEcPublicKey || null
             if (!this.vehiclePublicKey) {
-              const keyLoaded = this.loadVehiclePublicKey()
-              if (!keyLoaded) {
-                console.log('[SESSION] ❌ No vehicle public key available from storage or response')
-                console.log('[SESSION] Please complete pairing first to obtain vehicle EC key')
-                callback({ success: false, error: 'Vehicle public key not found. Complete pairing first.' })
-                return
-              }
+              console.log('[SESSION] ❌ No vehicle public key available from storage or response')
+              callback({ success: false, error: 'Vehicle public key not found. Complete pairing first.' })
+              return
             }
           }
 
@@ -465,9 +340,9 @@ class TeslaSession {
           console.log(`[SESSION] ECDH done in ${Date.now() - _ecdhStart}ms`)
           const keyMaterial = sha1(sharedSecret)
           this.sessionKey = keyMaterial.slice(0, 16)
-          this._initHmacPads()
+          const { cmdHmac } = createSessionHmacs(this.sessionKey)
+          this._cmdHmacFn = cmdHmac
           this.established = true
-          this.loadVehicleVIN()
           console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
           callback({
             success: true,
@@ -475,12 +350,9 @@ class TeslaSession {
             epoch: this.epoch ? this.epoch.length : 0,
           })
         } else {
-          const fieldList = Object.keys(rawFields)
-            .sort((a, b) => a - b)
-            .join(', ')
           console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
-          console.log(`[SESSION] Fields present: [${fieldList}]`)
-          callback({ success: false, error: `No session info in response. Fields: [${fieldList}]` })
+          console.log(`[SESSION] Fields present: [${fieldKeys}]`)
+          callback({ success: false, error: `No session info in response. Fields: [${fieldKeys}]` })
         }
       } catch (e) {
         console.log(`[SESSION] Exception: ${e.message}`)
@@ -513,9 +385,10 @@ class TeslaSession {
     }
     // Per vcsec.proto SignedMessage has only field 2 (payload) and field 3 (signatureType).
     // For HMAC commands, signatureType is omitted (NONE=0 default); auth is in RoutableMessage.signature_data.
-    const unsignedMessage = typeof rkeActionOrClosure === 'number'
-      ? buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
-      : buildUnsignedMessage(rkeActionOrClosure) // { closureMoveRequest: <Uint8Array> }
+    const unsignedMessage =
+      typeof rkeActionOrClosure === 'number'
+        ? buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
+        : buildUnsignedMessage(rkeActionOrClosure) // { closureMoveRequest: <Uint8Array> }
     return this._buildAuthMessage(unsignedMessage)
   }
   sendCommand(rkeActionOrClosure, callback) {
@@ -587,9 +460,6 @@ class TeslaSession {
       doSend()
     }
   }
-  sendRKECommand(action, callback) {
-    this.sendCommand(action, callback)
-  }
   getVehicleStatus(callback) {
     if (!this.established) {
       callback({ success: false, error: 'Session not established' })
@@ -626,7 +496,7 @@ class TeslaSession {
   }
   isPaired() {
     // Check if pairing data exists (means user completed pairing flow)
-    return !!store.keyPool && !!store.vehicleEcPublicKey
+    return store.keyPoolCount > 0 && !!store.vehicleEcPublicKey
   }
   ensureSessionEstablished(callback) {
     // If session already established, call callback immediately

@@ -166,7 +166,7 @@ const sendCommand = (rkeAction, label) => {
   if (isRunning) { hmUI.showToast({ text: 'Busy…' }); return }
   isRunning = true
   hmUI.updateStatusBarTitle(label + '…')
-  teslaSession.sendRKECommand(rkeAction, function(result) {
+  teslaSession.sendCommand(rkeAction, function(result) {
     isRunning = false
     if (result.success) {
       vibrate(24)
@@ -275,7 +275,7 @@ Page(BasePage({
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
 
-    var currentCount = teslaSession.getPoolSize()
+    var currentCount = store.keyPoolCount
     currentPage
       .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
       .then((r) => { if (r.success && r.pool) store.keyPool = binaryStringToBytes(r.pool) })

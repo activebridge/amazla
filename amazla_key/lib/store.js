@@ -5,6 +5,8 @@ import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/bin
 const localStorage = new LocalStorage()
 
 let _doublingsTableCache = null
+let _keyPoolCache = null   // full pool file as Uint8Array
+let _keyPoolOffset = 0     // bytes consumed from front (persisted in localStorage)
 
 const readBinary = (path) => {
   try {
@@ -74,18 +76,38 @@ const store = {
     try { return localStorage.getItem('hasDoublingsTable') === '1' } catch (_e) { return false }
   },
   get keyPool() {
-    return readBinary('key_pool')
+    if (!_keyPoolCache) _keyPoolCache = readBinary('key_pool')
+    if (!_keyPoolCache) return undefined
+    return _keyPoolCache.length > _keyPoolOffset ? _keyPoolCache.slice(_keyPoolOffset) : undefined
   },
   set keyPool(value) {
+    _keyPoolCache = value || null
+    _keyPoolOffset = 0
+    localStorage.setItem('keyPoolOffset', '0')
     writeBinary('key_pool', value)
     localStorage.setItem('keyPoolCount', String(value ? (value.length / 97) | 0 : 0))
+  },
+  popKey() {
+    if (!_keyPoolCache) _keyPoolCache = readBinary('key_pool')
+    if (!_keyPoolCache) return null
+    if (!_keyPoolOffset) {
+      const n = parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
+      _keyPoolOffset = isNaN(n) ? 0 : n
+    }
+    if (_keyPoolOffset + 97 > _keyPoolCache.length) return null
+    const privBytes = _keyPoolCache.slice(_keyPoolOffset, _keyPoolOffset + 32)
+    const pubBytes  = _keyPoolCache.slice(_keyPoolOffset + 32, _keyPoolOffset + 97)
+    _keyPoolOffset += 97
+    localStorage.setItem('keyPoolOffset', String(_keyPoolOffset))
+    return { privateKeyBytes: privBytes, publicKeyBytes: pubBytes }
   },
   // Lightweight pool count — reads from LocalStorage, no file I/O.
   // Use this in UI code (updateChecklist) instead of reading the pool file.
   get keyPoolCount() {
     try {
-      const n = parseInt(localStorage.getItem('keyPoolCount') || '0', 10)
-      return isNaN(n) ? 0 : n
+      const total = parseInt(localStorage.getItem('keyPoolCount') || '0', 10)
+      const offset = _keyPoolOffset || parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
+      return Math.max(0, total - (offset / 97 | 0))
     } catch (_e) { return 0 }
   },
   get vehicleMac() {
@@ -95,7 +117,8 @@ const store = {
     set('vehicleMac', value)
   },
   get vehicleVin() {
-    return localStorage.getItem('vehicleVin')
+    const s = localStorage.getItem('vehicleVin')
+    return s ? binaryStringToBytes(s) : null
   },
   set vehicleVin(value) {
     set('vehicleVin', value)
@@ -119,7 +142,12 @@ const store = {
     } catch (_e) {
       // ignore
     }
-    if (key === 'key_pool') localStorage.setItem('keyPoolCount', '0')
+    if (key === 'key_pool') {
+      _keyPoolCache = null
+      _keyPoolOffset = 0
+      localStorage.setItem('keyPoolOffset', '0')
+      localStorage.setItem('keyPoolCount', '0')
+    }
     if (key === 'vehicle_doublings_table') localStorage.removeItem('hasDoublingsTable')
   },
 
@@ -136,7 +164,10 @@ const store = {
     localStorage.removeItem('watchPublicKey')
     localStorage.removeItem('hasDoublingsTable')
     localStorage.removeItem('keyPoolCount')
+    localStorage.removeItem('keyPoolOffset')
     _doublingsTableCache = null
+    _keyPoolCache = null
+    _keyPoolOffset = 0
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('key_pool')
   },

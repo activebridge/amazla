@@ -17,7 +17,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 | Data | Storage | Format |
 |------|---------|--------|
-| `watchPublicKey`, `vehicleEcPublicKey`, `vehicleMac`, `vehicleVin`, `vehicleName`, `vehicleModel` | `LocalStorage` | Binary string (charCodeAt-encoded) |
+| `watchPublicKey`, `vehicleEcPublicKey`, `vehicleMac`, `vehicleVin`, `vehicleName`, `vehicleModel` | `LocalStorage` | Binary string (charCodeAt-encoded); `vehicleVin` getter returns `Uint8Array` |
 | `vehicle_doublings_table.dat` | Binary file | 16,384-byte raw `Uint32Array` (LSW-first, native endian) |
 | `key_pool.dat` | Binary file | 97 bytes/key raw binary |
 
@@ -248,7 +248,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │     ┌─────────────────────────────────────────────────────────────────┐      │
 │     │  LocalStorage (watch)                                           │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │ watchPublicKey: binary string (65 bytes)                     ││      │
+│     │  │ watchPublicKey: binary string (65 bytes)                    ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     │  Phone storage (app-side/tesla/session.js)                      │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
@@ -265,7 +265,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool.dat (binary file on watch, 97 bytes/key)             │      │
+│     │  key_pool.dat (binary file on watch, 97 bytes/key)              │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
 │     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
 │     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
@@ -300,13 +300,13 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   └────┬────┘     BLE_SYNC_POOL                 │                            │
 │        │          { currentCount: N }           │                            │
 │        │                                        │                            │
-│        │                              ┌─────────┴─────────┐                  │
-│        │                              │ N >= 33?           │                  │
-│        │                              │   → { pool: null } │                  │
-│        │                              │ N < 33?            │                  │
-│        │                              │   → generate 33    │                  │
-│        │                              │     P-256 keypairs │                  │
-│        │                              └─────────┬─────────┘                  │
+│        │                              ┌─────────┴──────────┐                 │
+│        │                              │ N >= 33?           │                 │
+│        │                              │   → { pool: null } │                 │
+│        │                              │ N < 33?            │                 │
+│        │                              │   → generate 33    │                 │
+│        │                              │     P-256 keypairs │                 │
+│        │                              └─────────┬──────────┘                 │
 │        │                                        │                            │
 │        │  ◄──────────────────────────────────   │                            │
 │        │     { success, pool: binary | null }   │                            │
@@ -318,7 +318,7 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   └────┬────┘                                   │                            │
 │        │                                        │                            │
 │        ▼                                        ▼                            │
-│   Ready for standalone operation! (33 keys ≈ ~3.2 KB)                       │
+│   Ready for standalone operation! (33 keys ≈ ~3.2 KB)                        │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -731,7 +731,7 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 | `watchPublicKey` | 65-byte enrolled public key | binary string | `BLE_SYNC_KEYS` phone sync |
 | `vehicleEcPublicKey` | 65-byte vehicle EC key | binary string | Auto-saved after pairing |
 | `vehicleMac` | Vehicle BLE MAC address | plain string | Auto-saved on scan |
-| `vehicleVin` | Vehicle VIN | plain string | Saved during pairing |
+| `vehicleVin` | Vehicle VIN | binary string (getter returns `Uint8Array`) | Saved during pairing |
 | `vehicleName` | Vehicle display name | plain string | Saved during pairing |
 | `vehicleModel` | Vehicle model | plain string | Saved during pairing |
 
@@ -911,9 +911,10 @@ session.requestVehiclePublicKey((result) => {
    - `hexToBytes(hex)` — hex → Uint8Array (fallback)
 
 3. **Storage format updates**:
-   - Doublings table: `loadDoublingsTable()` reads uint32 words directly from binary string via `charCodeAt` — no intermediate Uint8Array or DataView
-   - Key pool: `popKeyFromPool()` extracts 97-byte entries with charCodeAt
-   - Vehicle key: `loadVehiclePublicKey()` loads 65-byte binary string
+   - Doublings table: loaded via `store.vehicleDoublingsTable` — `new Uint32Array(raw)`, zero-copy
+   - Key pool: `store.popKey()` advances an in-memory offset pointer — no file rewrite per pop
+   - Vehicle key: `store.vehicleEcPublicKey` returns `Uint8Array` directly — no `loadVehiclePublicKey()` wrapper
+   - Vehicle VIN: `store.vehicleVin` returns `Uint8Array` directly — no session-level VIN caching
    - Enrolled keys: Phone stores/sends binary, watch uses binary directly
 
 4. **Message format**:

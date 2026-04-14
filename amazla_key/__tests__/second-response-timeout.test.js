@@ -2,6 +2,7 @@ import { TeslaSession } from '../lib/tesla-ble/session.js'
 import teslaBLE from '../lib/tesla-ble/ble-native.js'
 import { RKE_ACTION_LOCK } from '../lib/tesla-ble/protocol/vcsec.js'
 import { encodeVarintField, encodeBytes } from '../lib/tesla-ble/protocol/protobuf.js'
+import { createHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 
 function makeSessionInfoBytes(counter, clockTime) {
   return [
@@ -24,7 +25,7 @@ describe('sendCommand — second response timeout handling', () => {
     session.clockTime = 1000
     session.sessionKey = new Uint8Array(16).fill(0x11)
     session.routingAddress = new Uint8Array(16).fill(0x22)
-    session._initHmacPads()
+    { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
     // Stub BLE send to synchronously deliver only the intermediate ack
     const origSend = teslaBLE.send
@@ -70,7 +71,7 @@ describe('sendCommand — second response timeout handling', () => {
     session.clockTime = 1000
     session.sessionKey = new Uint8Array(16).fill(0x11)
     session.routingAddress = new Uint8Array(16).fill(0x22)
-    session._initHmacPads()
+    { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
     // Stub BLE send to deliver only the intermediate SessionInfo response
     const origSend = teslaBLE.send

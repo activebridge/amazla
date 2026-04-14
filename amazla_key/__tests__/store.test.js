@@ -24,12 +24,13 @@ describe('lib/store.js', () => {
 
   test('localStorage-backed properties store and retrieve values', () => {
     store.vehicleMac   = 'MAC_123'
-    store.vehicleVin   = 'VIN_123'
+    store.vehicleVin   = '5YJ3E1EA6JF020598'
     store.vehicleName  = 'MyCar'
     store.vehicleModel = 'Model S'
 
     expect(store.vehicleMac).toBe('MAC_123')
-    expect(store.vehicleVin).toBe('VIN_123')
+    expect(store.vehicleVin).toBeInstanceOf(Uint8Array)
+    expect(store.vehicleVin.length).toBe(17)
     expect(store.vehicleName).toBe('MyCar')
     expect(store.vehicleModel).toBe('Model S')
   })
@@ -195,6 +196,69 @@ describe('lib/store.js', () => {
     // Force cache clear — but LocalStorage flag still set
     // We can't clear _doublingsTableCache directly; re-test from LocalStorage flag
     expect(store.hasDoublingsTable).toBe(true)
+  })
+
+  // ── popKey ───────────────────────────────────────────────────────────────
+
+  test('popKey: returns null when pool empty', () => {
+    expect(store.popKey()).toBeNull()
+  })
+
+  test('popKey: returns first key as { privateKeyBytes, publicKeyBytes }', () => {
+    const pool = new Uint8Array(2 * 97)
+    for (let i = 0; i < pool.length; i++) pool[i] = i & 0xff
+    store.keyPool = pool
+
+    const key = store.popKey()
+    expect(key).not.toBeNull()
+    expect(key.privateKeyBytes).toBeInstanceOf(Uint8Array)
+    expect(key.publicKeyBytes).toBeInstanceOf(Uint8Array)
+    expect(key.privateKeyBytes.length).toBe(32)
+    expect(key.publicKeyBytes.length).toBe(65)
+    expect(Array.from(key.privateKeyBytes)).toEqual(Array.from(pool.slice(0, 32)))
+    expect(Array.from(key.publicKeyBytes)).toEqual(Array.from(pool.slice(32, 97)))
+  })
+
+  test('popKey: successive calls return successive keys without rewriting file', () => {
+    const pool = new Uint8Array(3 * 97)
+    for (let i = 0; i < pool.length; i++) pool[i] = i & 0xff
+    store.keyPool = pool
+
+    const k1 = store.popKey()
+    const k2 = store.popKey()
+    const k3 = store.popKey()
+    expect(Array.from(k1.privateKeyBytes)).toEqual(Array.from(pool.slice(0, 32)))
+    expect(Array.from(k2.privateKeyBytes)).toEqual(Array.from(pool.slice(97, 129)))
+    expect(Array.from(k3.privateKeyBytes)).toEqual(Array.from(pool.slice(194, 226)))
+  })
+
+  test('popKey: returns null when all keys consumed', () => {
+    store.keyPool = new Uint8Array(1 * 97)
+    store.popKey()
+    expect(store.popKey()).toBeNull()
+  })
+
+  test('popKey: keyPoolCount decrements on each pop', () => {
+    store.keyPool = new Uint8Array(3 * 97)
+    expect(store.keyPoolCount).toBe(3)
+    store.popKey()
+    expect(store.keyPoolCount).toBe(2)
+    store.popKey()
+    expect(store.keyPoolCount).toBe(1)
+    store.popKey()
+    expect(store.keyPoolCount).toBe(0)
+  })
+
+  test('popKey: writing new pool resets offset — all keys available again', () => {
+    store.keyPool = new Uint8Array(2 * 97)
+    store.popKey()
+    store.popKey()
+    expect(store.popKey()).toBeNull()
+
+    store.keyPool = new Uint8Array(2 * 97)
+    expect(store.popKey()).not.toBeNull()
+    expect(store.popKey()).not.toBeNull()
+    expect(store.popKey()).toBeNull()
   })
 
   // ── keyPoolCount ──────────────────────────────────────────────────────────

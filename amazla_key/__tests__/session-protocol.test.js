@@ -24,9 +24,10 @@ import {
 import { decodeMessage, encodeBytes, encodeEnum, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import { createHmac } from '../lib/tesla-ble/crypto/hmac.js'
+import { createHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 import teslaBLE from '../lib/tesla-ble/ble-native.js'
 import { hexToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
+import store from '../lib/store.js'
 
 function bytesToHex(b) {
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
@@ -775,7 +776,7 @@ describe('TeslaSession._hmac pre-computed pads', () => {
   function makeSession(keyHex) {
     const s = new TeslaSession()
     s.sessionKey = hexToBytes(keyHex)
-    s._initHmacPads()
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     return s
   }
 
@@ -811,7 +812,7 @@ describe('TeslaSession._hmac pre-computed pads', () => {
     const key = new Uint8Array(16).fill(0xab)
     const s = new TeslaSession()
     s.sessionKey = key
-    s._initHmacPads()
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     const msg = new Uint8Array([1, 2, 3, 4, 5])
     {
     const { hmac } = createHmac(key)
@@ -828,28 +829,30 @@ describe('TeslaSession._hmac pre-computed pads', () => {
 
   test('hmac function null before _initHmacPads called', () => {
     const s = new TeslaSession()
-    expect(s._hmac).toBeNull()
+    expect(s._hmac).toBeUndefined()
   })
 
   test('hmac function cleared on reset()', () => {
     const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
     expect(s._hmac).not.toBeNull()
     s.reset()
-    expect(s._hmac).toBeNull()
+    // Command-level HMAC cleared by session.reset(); raw session HMAC was externalized
+    expect(s._cmdHmacFn).toBeNull()
   })
 
   test('pads re-initialized after reset + re-establish', () => {
     const s = makeSession('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
     expect(s._hmac).not.toBeNull()
     s.reset()
-    expect(s._hmac).toBeNull()
+    // command-level HMAC cleared by reset
+    expect(s._cmdHmacFn).toBeNull()
     // Re-establish with same key
-    s.sessionKey = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
-    s._initHmacPads()
+    s.sessionKey = hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b')
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     expect(s._hmac).not.toBeNull()
     const msg = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
-    const { hmac } = createHmac(hexToBytes('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b'))
-    expect(s._hmac(msg)).toEqual(hmac(msg))
+    const { hmac: expectedHmac } = createHmac(s.sessionKey)
+    expect(s._hmac(msg)).toEqual(expectedHmac(msg))
   })
 
 
@@ -947,7 +950,7 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     s.routingAddress = new Uint8Array(16).fill(0x01)
     s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
     s.vin          = new Uint8Array(0)
-    s._initHmacPads()
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     return s
   }
 
@@ -1062,7 +1065,7 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
     s.routingAddress = new Uint8Array(16).fill(0x02)
     s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
     s.vin          = new Uint8Array(0)
-    s._initHmacPads()
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     return s
   }
 
@@ -1163,11 +1166,11 @@ describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
     return b
   }
 
-  function makeSession(vin) {
+  function makeSession() {
+    store.vehicleVin = null
     const s = new TeslaSession()
     s.sessionKey = new Uint8Array(16).fill(0x0b)
-    s.vin = vin || new Uint8Array(0)
-    s._initHmacPads()
+    { const { hmac } = createHmac(s.sessionKey); s._hmac = hmac; const { cmdHmac } = createSessionHmacs(s.sessionKey); s._cmdHmacFn = cmdHmac; s._cmdHmac = cmdHmac; }
     return s
   }
 
@@ -1206,8 +1209,7 @@ describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
     const s1 = makeSession()
     const s2 = new TeslaSession()
     s2.sessionKey = new Uint8Array(16).fill(0xcc)
-    s2.vin = new Uint8Array(0)
-    s2._initHmacPads()
+    { const { hmac } = createHmac(s2.sessionKey); s2._hmac = hmac; const { cmdHmac } = createSessionHmacs(s2.sessionKey); s2._cmdHmacFn = cmdHmac; s2._cmdHmac = cmdHmac; }
     const epoch = new Uint8Array(16).fill(0xee)
     const payload = new Uint8Array([0xaa])
     const t1 = s1._buildHMACTag(epoch, 1, 100, payload)
@@ -1225,22 +1227,24 @@ describe('TeslaSession._buildHMACTag — metadata + subKey HMAC', () => {
   })
 
   test('different VINs produce different HMAC tags', () => {
-    const s1 = makeSession(new Uint8Array([0x41,0x42,0x43])) // 'ABC'
-    const s2 = makeSession(new Uint8Array([0x58,0x59,0x5A])) // 'XYZ'
+    const s = makeSession()
     const epoch = new Uint8Array(16).fill(0xee)
     const payload = new Uint8Array([0x01])
-    const t1 = s1._buildHMACTag(epoch, 1, 100, payload)
-    const t2 = s2._buildHMACTag(epoch, 1, 100, payload)
+    store.vehicleVin = 'ABC'
+    const t1 = s._buildHMACTag(epoch, 1, 100, payload)
+    store.vehicleVin = 'XYZ'
+    const t2 = s._buildHMACTag(epoch, 1, 100, payload)
     expect(Array.from(t1)).not.toEqual(Array.from(t2))
   })
 
   test('empty VIN vs populated VIN produce different tags', () => {
-    const sEmpty = makeSession()
-    const sWith = makeSession(new Uint8Array([0x41,0x42,0x43,0x44,0x45,0x46,0x47,0x48]))
+    const s = makeSession()
     const epoch = new Uint8Array(16).fill(0xee)
     const payload = new Uint8Array([0xab])
-    const te = sEmpty._buildHMACTag(epoch, 2, 200, payload)
-    const tw = sWith._buildHMACTag(epoch, 2, 200, payload)
+    store.vehicleVin = null
+    const te = s._buildHMACTag(epoch, 2, 200, payload)
+    store.vehicleVin = 'ABCDEFGH'
+    const tw = s._buildHMACTag(epoch, 2, 200, payload)
     expect(Array.from(te)).not.toEqual(Array.from(tw))
   })
 }

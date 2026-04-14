@@ -44,4 +44,17 @@ const createHmac = (key) => {
   return { hmac, innerPad, outerPad }
 }
 
-export { createHmac }
+// Derives session-level and command-level HMAC functions from a 16-byte session key.
+// Command sub-key = HMAC-SHA256(sessionKey, "authenticated command") per Tesla SDK.
+const CMD_LABEL = new Uint8Array([
+  97, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 101, 100, 32, 99, 111, 109, 109, 97, 110, 100,
+])
+
+const createSessionHmacs = (sessionKey) => {
+  const { hmac } = createHmac(sessionKey)
+  const subKey = hmac(CMD_LABEL)
+  const { hmac: cmdHmac } = createHmac(subKey)
+  return { hmac, cmdHmac }
+}
+
+export { createHmac, createSessionHmacs }

@@ -77,7 +77,8 @@ function updateChecklist() {
   var mac = store.vehicleMac
   var poolSize = store.keyPoolCount
   var vehicleName = store.vehicleName
-  var vehicleVin = store.vehicleVin
+  var vehicleVinBytes = store.vehicleVin
+  var vehicleVin = vehicleVinBytes ? String.fromCharCode.apply(null, vehicleVinBytes) : null
   if (chkKeyWidget)
     chkKeyWidget.setProperty(hmUI.prop.TEXT, `${watchKey ? '✓' : '✗'} KEY:${watchKey ? watchKey.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
@@ -636,7 +637,7 @@ Page(
       console.log('[BLE-LIFECYCLE] Setting session storage')
 
       teslaSession.onPoolLow = () => {
-        var currentCount = teslaSession.getPoolSize()
+        var currentCount = store.keyPoolCount
         console.log(`[BLE] Pool low (${currentCount}), syncing`)
         currentPage
           .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
@@ -647,11 +648,9 @@ Page(
             } else {
               addLog('Pool replenish failed', 0xff8844)
             }
-            teslaSession.completePoolReplenishment()
           })
           .catch((_e) => {
             addLog('Pool replenish err', 0xff8844)
-            teslaSession.completePoolReplenishment()
           })
       }
       // Always request companion for watch key on page open, but avoid noisy logs when unchanged.
@@ -684,7 +683,7 @@ Page(
           updateChecklist()
         })
 
-      var currentCount = teslaSession.getPoolSize()
+      var currentCount = store.keyPoolCount
       currentPage
         .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
         .then((r) => {
