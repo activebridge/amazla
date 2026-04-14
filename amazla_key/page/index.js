@@ -281,6 +281,13 @@ Page(BasePage({
       .then((r) => { if (r.success && r.pool) store.keyPool = binaryStringToBytes(r.pool) })
       .catch(() => {})
 
+    // Sync vehicle name and VIN from companion settingsStorage on app start
+    currentPage
+      .request({ method: 'GET_SETTINGS' })
+      .then((r) => { if (r && r.success) { store.vehicleName = r.vehicleName || null; store.vehicleVin = r.vehicleVin || null } })
+      .catch(() => {})
+
+
 
 
 

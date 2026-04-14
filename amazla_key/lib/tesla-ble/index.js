@@ -89,13 +89,8 @@ class TeslaBleApi {
   }
   clear() {
     teslaBLE.disconnect()
-    // Clear canonical store
-    store.removeItem('vehicleMac')
-    if (typeof store.removeBinary === 'function') {
-      store.removeBinary('vehicle_ec_public_key')
-      store.removeBinary('vehicle_doublings_table')
-      store.removeBinary('key_pool')
-    }
+    // Use centralized reset
+    store.reset()
     _privateKeyHex = null
     _publicKeyHex = null
     this.savedMAC = null

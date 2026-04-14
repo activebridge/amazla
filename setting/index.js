@@ -109,6 +109,22 @@ AppSettingsPage({
         align: 'center',
       }, name),
 
+      // Vehicle name/VIN editable in settings
+      View({}, [
+        Text({ paragraph: true, bold: true }, 'Vehicle Name'),
+        TextInput({
+          label: 'Vehicle Name',
+          value: settingsStorage.getItem('vehicleName') || name || '',
+          onChange: val => settingsStorage.setItem('vehicleName', val),
+        }),
+        Text({ paragraph: true, bold: true, style: { marginTop: 8 } }, 'Vehicle VIN'),
+        TextInput({
+          label: 'Vehicle VIN',
+          value: settingsStorage.getItem('vehicleVin') || '',
+          onChange: val => settingsStorage.setItem('vehicleVin', val),
+        }),
+      ]),
+
       name && Text({
         style: SUB,
         paragraph: true,

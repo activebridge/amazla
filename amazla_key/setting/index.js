@@ -1,7 +1,7 @@
 import { BODY, CARD, HEADER, MAIN, SECTION_TITLE, STEP_BADGE, SUBHEADER, TESLA_LOGO } from './styles.js'
 
 AppSettingsPage({
-  build() {
+  build({ settingsStorage }) {
     return View({ style: BODY }, [
       View({ style: MAIN }, [
 
@@ -15,6 +15,22 @@ AppSettingsPage({
         }),
         Text({ style: HEADER }, 'Tesla Key Setup'),
         Text({ paragraph: true, style: SUBHEADER }, 'Pure Bluetooth • No Internet Required'),
+
+        // Allow entering vehicle name and VIN from settings (saved to settingsStorage)
+        View({ style: CARD }, [
+          Text({ paragraph: true, bold: true }, 'Vehicle Name'),
+          TextInput({
+            label: 'Vehicle Name',
+            value: settingsStorage.getItem('vehicleName') || '',
+            onChange: val => settingsStorage.setItem('vehicleName', val),
+          }),
+          Text({ paragraph: true, bold: true, style: { marginTop: 8 } }, 'Vehicle VIN'),
+          TextInput({
+            label: 'Vehicle VIN',
+            value: settingsStorage.getItem('vehicleVin') || '',
+            onChange: val => settingsStorage.setItem('vehicleVin', val),
+          }),
+        ]),
 
         // HOW TO PAIR
         Text({ style: SECTION_TITLE }, 'How to Pair'),

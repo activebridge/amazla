@@ -97,6 +97,18 @@ const actions = {
     return bleCrypto.generateKeyPool(TARGET)
   },
 
+  GET_SETTINGS: async () => {
+    try {
+      const vehicleName = settings.settingsStorage.getItem('vehicleName') || null
+      const vehicleVin = settings.settingsStorage.getItem('vehicleVin') || null
+      console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin })
+      return { success: true, vehicleName, vehicleVin }
+    } catch (e) {
+      return { success: false, error: e && e.message }
+    }
+  },
+
+
   // Precompute doublings table for watch-side fixed-base ECDH.
   // Called once after pairing; watch stores result as binary for fast cold-start ECDH.
   BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {

@@ -76,17 +76,27 @@ function updateChecklist() {
   var hasTable = store.hasDoublingsTable
   var mac = store.vehicleMac
   var poolSize = store.keyPoolCount
+  var vehicleName = store.vehicleName
+  var vehicleVin = store.vehicleVin
   if (chkKeyWidget)
     chkKeyWidget.setProperty(hmUI.prop.TEXT, `${watchKey ? '✓' : '✗'} KEY:${watchKey ? watchKey.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasTable ? '✓' : '✗'} TABLE`)
   if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.TEXT, `POOL:${poolSize}`)
-  if (chkMacWidget) chkMacWidget.setProperty(hmUI.prop.TEXT, mac ? `✓ ${mac.slice(-11)}` : '✗ MAC')
+  if (chkMacWidget) {
+    var hasVehicle = !!(vehicleName && vehicleVin)
+    if (hasVehicle) {
+      chkMacWidget.setProperty(hmUI.prop.TEXT, `✓ ${vehicleName} ${vehicleVin}`)
+    } else {
+      var vtxt = vehicleName ? vehicleName : vehicleVin ? vehicleVin : (mac ? `MAC:${mac.slice(-11)}` : 'MAC:---')
+      chkMacWidget.setProperty(hmUI.prop.TEXT, `✗ ${vtxt}`)
+    }
+    chkMacWidget.setProperty(hmUI.prop.COLOR, hasVehicle ? 0x44cc66 : 0xff5555)
+  }
   if (chkKeyWidget) chkKeyWidget.setProperty(hmUI.prop.COLOR, watchKey ? 0x44cc66 : 0xff5555)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.COLOR, ecKey ? 0x44cc66 : 0xff5555)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasTable ? 0x44cc66 : 0xff5555)
   if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.COLOR, poolSize > 0 ? 0x44cc66 : 0xff8833)
-  if (chkMacWidget) chkMacWidget.setProperty(hmUI.prop.COLOR, mac ? 0x44cc66 : 0xff5555)
 }
 function doPair() {
   state = 'PAIRING'
@@ -599,7 +609,10 @@ Page(
 
       // Guard against duplicate builds (ZeppOS garbage collection or router issues)
       if (__pageBuilt) {
-        console.log('[BLE-LIFECYCLE] Page already built, skipping duplicate build()')
+        console.log('[BLE-LIFECYCLE] Page already built — refreshing checklist and status')
+        // Update currentPage reference and refresh checklist so UI reflects any changed store values
+        currentPage = this
+        try { updateChecklist() } catch (e) { console.log('[BLE] updateChecklist err', e && e.message) }
         return
       }
       __pageBuilt = true
@@ -641,13 +654,29 @@ Page(
             teslaSession.completePoolReplenishment()
           })
       }
+      // Always request companion for watch key on page open, but avoid noisy logs when unchanged.
       currentPage
         .request({ method: 'BLE_SYNC_KEYS', params: {} })
         .then((result) => {
-          if (result.success && result.publicKeyBinary) {
-            // Store binary string directly
-            store.watchPublicKey = result.publicKeyBinary
-            addLog('✓ Watch key synced', 0x44ff44)
+          try {
+            if (result.success && result.publicKeyBinary) {
+              // If we don't have a local key, store and log. If we do, only update/log when it changed.
+              var existingBytes = store.watchPublicKey
+              if (!existingBytes) {
+                store.watchPublicKey = result.publicKeyBinary
+                addLog('✓ Watch key synced', 0x44ff44)
+              } else {
+                // Compare by converting existing bytes to binary string
+                var existingBin = bytesToBinaryString(existingBytes)
+                if (existingBin !== result.publicKeyBinary) {
+                  store.watchPublicKey = result.publicKeyBinary
+                  addLog('✓ Watch key updated', 0x44ff44)
+                }
+                // otherwise unchanged — no log
+              }
+            }
+          } catch (e) {
+            console.log('[BLE] sync keys compare err', e && e.message)
           }
           updateChecklist()
         })
