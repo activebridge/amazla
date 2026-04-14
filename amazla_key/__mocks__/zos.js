@@ -6,10 +6,11 @@ export class LocalStorage {
   removeItem(k) { delete this._data[k] }
 }
 
-// @zos/fs stub
-export const writeFileSync = () => {}
-export const readFileSync  = () => null
-export const rmSync = () => {}
+// @zos/fs stub — stateful in-memory store so tests can verify round-trips
+export const _fsStore = {}
+export const writeFileSync = ({ path, data }) => { _fsStore[path] = data }
+export const readFileSync  = ({ path }) => _fsStore[path] ?? null
+export const rmSync        = ({ path }) => { delete _fsStore[path] }
 
 // @zos/ble native stubs
 export const mstStartScan              = () => true

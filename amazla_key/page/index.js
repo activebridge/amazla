@@ -232,7 +232,8 @@ const onSimulatePair = () => {
         hmUI.updateStatusBarTitle('Sim pair failed')
         throw new Error('handled')
       }
-      store.watchPublicKey     = binaryStringToBytes(r.watchPublicKeyBinary)
+      // Store watch public key as binary string (no conversion)
+      store.watchPublicKey     = r.watchPublicKeyBinary
       store.vehicleEcPublicKey = binaryStringToBytes(r.vehicleEcKeyBinary)
       store.vehicleMac         = r.mac
       store.vehicleVin         = r.vin
@@ -273,6 +274,12 @@ Page(BasePage({
     currentPage = this
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
+
+    var currentCount = teslaSession.getPoolSize()
+    currentPage
+      .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
+      .then((r) => { if (r.success && r.pool) store.keyPool = binaryStringToBytes(r.pool) })
+      .catch(() => {})
 
 
 

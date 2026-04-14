@@ -95,7 +95,8 @@ export const createPairingController = function(page, storage, onState, onSucces
           onError('Key generation failed')
           return
         }
-        storage.watchPublicKey = binaryStringToBytes(result.publicKeyBinary)
+        // Store binary string directly
+        storage.watchPublicKey = result.publicKeyBinary
         scanAndConnect()
       })
       .catch(function(e) {

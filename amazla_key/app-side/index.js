@@ -88,6 +88,15 @@ const actions = {
     return result
   },
 
+  // Sync key pool: watch sends current count, phone returns a full replacement pool if below target.
+  // All logic lives here — watch just stores whatever comes back.
+  BLE_SYNC_POOL: async ({ currentCount = 0 }) => {
+    const TARGET = 33
+    console.log(`[App] BLE_SYNC_POOL: have ${currentCount}, target ${TARGET}`)
+    if (currentCount >= TARGET) return { success: true, pool: null }
+    return bleCrypto.generateKeyPool(TARGET)
+  },
+
   // Precompute doublings table for watch-side fixed-base ECDH.
   // Called once after pairing; watch stores result as binary for fast cold-start ECDH.
   BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {

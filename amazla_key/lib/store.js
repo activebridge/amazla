@@ -1,5 +1,6 @@
 import { readFileSync, rmSync, writeFileSync } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
+import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/binary-utils.js'
 
 const localStorage = new LocalStorage()
 
@@ -23,24 +24,42 @@ const writeBinary = (path, bytes) => {
     })
 }
 
-export default {
+const get = (name) => {
+  try {
+    return binaryStringToBytes(localStorage.getItem(name))
+  } catch (_e) {
+    return null
+  }
+}
+
+const set = (name, value) => {
+  value ? localStorage.setItem(name, value) : localStorage.removeItem(name)
+}
+
+const store = {
   get watchPublicKey() {
-    return readBinary('watch_public_key')
+    return get('watchPublicKey')
   },
+
   set watchPublicKey(value) {
-    writeBinary('watch_public_key', value)
+    set('watchPublicKey', value)
   },
+
   get vehicleEcPublicKey() {
-    return readBinary('vehicle_ec_public_key')
+    return get('vehicleEcPublicKey')
   },
   set vehicleEcPublicKey(value) {
-    writeBinary('vehicle_ec_public_key', value)
+    set('vehicleEcPublicKey', bytesToBinaryString(value))
   },
   get vehicleDoublingsTable() {
     if (_doublingsTableCache) return _doublingsTableCache
-    const data = readBinary('vehicle_doublings_table')
-    if (!data || data.length !== 16384) return undefined
-    _doublingsTableCache = new Uint32Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength))
+    try {
+      const raw = readFileSync({ path: 'vehicle_doublings_table.dat' })
+      if (!raw || raw.byteLength !== 16384) return undefined
+      _doublingsTableCache = new Uint32Array(raw)
+    } catch (_e) {
+      return undefined
+    }
     return _doublingsTableCache
   },
   set vehicleDoublingsTable(value) {
@@ -57,25 +76,25 @@ export default {
     return localStorage.getItem('vehicleMac')
   },
   set vehicleMac(value) {
-    localStorage.setItem('vehicleMac', value)
+    set('vehicleMac', value)
   },
   get vehicleVin() {
     return localStorage.getItem('vehicleVin')
   },
   set vehicleVin(value) {
-    localStorage.setItem('vehicleVin', value)
+    set('vehicleVin', value)
   },
   get vehicleName() {
     return localStorage.getItem('vehicleName')
   },
   set vehicleName(value) {
-    localStorage.setItem('vehicleName', value)
+    set('vehicleName', value)
   },
   get vehicleModel() {
     return localStorage.getItem('vehicleModel')
   },
   set vehicleModel(value) {
-    localStorage.setItem('vehicleModel', value)
+    set('vehicleModel', value)
   },
 
   removeBinary: (key) => {
@@ -85,5 +104,22 @@ export default {
       // ignore
     }
   },
-  removeItem: (key) => localStorage.removeItem(key),
+
+  removeItem: (key) => {
+    localStorage.removeItem(key)
+  },
+
+  reset() {
+    localStorage.removeItem('vehicleName')
+    localStorage.removeItem('vehicleModel')
+    localStorage.removeItem('vehicleVin')
+    localStorage.removeItem('vehicleMac')
+    localStorage.removeItem('vehicleEcPublicKey')
+    localStorage.removeItem('watchPublicKey')
+    _doublingsTableCache = null
+    this.removeBinary('vehicle_doublings_table')
+    this.removeBinary('key_pool')
+  },
 }
+
+export default store

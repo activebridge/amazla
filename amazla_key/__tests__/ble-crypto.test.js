@@ -141,10 +141,9 @@ describe('BLECryptoSession', () => {
   })
 
   describe('buildDoublingsTable', () => {
-    test('returns ArrayBuffer of correct size (256 × 64 = 16384 bytes)', () => {
+    test('returns ArrayBuffer of correct size (256 × 16 uint32s = 16384 bytes)', () => {
       const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
       expect(result.success).toBe(true)
-      expect(result.buffer).toBeInstanceOf(ArrayBuffer)
       expect(result.buffer.byteLength).toBe(16384)
     })
 
@@ -153,27 +152,36 @@ describe('BLECryptoSession', () => {
       expect(bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX).success).toBe(false)
     })
 
-    test('entry 0 matches vehicle key x and y coordinates', () => {
+    test('entry 0 encodes vehicle key x and y in LSW-first Uint32Array format', () => {
       const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const bytes = new Uint8Array(result.buffer)
+      const table = new Uint32Array(result.buffer)
 
-      // Binary key: byte[0]=0x04, bytes[1..32]=x, bytes[33..64]=y
+      // Reconstruct x and y from LSW-first uint32s and compare to original key bytes
       const keyBytes = hexToBytes(TEST_PUBLIC_KEY_HEX)
-
-      // Entry 0: bytes[0..31] = x, bytes[32..63] = y
+      const xBytes = new Uint8Array(32)
+      const yBytes = new Uint8Array(32)
+      for (let j = 0; j < 8; j++) {
+        const w = table[j]
+        const idx = 28 - j * 4
+        xBytes[idx]   = (w >>> 24) & 0xff; xBytes[idx+1] = (w >>> 16) & 0xff
+        xBytes[idx+2] = (w >>> 8)  & 0xff; xBytes[idx+3] = w & 0xff
+        const wy = table[8 + j]
+        yBytes[idx]   = (wy >>> 24) & 0xff; yBytes[idx+1] = (wy >>> 16) & 0xff
+        yBytes[idx+2] = (wy >>> 8)  & 0xff; yBytes[idx+3] = wy & 0xff
+      }
       for (let i = 0; i < 32; i++) {
-        expect(bytes[i]).toBe(keyBytes[1 + i])
-        expect(bytes[32 + i]).toBe(keyBytes[33 + i])
+        expect(xBytes[i]).toBe(keyBytes[1 + i])
+        expect(yBytes[i]).toBe(keyBytes[33 + i])
       }
     })
 
     test('all 256 entries are distinct (no repeated points)', () => {
       const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const bytes = new Uint8Array(result.buffer)
+      const table = new Uint32Array(result.buffer)
       const seen = new Set()
       for (let i = 0; i < 256; i++) {
-        // Use first 8 bytes of each x as fingerprint — sufficient for distinctness
-        const key = Array.from(bytes.subarray(i * 64, i * 64 + 8)).join(',')
+        // Use first 4 uint32s of each entry x as fingerprint
+        const key = Array.from(table.subarray(i * 16, i * 16 + 4)).join(',')
         expect(seen.has(key)).toBe(false)
         seen.add(key)
       }

@@ -11,6 +11,25 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
+### Store Refactor + Smart Key Pool Sync (✅ Complete)
+
+**Storage layout** — eliminated `ble_settings.txt` entirely. All watch-side persistence now uses two distinct mechanisms:
+
+| Data | Storage | Format |
+|------|---------|--------|
+| `watchPublicKey`, `vehicleEcPublicKey`, `vehicleMac`, `vehicleVin`, `vehicleName`, `vehicleModel` | `LocalStorage` | Binary string (charCodeAt-encoded) |
+| `vehicle_doublings_table.dat` | Binary file | 16,384-byte raw `Uint32Array` (LSW-first, native endian) |
+| `key_pool.dat` | Binary file | 97 bytes/key raw binary |
+
+**Doublings table format change** — phone now converts to native `Uint32Array` LSW-first format during `BLE_PRECOMPUTE_TABLE`. Watch loads with `new Uint32Array(raw)` — zero-copy, zero-conversion. Previous `charCodeAt` parsing loop eliminated.
+
+**`BLE_SYNC_POOL`** — replaced manual "GEN POOL" button with smart proactive + reactive sync:
+- On app open: watch sends `currentCount`, phone returns full replacement pool if below target (33 keys)
+- On pool low: `teslaSession.onPoolLow` fires the same request; phone decides, watch just stores
+- No merge logic on watch — phone always sends a complete pool or `null` (no-op)
+
+**Breaking storage change**: `watchPublicKey` + `vehicleEcPublicKey` moved from `.dat` files to `LocalStorage` — existing devices must re-pair.
+
 ### Native BLE Layer — easy-ble Removed (✅ Complete, Tested on Device)
 
 **Problem**: `@silver-zepp/easy-ble` wrapped native `@zos/ble` with a `QueueManager`, wrapper objects (`write`, `on`, `off`), and UUID/MAC normalization layers. This added memory and CPU overhead on every BLE operation.
@@ -227,10 +246,13 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ════════════════════════════════════                                        │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  ble_settings.txt (watch storage)                               │      │
+│     │  LocalStorage (watch)                                           │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │ watch_private_key: "abc123..." (32-byte binary string)       ││      │
-│     │  │ watch_public_key:  "04def..." (65-byte binary string)       ││      │
+│     │  │ watchPublicKey: binary string (65 bytes)                     ││      │
+│     │  └─────────────────────────────────────────────────────────────┘│      │
+│     │  Phone storage (app-side/tesla/session.js)                      │      │
+│     │  ┌─────────────────────────────────────────────────────────────┐│      │
+│     │  │ private key: 32-byte binary (never leaves phone)            ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
@@ -243,7 +265,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │  ═════════════════════════════════════                                       │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool (field in ble_settings.txt, binary string)            │      │
+│     │  key_pool.dat (binary file on watch, 97 bytes/key)             │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
 │     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
 │     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
@@ -253,7 +275,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
 │     • Generated on phone (P-256 key gen is slow)                             │
-│     • Synced to watch via "GEN POOL" button (BLE DEBUG page)                 │
+│     • Auto-synced via BLE_SYNC_POOL (on app open + when pool is low)         │
 │     • One keypair consumed per session establishment                         │
 │     • Used for ECDH key exchange with Tesla                                  │
 │                                                                              │
@@ -262,38 +284,49 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 
 ### Key Sync Flow
 
+Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to generate. Watch is passive.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                           SESSION KEY SYNC FLOW                              │
+│                    (Proactive on open + Reactive on low)                     │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │      Watch                                    Phone                          │
 │        │                                        │                            │
-│        │  ──────────────────────────────────►   │                            │
-│        │     BLE_GENERATE_SESSION_KEYS          │                            │
-│        │     { count: 5 }                       │                            │
+│   ┌────┴────┐   App opens / pool runs low       │                            │
+│   │ Count   │                                   │                            │
+│   │ pool    │  ──────────────────────────────►  │                            │
+│   └────┬────┘     BLE_SYNC_POOL                 │                            │
+│        │          { currentCount: N }           │                            │
 │        │                                        │                            │
 │        │                              ┌─────────┴─────────┐                  │
-│        │                              │ For i = 1 to 5:   │                  │
-│        │                              │   Generate P-256  │                  │
-│        │                              │   keypair         │                  │
-│        │                              │   (slow ~2-5 sec) │                  │
+│        │                              │ N >= 33?           │                  │
+│        │                              │   → { pool: null } │                  │
+│        │                              │ N < 33?            │                  │
+│        │                              │   → generate 33    │                  │
+│        │                              │     P-256 keypairs │                  │
 │        │                              └─────────┬─────────┘                  │
 │        │                                        │                            │
 │        │  ◄──────────────────────────────────   │                            │
-│        │     { success: true, keys: [...] }     │                            │
+│        │     { success, pool: binary | null }   │                            │
 │        │                                        │                            │
 │   ┌────┴────┐                                   │                            │
-│   │ Store   │                                   │                            │
-│   │ keys in │                                   │                            │
-│   │ file    │                                   │                            │
+│   │ pool?   │   store → key_pool.dat            │                            │
+│   │ Store   │   (97 bytes/key raw binary)       │                            │
+│   │ it raw  │                                   │                            │
 │   └────┬────┘                                   │                            │
 │        │                                        │                            │
 │        ▼                                        ▼                            │
-│   Ready for standalone operation!                                            │
+│   Ready for standalone operation! (33 keys ≈ ~3.2 KB)                       │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Triggers**:
+- `page/index.js` `build()` — proactive sync on every app open
+- `page/ble/index.js` `build()` — additional sync on BLE debug page open  
+- `teslaSession.onPoolLow` callback — reactive sync when pool drops below threshold
 
 ## Pairing Flow
 
@@ -689,14 +722,29 @@ amazla_key/
 
 ## Storage Files
 
-| File | Key | Contents | Managed By |
-|------|-----|----------|------------|
-| `ble_settings.txt` | `watch_private_key` | 32-byte enrolled private key (binary string) | Phone sync |
-| `ble_settings.txt` | `watch_public_key` | 65-byte enrolled public key (binary string) | Phone sync |
-| `ble_settings.txt` | `tesla_ble_mac` | Vehicle BLE MAC address | Auto-saved on scan |
-| `ble_settings.txt` | `vehicle_ec_public_key` | 65-byte vehicle EC key (binary string) | Auto-saved after pairing |
-| `ble_settings.txt` | `vehicle_doublings_table` | 16 KB ECDH precomputed table (binary string, 16384 chars) | Phone sync |
-| `ble_settings.txt` | `key_pool` | Pool of ephemeral keypairs (binary string, 97 bytes/key) | GEN POOL button |
+Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and binary `.dat` files.
+
+### LocalStorage (via `@zos/storage LocalStorage`)
+
+| Key | Contents | Format | Managed By |
+|-----|----------|--------|------------|
+| `watchPublicKey` | 65-byte enrolled public key | binary string | `BLE_SYNC_KEYS` phone sync |
+| `vehicleEcPublicKey` | 65-byte vehicle EC key | binary string | Auto-saved after pairing |
+| `vehicleMac` | Vehicle BLE MAC address | plain string | Auto-saved on scan |
+| `vehicleVin` | Vehicle VIN | plain string | Saved during pairing |
+| `vehicleName` | Vehicle display name | plain string | Saved during pairing |
+| `vehicleModel` | Vehicle model | plain string | Saved during pairing |
+
+> **Note**: Watch private key is NOT stored on watch. It lives on the phone in `TeslaSession` (`app-side/tesla/session.js`).
+
+### Binary Files (via `@zos/fs`)
+
+| File | Size | Format | Managed By |
+|------|------|--------|------------|
+| `vehicle_doublings_table.dat` | 16,384 bytes | Native `Uint32Array` LSW-first (256 × 16 uint32s) | `BLE_PRECOMPUTE_TABLE` phone sync |
+| `key_pool.dat` | 97 × N bytes | Raw binary (32-byte priv + 65-byte pub per key) | `BLE_SYNC_POOL` auto-sync |
+
+**Doublings table format**: Phone converts P-256 coordinates to LSW-first `Uint32Array` layout during `BLE_PRECOMPUTE_TABLE`. Watch loads with `new Uint32Array(raw)` — zero-copy, zero-conversion. Each entry is 16 uint32s: x[0..7] then y[0..7], where `[0]` = least-significant word.
 
 ## Setup Guide
 
@@ -713,12 +761,15 @@ amazla_key/
 
 **What happens**: Vehicle's 65-byte EC public key is automatically extracted from the pairing response and saved to persistent storage. This key is reused for all future session establishments.
 
-### 2. Sync Session Keys (phone required once)
+### 2. Session Keys (auto-synced)
 
-1. Still in BLE debug page, tap **GEN POOL** button (needs phone connected)
-2. Phone generates P-256 keypairs and the ECDH doublings table
-3. Keys and table stored on watch for fully offline use
-4. Repeat when pool runs low (app auto-requests replenishment)
+Session keys sync automatically — no manual step needed:
+- App open → watch asks phone for pool if below 33 keys
+- Pool running low during use → `onPoolLow` triggers a refill request
+- Phone generates 33 P-256 keypairs and returns them as raw binary
+- Watch stores to `key_pool.dat` — ready for offline use
+
+The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`.
 
 ### 3. Use!
 
@@ -886,7 +937,7 @@ session.requestVehiclePublicKey((result) => {
 - **Storage**: 18.6 KB saved on watch
 - **Startup**: ~50-100ms faster due to reduced parsing
 
-**Testing**: All 290 unit tests passing, no regressions.
+**Testing**: All unit tests passing, no regressions.
 
 ### OOM Prevention (✅ Complete)
 
@@ -904,13 +955,11 @@ session.requestVehiclePublicKey((result) => {
 | Object overhead | ~30 KB | ~0 |
 | Data | 16 KB | 16 KB |
 
-#### Doublings table parsing — no intermediate allocations
+#### Doublings table — phone-side format conversion, zero-cost watch loading
 
-**Before**: `binaryStringToBytes(data)` allocated `Uint8Array(16384)`, then `buffer.slice(...)` copied it again into a new `ArrayBuffer` for the DataView. Peak: ~94 KB.
+**Before**: Watch received a binary string, called `binaryStringToBytes(data)` → `Uint8Array(16384)`, then `buffer.slice(...)` copied it into an `ArrayBuffer` for a `DataView`. Byte ordering had a latent bug: `view.getUint32(base + j*4)` was MSW-first while `bytesToU256` in `p256.js` expected LSW-first — would silently produce wrong ECDH shared secrets. Peak: ~94 KB.
 
-**After**: uint32 words read directly from the binary string using `charCodeAt` — no Uint8Array, no buffer copy. Peak: ~16 KB (the cached flat table only).
-
-**Bug fixed**: The previous `view.getUint32(base + j*4)` had reversed byte ordering vs `bytesToU256` in `p256.js` (MSW-first vs LSW-first), which would have silently produced wrong ECDH shared secrets on the watch. Fixed to `base + 28 - j*4`.
+**After**: Phone converts P-256 coordinates to LSW-first `Uint32Array` format during `BLE_PRECOMPUTE_TABLE` (app-side, one-time). Watch receives the raw bytes, stores them to `vehicle_doublings_table.dat`, and loads with `new Uint32Array(raw)` — zero-copy, no conversion, correct endianness guaranteed. Peak: ~16 KB (the cached table only).
 
 #### `bytesToBinaryString` — chunked for large buffers
 
@@ -946,7 +995,7 @@ Called from:
 | Per RKE command (HMAC) | +192 B alloc | +96 B alloc |
 | Protobuf decode per response | ~10 copies | 0 copies |
 
-**Testing**: All 290 unit tests passing (including `_hmac` correctness, pad lifecycle, and RFC 4231 vectors).
+**Testing**: All unit tests passing (including `_hmac` correctness, pad lifecycle, and RFC 4231 vectors).
 
 ## Development
 
@@ -960,7 +1009,7 @@ zeus preview   # Preview in simulator
 ### Test
 
 ```bash
-npm test       # Run 184 Jest tests
+npm test       # Run Jest tests
 ```
 
 ### Mock Mode
