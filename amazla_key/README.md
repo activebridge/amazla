@@ -6,10 +6,24 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Vehicle Status** - Door/closure states, lock state, sleep status
-- **Session Persistence** - Cached ECDH session for instant reconnection (< 1s within 5 min)
 - **Key Pool** - Pre-generated ephemeral keypairs allow offline session establishment
 
 ## Recent Improvements (Latest)
+
+### End-to-End VCR Test Suite (✅ Complete)
+
+**Approach**: `ble-native.js` and `session.js` run completely unmodified. `BLEHarness` (`__mocks__/zos.js`) intercepts `@zos/ble` native calls at the `mstWriteCharacteristic`/`mstOnCharaNotification` boundary. `CarSimulator` (`__tests__/helpers/car-simulator.js`) implements full vehicle-side P-256 ECDH and HMAC-SHA256 — generating realistic framed BLE responses at the raw byte level.
+
+**Coverage** (16 tests, ~0.6s total):
+- BLE connect + session establishment
+- Session blocked on empty key pool
+- RKE: lock, unlock, trunk, frunk (idempotent lock included)
+- Command error injection (`actionStatus = 2`)
+- Vehicle status: locked/unlocked, all-doors-open, sleep, state-after-command
+- Second-response timeout (fake timer, 10s window)
+- Session auto-establishment from `sendCommand`
+
+**Bug fixed**: `teslaBLE.reset()` (via `_cleanup()`) did not clear the BLE dedup cache (`_lastResponseData` / `_lastResponseTime`). Dedup uses a 200ms window with a signature based on message size and first two bytes. The session-info response always has the same signature — if two tests ran within 200ms, the second test's session-info notification was silently dropped, causing a 30s timeout. Fixed: both fields are now cleared in `_cleanup()`.
 
 ### Store Refactor + Smart Key Pool Sync (✅ Complete)
 
@@ -140,14 +154,13 @@ from the one used at session initialization. This makes a persistent precomputed
 
 **Expected savings: ~2× reduction in cold ECDH** → ~3.5–4s instead of ~8s
 
-**Real-World Impact** (updated):
-| Scenario | Before | After Phase 1-3 | After Phase 4 | Total Saved |
-|----------|--------|-----------------|---------------|-------------|
-| First unlock | 18-19s | 13-14s | ~9-10s | ~9s ⚡⚡ |
-| Reconnect (≤5 min) | 18-19s | <1s | <1s | 18s ⚡⚡⚡ |
-| Lock + Unlock | 36-38s | 14-16s | ~10-12s | ~26s ⚡⚡⚡ |
+**Real-World Impact** (Phase 4 vs baseline):
+| Scenario | Before | After Phase 4 | Total Saved |
+|----------|--------|---------------|-------------|
+| First unlock | 18-19s | ~9-10s | ~9s ⚡⚡ |
+| Lock + Unlock | 36-38s | ~10-12s | ~26-28s ⚡⚡⚡ |
 
-### Connection Speed Optimization - Phase 1, 2, 3 (✅ Complete)
+### Connection Speed Optimization - Phase 1 (✅ Complete)
 
 **Problem**: App launch → Connected took 18-19 seconds (8 sec ECDH + 5 sec stabilization + 2.5 sec delays)
 
@@ -157,19 +170,6 @@ from the one used at session initialization. This makes a persistent precomputed
 - Removed 1500ms unnecessary wait before BLE connect
 - Reduced BLE stack stabilization from 5s to 2s
 - **Savings: 4.5 seconds** → 13-14s total time
-
-#### Phase 2: Session Persistence Across Reconnects (✨ Biggest Impact!)
-- Preserve ECDH result for 5 minutes on disconnect
-- On reconnect within 5 min window: Reuse cached session (skip 8-second ECDH!)
-- **Savings: 18 seconds per reconnect** → <1s reconnection time
-- **Example**: User opens door (13s) + closes door + sits in car → instant unlock (<1s)
-
-#### Phase 3: Connection Keep-Alive Between Commands
-- Keep BLE connection alive for 60 seconds after first command
-- Each command extends timeout by 60 seconds
-- Auto-disconnect after idle timeout to save battery
-- **Savings: 16+ seconds per command in sequence**
-- **Example**: LOCK (13s) + UNLOCK (1-2s) = 14-15s instead of 26s
 
 ### Vehicle EC Key Extraction & Storage (✅ Complete - Implements Tesla SDK Exactly)
 
@@ -605,12 +605,10 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 | Method | Description |
 |--------|-------------|
 | `session.requestSessionInfo(cb)` | Establish BLE session (ECDH key exchange) |
-| `session.getVehicleStatus(cb)` | Fetch door/lock/sleep status (auto-establishes session) |
-| `session.isEstablished()` | Returns true if session is active |
-| `session.getStatus()` | Returns `{ established, counter, epoch, poolSize }` |
-| `session.reset()` | Clear session state (called on disconnect) |
-| `session.preserveForReconnect(timeoutMs)` | Cache session across short disconnects |
-| `session.restorePreservedSession()` | Restore cached session (skips ECDH) |
+| `session.getVehicleStatus(cb)` | Fetch door/lock/sleep status |
+| `session.established` | Boolean — true if session is active |
+| `session.reset()` | Clear session state |
+| `session.ensureSessionEstablished(cb)` | Establish session if needed, queue concurrent callers |
 
 ### Pairing Operations
 
@@ -692,7 +690,7 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 
 | Item | Status | Notes |
 |------|--------|-------|
-| VIN entry | ⚠️ Needed | Commands will fail — vehicle enforces VIN personalization in HMAC. Add settings page text input. |
+| VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
 | MTU chunk writer | ⚠️ Minor | Use `this._mtu` instead of `BLE_CHUNK_SIZE = 20` in `_sendChunk` |
 | Field test with car | ⏳ | All optimizations implemented, needs on-vehicle validation |
 
@@ -704,6 +702,8 @@ amazla_key/
 │   ├── index.js                  # Main UI (lock/unlock/trunk/frunk + vehicle status)
 │   └── ble/
 │       └── index.js              # BLE debug page (scan, pair, pool management)
+├── setting/
+│   └── index.js                  # Companion settings page (vehicle name + VIN entry)
 ├── lib/
 │   └── tesla-ble/
 │       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
@@ -717,7 +717,23 @@ amazla_key/
 │       └── protocol/
 │           ├── protobuf.js       # Protobuf encoding/decoding
 │           └── vcsec.js          # Tesla VCSEC message builders/parsers
-└── __tests__/                    # Jest tests
+├── __mocks__/
+│   └── zos.js                    # @zos/* stubs + BLEHarness (VCR-style BLE interception)
+└── __tests__/
+    ├── helpers/
+    │   ├── car-simulator.js      # CarSimulator — full P-256/HMAC vehicle response simulator
+    │   └── scenarios.js          # Pre-built vehicle state patches (lockedCar, sleeping, etc.)
+    ├── car-simulator.test.js     # End-to-end VCR tests (BLE connect → session → RKE → status)
+    ├── session-protocol.test.js  # Session protocol unit tests
+    ├── ble-communication.test.js # BLE layer tests
+    ├── pairing-flow.test.js      # Pairing handshake tests
+    ├── vcsec.test.js             # VCSEC protobuf encode/decode
+    ├── protobuf.test.js          # Protobuf primitives
+    ├── ble-crypto.test.js        # ECDH + doublings table tests
+    ├── crypto-p256.test.js       # P-256 math tests
+    ├── crypto-hmac.test.js       # HMAC-SHA256 tests
+    ├── store.test.js             # Store persistence tests
+    └── ...                       # Additional unit tests
 ```
 
 ## Storage Files
@@ -778,9 +794,8 @@ The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`
 - Tap **BLE** button for debug info / re-pairing
 
 **Connection timing**:
-- First connect: ~9-10 seconds (BLE + ECDH)
-- Reconnect within 5 min: < 1 second (cached session)
-- Commands in sequence: 1-2 seconds each (connection kept alive 60s)
+- First connect: ~9-10 seconds (BLE + ECDH with precomputed table)
+- Subsequent commands: new BLE connect + ECDH each time (~9-10s)
 
 ### Troubleshooting
 
@@ -982,7 +997,6 @@ session.requestVehiclePublicKey((result) => {
 
 Called from:
 - Session establishment (after ECDH)
-- `restorePreservedSession()` (reconnect path)
 - Cleared on `reset()`
 
 **Savings per RKE command**: 192 bytes + 3 object allocations eliminated.

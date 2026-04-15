@@ -104,6 +104,8 @@ class TeslaBLENative {
     this._rxBuf = null
     this._rxExpected = 0
     this._mtu = 20
+    this._lastResponseData = null
+    this._lastResponseTime = 0
   }
 
   scan(callback, duration = 10000) {
