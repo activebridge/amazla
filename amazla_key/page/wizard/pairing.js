@@ -38,14 +38,14 @@ function decodeRawFields(data) {
 }
 
 // createPairingController orchestrates the full BLE pairing flow.
-// - page: the BasePage instance (provides .request() for app-side RPC)
+// - phone: Phone instance (provides syncKeys, pair, verifyPair, precomputeTable, syncPool)
 // - storage: the key-value storage object
 // - onState(substate): called when the flow stage changes
 //     substates: 'connecting' | 'pairing' | 'confirming' | 'verifying'
 // - onSuccess(): called when all pairing artifacts are saved
 // - onError(message): called on any unrecoverable failure
 // Returns { start(), cancel() }
-export const createPairingController = function(page, storage, onState, onSuccess, onError) {
+export const createPairingController = function(phone, storage, onState, onSuccess, onError) {
   var cancelled = false
 
   function start() {
@@ -83,25 +83,19 @@ export const createPairingController = function(page, storage, onState, onSucces
 
   // Step 1: ensure watch keypair exists, generate if missing
   function ensureWatchKey() {
-    var existingKey = storage.watchPublicKey
-    if (existingKey) {
+    if (storage.watchPublicKey) {
       scanAndConnect()
       return
     }
-    page.request({ method: 'BLE_SYNC_KEYS', params: {} })
-      .then(function(result) {
-        if (cancelled) return
-        if (!result.success || !result.publicKeyBinary) {
-          onError('Key generation failed')
-          return
-        }
-        // Store binary string directly
-        storage.watchPublicKey = result.publicKeyBinary
-        scanAndConnect()
-      })
-      .catch(function(e) {
-        if (!cancelled) onError('Key generation failed: ' + (e.message || '?'))
-      })
+    phone.syncKeys(function(result) {
+      if (cancelled) return
+      if (!result.success) {
+        onError('Key generation failed: ' + (result.error || '?'))
+        return
+      }
+      // store.watchPublicKey written internally by phone.syncKeys
+      scanAndConnect()
+    })
   }
 
   // Step 2: find and connect to the vehicle
@@ -150,74 +144,70 @@ export const createPairingController = function(page, storage, onState, onSucces
     var watchKey = storage.watchPublicKey
     if (!watchKey) { onError('No watch key. Please try again.'); return }
 
-    page.request({ method: 'BLE_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
-      .then(function(result) {
+    phone.pair(bytesToBinaryString(watchKey), function(result) {
+      if (cancelled) return
+      if (!result.success) {
+        onError('Pair request failed: ' + (result.error || '?'))
+        return
+      }
+      var msgBytes = binaryStringToBytes(result.message)
+      var sawTapRequired = false
+
+      // Prompt user to tap NFC card while we wait for the vehicle's first response
+      onState('confirming')
+
+      BLE.sendAndWaitForResponse(msgBytes, function(r) {
         if (cancelled) return
-        if (!result.success) {
-          onError('Pair request failed: ' + (result.error || '?'))
+        if (!r.success) {
+          // Timeout — vehicle may have accepted already, try verify
+          doVerify()
           return
         }
-        var msgBytes = binaryStringToBytes(result.message)
-        var sawTapRequired = false
-
-        // Prompt user to tap NFC card while we wait for the vehicle's first response
-        onState('confirming')
-
-        BLE.sendAndWaitForResponse(msgBytes, function(r) {
-          if (cancelled) return
-          if (!r.success) {
-            // Timeout — vehicle may have accepted already, try verify
+        var parsed = parsePairingResponse(r.data)
+        var dbg = parsed.dbg || {}
+        if (parsed.status === 'ok') {
+          if (sawTapRequired || dbg.hasSigner) {
             doVerify()
-            return
-          }
-          var parsed = parsePairingResponse(r.data)
-          var dbg = parsed.dbg || {}
-          if (parsed.status === 'ok') {
-            if (sawTapRequired || dbg.hasSigner) {
-              doVerify()
-            } else {
-              waitForResult(0)
-            }
-          } else if (parsed.status === 'wait') {
-            sawTapRequired = true
+          } else {
             waitForResult(0)
-          } else if (parsed.status === 'pending') {
-            waitForResult(0)
-          } else if (parsed.status === 'error') {
-            onError(parsed.error || 'Pairing error')
           }
-        }, 15000)
+        } else if (parsed.status === 'wait') {
+          sawTapRequired = true
+          waitForResult(0)
+        } else if (parsed.status === 'pending') {
+          waitForResult(0)
+        } else if (parsed.status === 'error') {
+          onError(parsed.error || 'Pairing error')
+        }
+      }, 15000)
 
-        function waitForResult(attempts) {
+      function waitForResult(attempts) {
+        if (cancelled) return
+        if (attempts >= 10) {
+          onError('NFC card not detected. Hold the card on the steering column.')
+          return
+        }
+        BLE.waitForNextResponse(60000, function(r2) {
           if (cancelled) return
-          if (attempts >= 10) {
+          if (!r2.success) {
             onError('NFC card not detected. Hold the card on the steering column.')
             return
           }
-          BLE.waitForNextResponse(60000, function(r2) {
-            if (cancelled) return
-            if (!r2.success) {
-              onError('NFC card not detected. Hold the card on the steering column.')
-              return
+          var p2 = parsePairingResponse(r2.data), d2 = p2.dbg || {}
+          if (p2.status === 'wait') { sawTapRequired = true; waitForResult(attempts + 1) }
+          else if (p2.status === 'pending') { waitForResult(attempts + 1) }
+          else if (p2.status === 'ok') {
+            if (sawTapRequired || d2.hasSigner) {
+              doVerify()
+            } else {
+              waitForResult(attempts + 1)
             }
-            var p2 = parsePairingResponse(r2.data), d2 = p2.dbg || {}
-            if (p2.status === 'wait') { sawTapRequired = true; waitForResult(attempts + 1) }
-            else if (p2.status === 'pending') { waitForResult(attempts + 1) }
-            else if (p2.status === 'ok') {
-              if (sawTapRequired || d2.hasSigner) {
-                doVerify()
-              } else {
-                waitForResult(attempts + 1)
-              }
-            } else if (p2.status === 'error') {
-              onError(p2.error || 'Pairing error')
-            }
-          })
-        }
-      })
-      .catch(function(err) {
-        if (!cancelled) onError('Pair failed: ' + (err.message || '?'))
-      })
+          } else if (p2.status === 'error') {
+            onError(p2.error || 'Pairing error')
+          }
+        })
+      }
+    })
   }
 
   function normalizeVehicleKeyBinary(keyData) {
@@ -240,7 +230,7 @@ export const createPairingController = function(page, storage, onState, onSucces
     return null
   }
 
-  // Compute doublings table and generate key pool from a known EC public key binary string.
+  // Compute doublings table and generate key pool from a known EC public key.
   // Called from doVerify() after fetching the key, or directly on retry when the
   // EC key is already saved but the table is missing.
   function computeTableAndPool(ecKeyBinaryOrHex) {
@@ -250,33 +240,24 @@ export const createPairingController = function(page, storage, onState, onSucces
       onError('Invalid vehicle public key format. Re-pair with vehicle.')
       return
     }
-    page.request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: bytesToBinaryString(vehiclePublicKeyBytes) } })
-      .then(function(r) {
+    storage.vehicleEcPublicKey = vehiclePublicKeyBytes
+    phone.precomputeTable(bytesToBinaryString(vehiclePublicKeyBytes), function(r) {
+      if (cancelled) return
+      if (!r.success) {
+        onError('Failed to compute session table. Please try again.')
+        return
+      }
+      // store.vehicleDoublingsTable written internally by phone.precomputeTable
+      phone.syncPool(function(r2) {
         if (cancelled) return
-        if (!r.success || !r.table) {
-          onError('Failed to compute session table. Please try again.')
-          throw new Error('handled')
-        }
-        try {
-          storage.vehicleEcPublicKey = vehiclePublicKeyBytes
-          storage.vehicleDoublingsTable = binaryStringToBytes(r.table)
-        } catch (e) {
-          onError('Failed to save session table. Check watch storage.')
-          throw new Error('handled')
-        }
-        return page.request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
-      })
-      .then(function(r) {
-        if (cancelled) return
-        if (r && r.success && r.pool) {
-          try { storage.keyPool = binaryStringToBytes(r.pool) } catch (e) {}
+        // store.keyPool written internally by phone.syncPool
+        if (!r2.success) {
+          onError('Failed to generate key pool. Please try again.')
+          return
         }
         onSuccess()
-      })
-      .catch(function(e) {
-        if (e.message === 'handled') return
-        if (!cancelled) onError('Setup failed: ' + (e.message || '?'))
-      })
+      }, 0)
+    })
   }
 
   // Step 4: verify enrollment, fetch vehicle EC key, compute table, generate pool
@@ -290,57 +271,46 @@ export const createPairingController = function(page, storage, onState, onSucces
     var watchKey = storage.watchPublicKey
     if (!watchKey) { onError('No watch key'); return }
 
-    page.request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: bytesToBinaryString(watchKey) } })
-      .then(function(result) {
+    phone.verifyPair(bytesToBinaryString(watchKey), function(result) {
+      if (cancelled) return
+      if (!result.success) {
+        onError('Verify failed: ' + (result.error || '?'))
+        return
+      }
+      var msgBytes = binaryStringToBytes(result.message)
+
+      function handleQueryResponse(r, attempt) {
         if (cancelled) return
-        if (!result.success) {
-          onError('Verify failed: ' + (result.error || '?'))
+        if (!r.success) {
+          onError('No response from Tesla. Try pairing again.')
           return
         }
-        var msgBytes = binaryStringToBytes(result.message)
-
-        function handleQueryResponse(r, attempt) {
-          if (cancelled) return
-          if (!r.success) {
-            onError('No response from Tesla. Try pairing again.')
-            return
-          }
-          var fields = decodeRawFields(r.data)
-          var fkeys = Object.keys(fields).join(',')
-          // Field 3 alone = ambient/heartbeat message, skip up to 3 times
-          if (fkeys === '3' && attempt < 3) {
-            BLE.waitForNextResponse(6000, function(r2) { handleQueryResponse(r2, attempt + 1) })
-            return
-          }
-          if (!fields[17]) {
-            onError('Key not enrolled. Tap your NFC card on the steering column, then confirm on the Tesla screen.')
-            return
-          }
-          var ecKey = null
-          var wei = decodeRawFields(fields[17])
-          if (wei[2]) {
-            var pk = decodeRawFields(wei[2])
-            if (pk[1] && pk[1].length === 65) ecKey = pk[1]
-          }
-          if (!ecKey) {
-            onError('Could not read vehicle key. Please try again.')
-            return
-          }
-          try {
-            storage.vehicleEcPublicKey = ecKey
-          } catch (e) {
-            onError('Failed to save vehicle key. Check watch storage.')
-            return
-          }
-
-          computeTableAndPool(ecKey)
+        var fields = decodeRawFields(r.data)
+        var fkeys = Object.keys(fields).join(',')
+        // Field 3 alone = ambient/heartbeat message, skip up to 3 times
+        if (fkeys === '3' && attempt < 3) {
+          BLE.waitForNextResponse(6000, function(r2) { handleQueryResponse(r2, attempt + 1) })
+          return
         }
+        if (!fields[17]) {
+          onError('Key not enrolled. Tap your NFC card on the steering column, then confirm on the Tesla screen.')
+          return
+        }
+        var ecKey = null
+        var wei = decodeRawFields(fields[17])
+        if (wei[2]) {
+          var pk = decodeRawFields(wei[2])
+          if (pk[1] && pk[1].length === 65) ecKey = pk[1]
+        }
+        if (!ecKey) {
+          onError('Could not read vehicle key. Please try again.')
+          return
+        }
+        computeTableAndPool(ecKey)
+      }
 
-        BLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)
-      })
-      .catch(function(err) {
-        if (!cancelled) onError('Verify failed: ' + (err.message || '?'))
-      })
+      BLE.sendAndWaitForResponse(msgBytes, function(r) { handleQueryResponse(r, 0) }, 8000)
+    })
   }
 
   return { start, cancel }

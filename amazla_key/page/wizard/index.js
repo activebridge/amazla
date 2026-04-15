@@ -3,6 +3,7 @@ import { BasePage } from '@zeppos/zml/base-page'
 import { back } from '@zos/router'
 import { keepScreenOn } from '../../../zeppify/index.js'
 import store from '../../lib/store.js'
+import Phone from '../../lib/phone.js'
 
 import UI from '../../../pages/ui.js'
 import { Instructions } from './steps/instructions.js'
@@ -41,8 +42,9 @@ function showRetry(message) {
     message: message,
     onRetry: function() {
       showSetup()
+      var phone = new Phone(wizardPage)
       pairingCtrl = createPairingController(
-        wizardPage, store,
+        phone, store,
         function(substate) { if (setupCtrl) setupCtrl.update(substate) },
         function() { showSuccess() },
         function(msg) { showRetry(msg) }
@@ -54,8 +56,9 @@ function showRetry(message) {
 
 function startPairing() {
   showSetup()
+  var phone = new Phone(wizardPage)
   pairingCtrl = createPairingController(
-    wizardPage, store,
+    phone, store,
     function(substate) { if (setupCtrl) setupCtrl.update(substate) },
     function() { showSuccess() },
     function(msg) { showRetry(msg) }

@@ -61,9 +61,10 @@ const actions = {
   GET_SETTINGS: async () => {
     try {
       const vehicleName = settings.settingsStorage.getItem('vehicleName') || null
-      const vehicleVin = settings.settingsStorage.getItem('vehicleVin') || null
+      const vehicleVin = settings.settingsStorage.getItem('vehicleVin')
+      const vehicleVinBinary = vehicleVin ? bytesToBinaryString(new TextEncoder().encode(vehicleVin)) : null
       console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin })
-      return { success: true, vehicleName, vehicleVin }
+      return { success: true, vehicleName, vehicleVin: vehicleVinBinary }
     } catch (e) {
       return { success: false, error: e && e.message }
     }

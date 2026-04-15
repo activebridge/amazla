@@ -8,6 +8,7 @@ import BLE from '../../lib/tesla-ble/index.js'
 import teslaBLE from '../../lib/tesla-ble/ble-native.js'
 import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
+import Phone from '../../lib/phone.js'
 
 // Store initialization flag on the imported module (survives re-evaluation)
 if (BLE.__blePageInit === undefined) {
@@ -26,7 +27,7 @@ var state = 'IDLE'
 var foundMAC = null
 var logLines = ['', '', '', '', '', '']
 var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
-var currentPage = null
+var phone = null
 var activeTimers = []
 var __pageBuilt = false // Prevent duplicate builds
 var statusDotWidget = null
@@ -110,16 +111,14 @@ function doPair() {
     addLog('No watch key - GENKEY first', 0xff4444)
     return
   }
-  currentPage
-    .request({ method: 'BLE_PAIR', params: { publicKeyBinary: watchKey } })
-    .then((result) => {
-      if (!result.success) {
-        state = 'IDLE'
-        updateStatus('ERROR', 0xff4444)
-        addLog(`Pair msg err: ${result.error || '?'}`, 0xff4444)
-        return
-      }
-      var msgBytes = binaryStringToBytes(result.message)
+  phone.pair(watchKey, (result) => {
+    if (!result.success) {
+      state = 'IDLE'
+      updateStatus('ERROR', 0xff4444)
+      addLog(`Pair msg err: ${result.error || '?'}`, 0xff4444)
+      return
+    }
+    var msgBytes = binaryStringToBytes(result.message)
       addLog(`TX[${msgBytes.length}]:${dumpHex(msgBytes, 6)}`, 0xaaaaaa)
       var sawTapRequired = false
       BLE.sendAndWaitForResponse(
@@ -193,12 +192,7 @@ function doPair() {
       state = 'WAITING_KEYCARD'
       updateStatus('TAP KEY CARD', 0xff4444)
       addLog('TAP KEY CARD on console!', 0xff4444)
-    })
-    .catch((err) => {
-      state = 'IDLE'
-      updateStatus('ERROR', 0xff4444)
-      addLog(`Exc: ${err.message || '?'}`, 0xff4444)
-    })
+  })
 }
 function doVerify() {
   if (!BLE.isConnected) {
@@ -213,16 +207,14 @@ function doVerify() {
     addLog('No watch key', 0xff4444)
     return
   }
-  currentPage
-    .request({ method: 'BLE_VERIFY_PAIR', params: { publicKeyBinary: watchKey } })
-    .then((result) => {
-      if (!result.success) {
-        state = 'IDLE'
-        updateStatus('ERROR', 0xff4444)
-        addLog(`Query err: ${result.error || '?'}`, 0xff4444)
-        return
-      }
-      var msgBytes = binaryStringToBytes(result.message)
+  phone.verifyPair(watchKey, (result) => {
+    if (!result.success) {
+      state = 'IDLE'
+      updateStatus('ERROR', 0xff4444)
+      addLog(`Query err: ${result.error || '?'}`, 0xff4444)
+      return
+    }
+    var msgBytes = binaryStringToBytes(result.message)
       function handleQueryResponse(r, attempt) {
         if (!r.success) {
           state = 'IDLE'
@@ -256,31 +248,22 @@ function doVerify() {
           store.vehicleEcPublicKey = ecKey
           addLog('✓ EC key saved', 0x44ff44)
           addLog('Computing table...', 0x666666)
-          currentPage
-            .request({ method: 'BLE_PRECOMPUTE_TABLE', params: { vehiclePublicKeyBinary: bytesToBinaryString(ecKey) } })
-            .then((r) => {
-              if (r.success && r.table) {
-                store.vehicleDoublingsTable = binaryStringToBytes(r.table)
-                addLog('✓ Table saved', 0x44ff44)
-              } else {
-                addLog(`Table failed: ${r.error || '?'}`, 0xffaa44)
-              }
-              addLog('Generating key pool...', 0x666666)
-              return currentPage.request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
-            })
-            .then((r) => {
-              if (r.success && r.pool) {
-                store.keyPool = binaryStringToBytes(r.pool)
+          phone.precomputeTable(bytesToBinaryString(ecKey), (r) => {
+            if (r.success) {
+              addLog('✓ Table saved', 0x44ff44)
+            } else {
+              addLog(`Table failed: ${r.error || '?'}`, 0xffaa44)
+            }
+            addLog('Generating key pool...', 0x666666)
+            phone.syncPool((r2) => {
+              if (r2.success) {
                 addLog('✓ Pool ready', 0x44ff44)
               } else {
-                addLog(`Pool gen failed: ${r.error || '?'}`, 0xffaa44)
+                addLog(`Pool gen failed: ${r2.error || '?'}`, 0xffaa44)
               }
               updateChecklist()
-            })
-            .catch((e) => {
-              addLog(`Setup err: ${e}`, 0xff8844)
-              updateChecklist()
-            })
+            }, 0)
+          })
         } else {
           addLog('No EC key in WEI', 0xff8800)
         }
@@ -289,19 +272,8 @@ function doVerify() {
         addLog('Key enrolled!', 0x00cc44)
         updateChecklist()
       }
-      BLE.sendAndWaitForResponse(
-        msgBytes,
-        (r) => {
-          handleQueryResponse(r, 0)
-        },
-        8000,
-      )
-    })
-    .catch((err) => {
-      state = 'IDLE'
-      updateStatus('ERROR', 0xff4444)
-      addLog(`Exc: ${err.message || '?'}`, 0xff4444)
-    })
+      BLE.sendAndWaitForResponse(msgBytes, (r) => { handleQueryResponse(r, 0) }, 8000)
+  })
 }
 function decodeRawFields(data) {
   var fields = {},
@@ -346,36 +318,23 @@ function decodeRawFields(data) {
 }
 function onGenKey() {
   addLog('Generating keys...', 0xffcc00)
-  currentPage
-    .request({ method: 'BLE_SYNC_KEYS', params: {} })
-    .then((result) => {
-      if (result.success && result.publicKeyBinary) {
-        // Store binary string directly
-        store.watchPublicKey = result.publicKeyBinary
-        addLog('✓ Watch key ready', 0x44ff44)
-        addLog('Generating pool...', 0x888888)
-        currentPage
-          .request({ method: 'BLE_SYNC_POOL', params: { currentCount: 0 } })
-          .then((r) => {
-            if (r.success && r.pool) {
-              store.keyPool = binaryStringToBytes(r.pool)
-              addLog('✓ Pool ready', 0x44ff44)
-            } else {
-              addLog('Pool gen failed', 0xff8800)
-            }
-            updateStatus('READY', 0x00cc44)
-            updateChecklist()
-          })
-          .catch(() => {
-            updateChecklist()
-          })
+  phone.syncKeys((result) => {
+    if (!result.success) {
+      addLog(`Key err: ${result.error || '?'}`, 0xff8844)
+      return
+    }
+    addLog('✓ Watch key ready', 0x44ff44)
+    addLog('Generating pool...', 0x888888)
+    phone.syncPool((r) => {
+      if (r.success) {
+        addLog('✓ Pool ready', 0x44ff44)
       } else {
-        addLog('Key gen failed', 0xff8844)
+        addLog('Pool gen failed', 0xff8800)
       }
-    })
-    .catch((e) => {
-      addLog(`Key err: ${e}`, 0xff8844)
-    })
+      updateStatus('READY', 0x00cc44)
+      updateChecklist()
+    }, 0)
+  })
 }
 function onPair() {
   if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING' || state === 'WAITING_KEYCARD') {
@@ -612,8 +571,7 @@ Page(
       // Guard against duplicate builds (ZeppOS garbage collection or router issues)
       if (__pageBuilt) {
         console.log('[BLE-LIFECYCLE] Page already built — refreshing checklist and status')
-        // Update currentPage reference and refresh checklist so UI reflects any changed store values
-        currentPage = this
+        phone = new Phone(this)
         try { updateChecklist() } catch (e) { console.log('[BLE] updateChecklist err', e && e.message) }
         return
       }
@@ -621,59 +579,29 @@ Page(
 
       logWidgets = []
       UI.reset()
-      currentPage = this
+      phone = new Phone(this)
 
       BLE.reset()
       teslaSession.reset()
 
       teslaSession.onPoolLow = () => {
-        var currentCount = store.keyPoolCount
-        console.log(`[BLE] Pool low (${currentCount}), syncing`)
-        currentPage
-          .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
-          .then((r) => {
-            if (r.success && r.pool) {
-              store.keyPool = binaryStringToBytes(r.pool)
-              addLog('✓ Pool replenished', 0x44ff44)
-            } else {
-              addLog('Pool replenish failed', 0xff8844)
-            }
-          })
-          .catch((_e) => {
-            addLog('Pool replenish err', 0xff8844)
-          })
+        console.log(`[BLE] Pool low (${store.keyPoolCount}), syncing`)
+        phone.syncPool((r) => {
+          addLog(r.success ? '✓ Pool replenished' : 'Pool replenish failed', r.success ? 0x44ff44 : 0xff8844)
+        })
       }
-      // Always request companion for watch key on page open, but avoid noisy logs when unchanged.
-      currentPage
-        .request({ method: 'BLE_SYNC_KEYS', params: {} })
-        .then((result) => {
-          try {
-            if (result.success && result.publicKeyBinary) {
-              // If we don't have a local key, store and log. If we do, only update/log when it changed.
-              if (!store.watchPublicKey) {
-                store.watchPublicKey = result.publicKeyBinary
-                addLog('✓ Watch key synced', 0x44ff44)
-              }
-            }
-          } catch (e) {
-            console.log('[BLE] sync keys compare err', e && e.message)
-          }
-          updateChecklist()
-        })
-        .catch(() => {
-          updateChecklist()
-        })
 
-      var currentCount = store.keyPoolCount
-      currentPage
-        .request({ method: 'BLE_SYNC_POOL', params: { currentCount } })
-        .then((r) => {
-          if (r.success && r.pool) {
-            store.keyPool = binaryStringToBytes(r.pool)
-            addLog('✓ Pool synced', 0x44ff44)
-          }
-        })
-        .catch(() => {})
+      // Sync watch key on page open; only log if newly stored.
+      phone.syncKeys((result) => {
+        if (result.success && !store.watchPublicKey) {
+          addLog('✓ Watch key synced', 0x44ff44)
+        }
+        updateChecklist()
+      })
+
+      phone.syncPool((r) => {
+        if (r.success) addLog('✓ Pool synced', 0x44ff44)
+      })
       uiText({
         x: 0,
         y: 8,
