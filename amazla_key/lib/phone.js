@@ -52,24 +52,22 @@ class Phone {
     })
   }
 
-  // Build pairing (whitelist enrollment) message for the given watch public key.
-  // cb: { success, message }
-  pair(publicKeyBinary, cb) {
-    this._call('BLE_PAIR', { publicKeyBinary }, cb, (r) => ({ message: r.message }))
+  // Sync/generate watch keypair and pre-build both BLE messages in one IPC call.
+  // Writes store.watchPublicKey. cb: { success, pairMsg, verifyMsg }
+  pairSetup(cb) {
+    this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
+      store.watchPublicKey = r.watchPublicKey
+      return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
+    })
   }
 
-  // Build GetWhitelistEntryInfo message.
-  // cb: { success, message }
-  verifyPair(publicKeyBinary, cb) {
-    this._call('BLE_VERIFY_PAIR', { publicKeyBinary }, cb, (r) => ({ message: r.message }))
-  }
-
-  // Precompute ECDH doublings table for a vehicle public key.
-  // Writes store.vehicleDoublingsTable.
-  // cb: { success }
-  precomputeTable(vehiclePublicKeyBinary, cb) {
-    this._call('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary }, cb, (r) => {
-      if (!r.table) throw new Error('No table')
+  // Parse raw Tesla verify response, extract vehicle EC key, compute doublings table.
+  // Writes store.vehicleEcPublicKey + store.vehicleDoublingsTable. cb: { success }
+  completePairing(rawResponseBinary, cb) {
+    this._call('BLE_COMPLETE_PAIRING', { rawResponse: rawResponseBinary }, cb, (r) => {
+      if (!r.ecKey) throw new Error('No EC key in response')
+      if (!r.table) throw new Error('No table in response')
+      store.vehicleEcPublicKey = binaryStringToBytes(r.ecKey)
       store.vehicleDoublingsTable = binaryStringToBytes(r.table)
     })
   }

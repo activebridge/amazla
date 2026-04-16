@@ -1,5 +1,5 @@
 import { BaseSideService } from '@zeppos/zml/base-side'
-import bleCrypto, { bytesToBinaryString } from './ble-crypto.js'
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from './ble-crypto.js'
 
 const dispatch = async (method, response, params = {}) => {
   try {
@@ -38,15 +38,28 @@ const actions = {
     }
   },
 
-  // BLE Pairing - build message bytes for watch to send
-  BLE_PAIR: async (params) => {
-    return bleCrypto.buildPairMessage(params.publicKeyBinary)
+  // Build pair + verify messages in one call.
+  // Returns { watchPublicKey, pairMsg, verifyMsg } — watch uses pairMsg for enrollment,
+  // verifyMsg for whitelist query; raw Tesla response goes to BLE_COMPLETE_PAIRING.
+  BLE_PAIR_SETUP: async () => {
+    console.log('[App] BLE_PAIR_SETUP: syncing keys and building pair/verify messages')
+    const stored = settings.settingsStorage.getItem('tesla_public_key')
+    if (!stored) {
+      const keypair = bleCrypto.generateEnrolledKeyPair()
+      if (!keypair.success) return keypair
+      settings.settingsStorage.setItem('tesla_private_key', keypair.privateKeyBinary)
+      settings.settingsStorage.setItem('tesla_public_key', keypair.publicKeyBinary)
+    }
+    const publicKeyBinary = settings.settingsStorage.getItem('tesla_public_key')
+    return bleCrypto.pairSetup(publicKeyBinary)
   },
 
-  // Verify pairing: query whitelist entry to get vehicle EC key
-  BLE_VERIFY_PAIR: async (params) => {
-    console.log('[App] Building whitelist query message for verification')
-    return bleCrypto.buildWhitelistQueryMessage(params.publicKeyBinary)
+  // Parse raw Tesla BLE verify response, extract vehicle EC key, compute doublings table.
+  // Replaces BLE_VERIFY_PAIR + watch-side decodeRawFields + BLE_PRECOMPUTE_TABLE.
+  BLE_COMPLETE_PAIRING: async ({ rawResponse }) => {
+    console.log('[App] BLE_COMPLETE_PAIRING: parsing verify response and computing table')
+    const rawBytes = binaryStringToBytes(rawResponse)
+    return bleCrypto.completePairing(rawBytes)
   },
 
   // Sync key pool: watch sends current count, phone returns a full replacement pool if below target.

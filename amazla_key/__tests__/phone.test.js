@@ -171,88 +171,81 @@ describe('syncKeys()', () => {
   })
 })
 
-// ─── pair ─────────────────────────────────────────────────────────────────────
+// ─── pairSetup ────────────────────────────────────────────────────────────────
 
-describe('pair()', () => {
-  test('returns message from companion', async () => {
-    const msgBinary = fakeBinary(50)
-    const page = makePage({ BLE_PAIR: { success: true, message: msgBinary } })
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.pair(fakeBinary(65), resolve))
-
-    expect(result.success).toBe(true)
-    expect(result.message).toBe(msgBinary)
-  })
-
-  test('passes publicKeyBinary to companion', async () => {
+describe('pairSetup()', () => {
+  test('writes store.watchPublicKey and returns pairMsg + verifyMsg', async () => {
     const pubKey = fakeBinary(65, 0x04)
-    const page = makePage({ BLE_PAIR: { success: true, message: fakeBinary(10) } })
+    const pairMsg = fakeBinary(50)
+    const verifyMsg = fakeBinary(30)
+    const page = makePage({
+      BLE_PAIR_SETUP: { success: true, watchPublicKey: pubKey, pairMsg, verifyMsg },
+    })
     const phone = new Phone(page)
 
-    await new Promise(resolve => phone.pair(pubKey, resolve))
-
-    expect(page.request).toHaveBeenCalledWith(
-      expect.objectContaining({ params: expect.objectContaining({ publicKeyBinary: pubKey }) }),
-    )
-  })
-
-  test('calls cb with success:false on failure response', async () => {
-    const page = makePage({ BLE_PAIR: { success: false, error: 'not enrolled' } })
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.pair(fakeBinary(65), resolve))
-    expect(result.success).toBe(false)
-    expect(result.error).toBe('not enrolled')
-  })
-})
-
-// ─── verifyPair ───────────────────────────────────────────────────────────────
-
-describe('verifyPair()', () => {
-  test('returns message from companion', async () => {
-    const msgBinary = fakeBinary(30)
-    const page = makePage({ BLE_VERIFY_PAIR: { success: true, message: msgBinary } })
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.verifyPair(fakeBinary(65), resolve))
+    const result = await new Promise(resolve => phone.pairSetup(resolve))
 
     expect(result.success).toBe(true)
-    expect(result.message).toBe(msgBinary)
+    expect(result.pairMsg).toBe(pairMsg)
+    expect(result.verifyMsg).toBe(verifyMsg)
+    expect(store.watchPublicKey).toBeInstanceOf(Uint8Array)
+    expect(store.watchPublicKey.length).toBe(65)
   })
 
   test('calls cb with success:false on failure', async () => {
-    const page = makePage({ BLE_VERIFY_PAIR: { success: false, error: 'not found' } })
+    const page = makePage({ BLE_PAIR_SETUP: { success: false, error: 'keygen failed' } })
     const phone = new Phone(page)
 
-    const result = await new Promise(resolve => phone.verifyPair(fakeBinary(65), resolve))
+    const result = await new Promise(resolve => phone.pairSetup(resolve))
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('keygen failed')
+  })
+
+  test('calls cb with success:false on rejection', async () => {
+    const page = { request: jest.fn(() => Promise.reject(new Error('crash'))) }
+    const phone = new Phone(page)
+
+    const result = await new Promise(resolve => phone.pairSetup(resolve))
     expect(result.success).toBe(false)
   })
 })
 
-// ─── precomputeTable ──────────────────────────────────────────────────────────
+// ─── completePairing ──────────────────────────────────────────────────────────
 
-describe('precomputeTable()', () => {
-  test('writes store.vehicleDoublingsTable and calls cb with success', async () => {
-    const tableBinary = fakeBinary(16384)
-    const page = makePage({ BLE_PRECOMPUTE_TABLE: { success: true, table: tableBinary } })
+describe('completePairing()', () => {
+  test('writes store.vehicleEcPublicKey + store.vehicleDoublingsTable on success', async () => {
+    const ecKey = fakeBinary(65, 0x04)
+    const table = fakeBinary(16384)
+    const page = makePage({ BLE_COMPLETE_PAIRING: { success: true, ecKey, table } })
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
-      phone.precomputeTable(fakeBinary(65), resolve))
+      phone.completePairing(fakeBinary(100), resolve))
 
     expect(result.success).toBe(true)
+    expect(store.vehicleEcPublicKey).toBeInstanceOf(Uint8Array)
+    expect(store.vehicleEcPublicKey.length).toBe(65)
     expect(store.vehicleDoublingsTable).toBeDefined()
-    // stored as Uint32Array: 16384 bytes / 4 = 4096 elements
-    expect(store.vehicleDoublingsTable.length).toBe(4096)
+    expect(store.vehicleDoublingsTable.length).toBe(4096) // 16384 bytes / 4
   })
 
-  test('calls cb with success:false when table missing in response', async () => {
-    const page = makePage({ BLE_PRECOMPUTE_TABLE: { success: true, table: null } })
+  test('calls cb with success:false when ecKey missing', async () => {
+    const page = makePage({ BLE_COMPLETE_PAIRING: { success: true, ecKey: null, table: fakeBinary(16384) } })
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
-      phone.precomputeTable(fakeBinary(65), resolve))
+      phone.completePairing(fakeBinary(100), resolve))
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/no ec key/i)
+  })
+
+  test('calls cb with success:false when table missing', async () => {
+    const page = makePage({ BLE_COMPLETE_PAIRING: { success: true, ecKey: fakeBinary(65), table: null } })
+    const phone = new Phone(page)
+
+    const result = await new Promise(resolve =>
+      phone.completePairing(fakeBinary(100), resolve))
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/no table/i)
@@ -263,7 +256,7 @@ describe('precomputeTable()', () => {
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
-      phone.precomputeTable(fakeBinary(65), resolve))
+      phone.completePairing(fakeBinary(100), resolve))
     expect(result.success).toBe(false)
   })
 })

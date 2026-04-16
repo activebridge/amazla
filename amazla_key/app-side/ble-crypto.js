@@ -89,7 +89,7 @@ function generateKeypair() {
 // Protobuf encoding helpers
 // ============================================
 
-import { concat, encodeBytes, encodeEnum, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
+import { concat, encodeBytes, encodeEnum, encodeVarintField, decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
 import { buildSignedMessage, buildToVCSECMessage } from '../lib/tesla-ble/protocol/vcsec.js'
 
 // ============================================
@@ -242,6 +242,50 @@ class BLECryptoSession {
     return {
       success: true,
       message: bytesToBinaryString(messageBytes),
+    }
+  }
+
+  // Build both pair + verify messages in one call.
+  // Returns { pairMsg, verifyMsg } as binary strings alongside the watch public key.
+  pairSetup(storedPublicKeyBinary) {
+    const publicKeyBinary = storedPublicKeyBinary || this.generateEnrolledKeyPair().publicKeyBinary
+    const pair = this.buildPairMessage(publicKeyBinary)
+    const verify = this.buildWhitelistQueryMessage()
+    if (!pair.success) return { success: false, error: 'Failed to build pair message' }
+    if (!verify.success) return { success: false, error: 'Failed to build verify message' }
+    return { success: true, watchPublicKey: publicKeyBinary, pairMsg: pair.message, verifyMsg: verify.message }
+  }
+
+  // Parse raw Tesla BLE verify response, extract vehicle EC key, compute doublings table.
+  // Replaces watch-side decodeRawFields + BLE_PRECOMPUTE_TABLE round-trip.
+  completePairing(rawResponseBytes) {
+    try {
+      let fields = decodeMessage(rawResponseBytes)
+      if (fields[10] instanceof Uint8Array) fields = decodeMessage(fields[10])
+
+      const weiBytes = fields[17]
+      if (!(weiBytes instanceof Uint8Array)) return { success: false, error: 'Key not enrolled (no field 17)' }
+
+      const wei = decodeMessage(weiBytes)
+      let ecKey = null
+      if (wei[2] instanceof Uint8Array) {
+        const pk = decodeMessage(wei[2])
+        if (pk[1] instanceof Uint8Array && pk[1].length === 65) ecKey = pk[1]
+      }
+      if (!ecKey && wei[1] instanceof Uint8Array && wei[1].length === 65) ecKey = wei[1]
+      if (!ecKey) return { success: false, error: 'Could not extract vehicle EC key' }
+
+      const tableResult = this.buildDoublingsTable(bytesToBinaryString(ecKey))
+      if (!tableResult.success) return { success: false, error: tableResult.error }
+
+      const tableBytes = new Uint8Array(tableResult.buffer)
+      return {
+        success: true,
+        ecKey: bytesToBinaryString(ecKey),
+        table: bytesToBinaryString(tableBytes),
+      }
+    } catch (e) {
+      return { success: false, error: e.message }
     }
   }
 

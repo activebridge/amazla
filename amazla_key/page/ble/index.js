@@ -3,10 +3,9 @@ import * as hmUI from '@zos/ui'
 import UI, { button as uiButton, rect as uiRect, text as uiText } from '../../../pages/ui.js'
 import { keepScreenOn } from '../../../zeppify/index.js'
 import store from '../../lib/store.js'
-import { binaryStringToBytes, bytesToBinaryString } from '../../lib/tesla-ble/crypto/binary-utils.js'
 import BLE from '../../lib/tesla-ble/index.js'
 import teslaBLE from '../../lib/tesla-ble/ble-native.js'
-import { parsePairingResponse } from '../../lib/tesla-ble/protocol/vcsec-pairing.js'
+import { createPairingController } from '../../lib/tesla-ble/pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import Phone from '../../lib/phone.js'
 
@@ -15,16 +14,8 @@ if (BLE.__blePageInit === undefined) {
   BLE.__blePageInit = false
 }
 
-function dumpHex(bytes, n) {
-  if (!bytes) return 'null'
-  var s = '',
-    limit = Math.min(bytes.length, n || 10)
-  for (var i = 0; i < limit; i++) s += `0${bytes[i].toString(16)}`.slice(-2)
-  if (bytes.length > limit) s += '..'
-  return s
-}
 var state = 'IDLE'
-var foundMAC = null
+var pairingCtrl = null
 var logLines = ['', '', '', '', '', '']
 var logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
 var phone = null
@@ -61,11 +52,6 @@ function updateStatus(label, dotColor) {
     statusTextWidget.setProperty(hmUI.prop.COLOR, dotColor)
   }
 }
-function scheduleTimeout(fn, delay) {
-  var id = setTimeout(fn, delay)
-  activeTimers.push(id)
-  return id
-}
 function clearAllTimers() {
   for (var i = 0; i < activeTimers.length; i++) {
     clearTimeout(activeTimers[i])
@@ -101,220 +87,40 @@ function updateChecklist() {
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasTable ? 0x44cc66 : 0xff5555)
   if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.COLOR, poolSize > 0 ? 0x44cc66 : 0xff8833)
 }
-function doPair() {
-  state = 'PAIRING'
-  updateStatus('PAIRING...', 0xffcc00)
-  var watchKey = store.watchPublicKey
-  if (!watchKey) {
-    state = 'IDLE'
-    updateStatus('NO KEY', 0xff4444)
-    addLog('No watch key - GENKEY first', 0xff4444)
+const STATE_COLORS = {
+  setup: 0xffcc00, scanning: 0xffcc00, connecting: 0xffcc00,
+  pairing: 0xffcc00, confirming: 0xff4444, verifying: 0xffcc00, done: 0x00cc44,
+}
+const STATE_LABELS = {
+  setup: 'SETUP...', scanning: 'SCANNING...', connecting: 'CONNECTING...',
+  pairing: 'PAIRING...', confirming: 'TAP KEY CARD', verifying: 'VERIFYING...', done: 'PAIRED!',
+}
+function onPair() {
+  if (state === 'scanning' || state === 'connecting' || state === 'pairing' || state === 'confirming') {
+    addLog('Busy: ' + state, 0xff8800)
     return
   }
-  phone.pair(watchKey, (result) => {
-    if (!result.success) {
+  if (pairingCtrl) { pairingCtrl.cancel(); pairingCtrl = null }
+  pairingCtrl = createPairingController(phone, {
+    onState(s) {
+      state = s
+      updateStatus(STATE_LABELS[s] || s.toUpperCase(), STATE_COLORS[s] || 0x888888)
+      if (s === 'confirming') addLog('TAP KEY CARD on console!', 0xff4444)
+    },
+    onLog(msg) { addLog(msg, 0x888888) },
+    onSuccess() {
+      addLog('✓ Paired!', 0x44ff44)
+      updateChecklist()
+      pairingCtrl = null
+    },
+    onError(msg) {
       state = 'IDLE'
       updateStatus('ERROR', 0xff4444)
-      addLog(`Pair msg err: ${result.error || '?'}`, 0xff4444)
-      return
-    }
-    var msgBytes = binaryStringToBytes(result.message)
-      addLog(`TX[${msgBytes.length}]:${dumpHex(msgBytes, 6)}`, 0xaaaaaa)
-      var sawTapRequired = false
-      BLE.sendAndWaitForResponse(
-        msgBytes,
-        (r) => {
-          if (!r.success) {
-            addLog('Timeout - trying verify...', 0x888888)
-            state = 'DONE'
-            updateStatus('Fetch EC key', 0xffcc00)
-            scheduleTimeout(() => {
-              doVerify()
-            }, 1000)
-            return
-          }
-          addLog(`RX[${r.data.length}]:${dumpHex(r.data, 8)}`, 0x888888)
-          var parsed = parsePairingResponse(r.data)
-          var dbg = parsed.dbg || {}
-          addLog(`PRX:${parsed.status}${dbg.wlFault ? ` wl:${dbg.wlFault}` : ''}`, 0x4488ff)
-          if (parsed.status === 'ok') {
-            if (sawTapRequired || dbg.hasSigner) {
-              state = 'DONE'
-              updateStatus('PAIRED!', 0x00cc44)
-              addLog('✓ Paired!', 0x44ff44)
-              scheduleTimeout(() => {
-                doVerify()
-              }, 500)
-            } else {
-              addLog('Waiting for tap...', 0xff8800)
-              waitForResult()
-            }
-            return
-          }
-          if (parsed.status === 'wait') sawTapRequired = true
-          if (parsed.status === 'wait' || parsed.status === 'pending') waitForResult()
-        },
-        15000,
-      )
-      function waitForResult() {
-        BLE.waitForNextResponse(60000, (r2) => {
-          if (!r2.success) {
-            addLog('NFC timeout', 0x888888)
-            return
-          }
-          addLog(`RX[${r2.data.length}]:${dumpHex(r2.data, 8)}`, 0x888888)
-          var p2 = parsePairingResponse(r2.data),
-            d2 = p2.dbg || {}
-          addLog(`NFC:${p2.status}${d2.wlFault ? ` wl:${d2.wlFault}` : ''}`, 0x4488ff)
-          if (p2.status === 'wait') {
-            sawTapRequired = true
-            waitForResult()
-          } else if (p2.status === 'pending') {
-            waitForResult()
-          } else if (p2.status === 'ok') {
-            if (sawTapRequired || d2.hasSigner) {
-              state = 'DONE'
-              updateStatus('PAIRED!', 0x00cc44)
-              scheduleTimeout(() => {
-                doVerify()
-              }, 500)
-            } else {
-              addLog('ok-skip(no tap)', 0xff8800)
-              waitForResult()
-            }
-          } else if (p2.status === 'error') {
-            state = 'IDLE'
-            updateStatus('PAIR ERROR', 0xff4444)
-            addLog(p2.error || 'Error', 0xff4444)
-          }
-        })
-      }
-      state = 'WAITING_KEYCARD'
-      updateStatus('TAP KEY CARD', 0xff4444)
-      addLog('TAP KEY CARD on console!', 0xff4444)
+      addLog(msg, 0xff4444)
+      pairingCtrl = null
+    },
   })
-}
-function doVerify() {
-  if (!BLE.isConnected) {
-    state = 'IDLE'
-    updateStatus('CONN LOST', 0xff4444)
-    addLog('BLE dropped - reconnect', 0xff8800)
-    return
-  }
-  updateStatus('QUERYING...', 0xffcc00)
-  var watchKey = store.watchPublicKey
-  if (!watchKey) {
-    addLog('No watch key', 0xff4444)
-    return
-  }
-  phone.verifyPair(watchKey, (result) => {
-    if (!result.success) {
-      state = 'IDLE'
-      updateStatus('ERROR', 0xff4444)
-      addLog(`Query err: ${result.error || '?'}`, 0xff4444)
-      return
-    }
-    var msgBytes = binaryStringToBytes(result.message)
-      function handleQueryResponse(r, attempt) {
-        if (!r.success) {
-          state = 'IDLE'
-          updateStatus('NO RESPONSE', 0xff8800)
-          addLog('Query timeout', 0xff8800)
-          return
-        }
-        var fields = decodeRawFields(r.data)
-        var fkeys = Object.keys(fields).join(',')
-        addLog(`f:${fkeys}`, 0x4488ff)
-        if (fkeys === '3' && attempt < 3) {
-          addLog(`Ambient#${attempt + 1} skip`, 0x888888)
-          BLE.waitForNextResponse(6000, (r2) => {
-            handleQueryResponse(r2, attempt + 1)
-          })
-          return
-        }
-        if (!fields[17]) {
-          state = 'IDLE'
-          updateStatus('NOT ENROLLED', 0xff4444)
-          addLog('Not in whitelist', 0xff8800)
-          return
-        }
-        var ecKey = null
-        var wei = decodeRawFields(fields[17])
-        if (wei[2]) {
-          var pk = decodeRawFields(wei[2])
-          if (pk[1] && pk[1].length === 65) ecKey = pk[1]
-        }
-        if (ecKey) {
-          store.vehicleEcPublicKey = ecKey
-          addLog('✓ EC key saved', 0x44ff44)
-          addLog('Computing table...', 0x666666)
-          phone.precomputeTable(bytesToBinaryString(ecKey), (r) => {
-            if (r.success) {
-              addLog('✓ Table saved', 0x44ff44)
-            } else {
-              addLog(`Table failed: ${r.error || '?'}`, 0xffaa44)
-            }
-            addLog('Generating key pool...', 0x666666)
-            phone.syncPool((r2) => {
-              if (r2.success) {
-                addLog('✓ Pool ready', 0x44ff44)
-              } else {
-                addLog(`Pool gen failed: ${r2.error || '?'}`, 0xffaa44)
-              }
-              updateChecklist()
-            }, 0)
-          })
-        } else {
-          addLog('No EC key in WEI', 0xff8800)
-        }
-        state = 'DONE'
-        updateStatus('PAIRED!', 0x00cc44)
-        addLog('Key enrolled!', 0x00cc44)
-        updateChecklist()
-      }
-      BLE.sendAndWaitForResponse(msgBytes, (r) => { handleQueryResponse(r, 0) }, 8000)
-  })
-}
-function decodeRawFields(data) {
-  var fields = {},
-    offset = 0
-  while (offset < data.length) {
-    var tag = 0,
-      shift = 0
-    while (offset < data.length) {
-      var b = data[offset++]
-      tag |= (b & 0x7f) << shift
-      if (!(b & 0x80)) break
-      shift += 7
-    }
-    var fieldNum = tag >> 3,
-      wireType = tag & 7
-    if (wireType === 0) {
-      var val = 0
-      shift = 0
-      while (offset < data.length) {
-        var b = data[offset++]
-        val |= (b & 0x7f) << shift
-        if (!(b & 0x80)) break
-        shift += 7
-      }
-      fields[fieldNum] = val
-    } else if (wireType === 2) {
-      var len = 0
-      shift = 0
-      while (offset < data.length) {
-        var b = data[offset++]
-        len |= (b & 0x7f) << shift
-        if (!(b & 0x80)) break
-        shift += 7
-      }
-      fields[fieldNum] = data.slice(offset, offset + len)
-      offset += len
-    } else {
-      break
-    }
-  }
-  return fields
+  pairingCtrl.start()
 }
 function onGenKey() {
   addLog('Generating keys...', 0xffcc00)
@@ -334,84 +140,6 @@ function onGenKey() {
       updateStatus('READY', 0x00cc44)
       updateChecklist()
     }, 0)
-  })
-}
-function onPair() {
-  if (state === 'SCANNING' || state === 'CONNECTING' || state === 'PAIRING' || state === 'WAITING_KEYCARD') {
-    addLog(`Busy: ${state}`, 0xff8800)
-    return
-  }
-  addLog('Starting pairing...', 0xffcc00)
-  var savedMAC = store.vehicleMac
-  if (savedMAC) {
-    doConnect(savedMAC, 0, doPair)
-    return
-  }
-  state = 'SCANNING'
-  updateStatus('SCANNING...', 0xffcc00)
-  addLog('Scanning 15s...', 0xcccccc)
-  BLE.scan((result) => {
-    if (result.type === 'found') {
-      foundMAC = result.device.mac || null
-      addLog(`FND: ${result.device.name || '?'}`, 0x00cc44)
-
-      // Attempt to auto-extract VIN from Tesla BLE device name.
-      // Name format: S<16-hex-chars>C (hex encodes 8 ASCII chars = last 8 VIN chars)
-      try {
-        var devName = result.device.name || ''
-        var m = devName.match(/^S([a-f0-9]{16})C$/i)
-        if (m) {
-          var hex = m[1]
-          var vinPart = ''
-          for (var i = 0; i < hex.length; i += 2) {
-            vinPart += String.fromCharCode(parseInt(hex.substr(i, 2), 16))
-          }
-          // Ensure session has storage set; BLE name contains only last 8 VIN chars.
-
-          if (vinPart && vinPart.length > 0) {
-            addLog(`VIN suffix detected: ${vinPart}`, 0x44cc44)
-          }
-        }
-      } catch (_e) {
-        /* non-fatal */
-      }
-
-      BLE.stopScan()
-      state = 'IDLE'
-      scheduleTimeout(() => {
-        doConnect(foundMAC, 0, doPair)
-      }, 500)
-    }
-    if (result.type === 'complete' && state === 'SCANNING') {
-      if (!foundMAC) {
-        state = 'IDLE'
-        addLog('No device found', 0xff8800)
-        updateStatus('IDLE', 0x888888)
-      }
-    }
-  }, 15000)
-}
-function doConnect(mac, attempt, onConnected) {
-  state = 'CONNECTING'
-  updateStatus('CONNECTING...', 0xffcc00)
-  addLog(`Connecting ${mac.slice(-8)}...`, 0xcccccc)
-  BLE.connect(mac, (result) => {
-    if (!result.success) {
-      if (attempt < 1) {
-        scheduleTimeout(() => {
-          doConnect(mac, attempt + 1, onConnected)
-        }, 2000)
-        return
-      }
-      state = 'IDLE'
-      updateStatus('CONN FAIL', 0xff4444)
-      addLog(`Conn err: ${result.error || '?'}`, 0xff4444)
-      return
-    }
-    addLog('✓ Connected', 0x00cc44)
-    updateStatus('CONNECTED', 0x00cc44)
-    updateChecklist()
-    if (onConnected) onConnected()
   })
 }
 function onConnect() {
@@ -555,7 +283,6 @@ function onClear() {
   BLE.clear()
   teslaSession.reset()
   state = 'IDLE'
-  foundMAC = null
   updateStatus('CLEARED', 0x888888)
   addLog('Cleared & disconnected', 0x888888)
   updateChecklist()
@@ -826,7 +553,7 @@ Page(
       console.log('[BLE-LIFECYCLE] Clearing timers')
       clearAllTimers()
       state = 'IDLE'
-      foundMAC = null
+
       logLines = ['', '', '', '', '', '']
       logColors = [0x666666, 0x666666, 0x666666, 0x666666, 0x666666, 0x666666]
       logWidgets = []

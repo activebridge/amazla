@@ -52,6 +52,14 @@ export class CarSimulator {
     this._nextCommandError   = false  // next command returns actionStatus=2 (error)
     this._skipSecondResponse = false  // don't send actionStatus (triggers 10 s timeout)
     this._responseDelay      = 0      // ms delay before sending responses
+
+    // Pairing state
+    this._enrolledPublicKey  = null   // watch public key extracted from pair message
+    this._pairingAutoTap     = false  // immediately send OK (UNKNOWN_KEY) without WAIT
+    this._pairingError       = null   // fault code to inject on next whitelist add (null = none)
+    this._pairingPending     = false  // WAIT sent, waiting for triggerNFCTap()
+    this._pairingHarness     = null   // harness saved for async NFC tap delivery
+    this._ambientCount       = 0      // ambient responses to send before verify WEI
   }
 
   // ── Called by BLEHarness when a full inbound message payload is assembled ──
@@ -68,6 +76,12 @@ export class CarSimulator {
     // Authenticated command: field 10 = ToVCSECMessage, field 13 = SignatureData
     if (fields[10] instanceof Uint8Array) {
       this._handleCommand(fields[10], harness)
+      return
+    }
+
+    // Pairing message: ToVCSECMessage { field 1 = SignedMessage }
+    if (fields[1] instanceof Uint8Array) {
+      this._handlePairingMessage(fields[1], harness)
       return
     }
   }
@@ -246,10 +260,99 @@ export class CarSimulator {
     }
   }
 
+  // ── Pairing message handling ──────────────────────────────────────────────
+
+  _handlePairingMessage(signedMsgBytes, harness) {
+    const signedFields  = decodeMessage(signedMsgBytes)
+    const unsignedBytes = signedFields[2]   // SignedMessage.payload
+    if (!(unsignedBytes instanceof Uint8Array)) return
+    const unsigned = decodeMessage(unsignedBytes)
+
+    // UnsignedMessage.field 16 = WhitelistOperation → enroll key
+    if (unsigned[16] instanceof Uint8Array) {
+      this._handleWhitelistAdd(unsigned[16], harness)
+      return
+    }
+
+    // UnsignedMessage.field 1 = InformationRequest → whitelist query (verify step)
+    if (unsigned[1] instanceof Uint8Array) {
+      const infoFields = decodeMessage(unsigned[1])
+      if (infoFields[1] === INFO_REQUEST_GET_WHITELIST_ENTRY_INFO) {
+        this._handleWhitelistQuery(harness)
+      }
+    }
+  }
+
+  _handleWhitelistAdd(whitelistOpBytes, harness) {
+    // Extract and remember the watch's enrolled public key
+    const wlOp = decodeMessage(whitelistOpBytes)
+    const permChange = wlOp[5]             // PermissionChange at field 5
+    if (permChange instanceof Uint8Array) {
+      const pc = decodeMessage(permChange)
+      const pubKeyMsg = pc[1]              // PublicKey at field 1
+      if (pubKeyMsg instanceof Uint8Array) {
+        const pk = decodeMessage(pubKeyMsg)
+        if (pk[1] instanceof Uint8Array) this._enrolledPublicKey = pk[1]
+      }
+    }
+
+    // Error injection: CommandStatus { field 1 = ERROR, field 3 = wlFault }
+    if (this._pairingError !== null) {
+      const code = this._pairingError
+      this._pairingError = null
+      const errResp = encodeBytes(4, concat(
+        encodeVarintField(1, 2),                      // operationStatus = ERROR (2)
+        encodeBytes(3, encodeVarintField(1, code)),   // whitelistOperationFault
+      ))
+      this._deliver(harness, errResp)
+      return
+    }
+
+    if (this._pairingAutoTap) {
+      // Skip WAIT: UNKNOWN_KEY (7) → parsePairingResponse returns { status:'ok', hasSigner:true }
+      // which drives directly to doVerify without entering waitForNFC().
+      this._deliver(harness, encodeVarintField(1, 7))
+      return
+    }
+
+    // Normal flow: WAIT → client registers waitForNFC() → triggerNFCTap() delivers OK
+    this._deliver(harness, encodeVarintField(1, 1))  // operationStatus = WAIT (1)
+    this._pairingPending = true
+    this._pairingHarness = harness
+  }
+
+  _handleWhitelistQuery(harness) {
+    // Deliver N ambient notifications first, then the real WEI.
+    // Each synchronous deliver fires handleResponse(ambient, attempt) which
+    // calls BLE.waitForNextResponse(), registering the callback for the next delivery.
+    const n = this._ambientCount
+    this._ambientCount = 0
+    for (let i = 0; i < n; i++) {
+      // Vary payload length so ble-native's frame-sig dedup doesn't drop identical chunks.
+      // Any response with ONLY field 3 is treated as ambient by pairing.js doVerify.
+      this._deliver(harness, encodeBytes(3, new Uint8Array(i + 1)))
+    }
+    this._deliver(harness, this._buildWhitelistEntryInfoResponse())
+  }
+
   // ── Test control API ──────────────────────────────────────────────────────
 
   setState(patch)         { Object.assign(this.state, patch) }
   injectCommandError()    { this._nextCommandError = true }
   skipSecondResponse()    { this._skipSecondResponse = true }
   setDelay(ms)            { this._responseDelay = ms }
+
+  // Pairing control
+  setPairingAutoTap(enabled) { this._pairingAutoTap = !!enabled }
+  injectPairingError(code)   { this._pairingError = code !== undefined ? code : 5 }
+  setAmbientCount(n)         { this._ambientCount = n }
+
+  triggerNFCTap() {
+    if (!this._pairingPending || !this._pairingHarness) return
+    this._pairingPending = false
+    const h = this._pairingHarness
+    this._pairingHarness = null
+    // CommandStatus { field 3 = WhitelistOperationStatus { field 1 = 0 (success) } }
+    this._deliver(h, encodeBytes(4, encodeBytes(3, encodeVarintField(1, 0))))
+  }
 }

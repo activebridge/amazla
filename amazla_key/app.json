@@ -30,8 +30,7 @@
         "page": {
           "pages": [
             "page/index",
-            "page/ble/index",
-            "page/wizard/index"
+            "page/ble/index"
           ]
         },
         "app-side": { "path": "app-side/index" },

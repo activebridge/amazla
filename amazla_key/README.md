@@ -10,6 +10,37 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 ## Recent Improvements (Latest)
 
+### Pairing Controller Refactor (✅ Complete)
+
+**What changed**: Extracted all pairing logic out of the UI layer into a headless controller + `Phone` class. Deleted the `page/wizard/` directory entirely (~611 lines removed).
+
+**`lib/tesla-ble/pairing.js`** — `createPairingController(phone, callbacks)`:
+- Full pairing state machine: `setup → scanning → connecting → pairing → confirming → verifying → done`
+- Handles auto-tap (UNKNOWN_KEY response) and manual NFC tap (WAIT → tap → OK) flows
+- Skips up to 3 ambient BLE responses before the real `WhitelistEntryInfo` reply
+- One retry on BLE connect failure; 60s NFC tap timeout
+- `cancel()` method: stops scan, disconnects BLE, suppresses all pending callbacks
+- `page/ble/index.js` now delegates to this controller; wizard UI gone
+
+**`lib/phone.js`** — `Phone` class (refactored):
+- `pairSetup(cb)` — single IPC call that generates the watch keypair and both BLE messages (`BLE_PAIR_SETUP`)
+- `completePairing(rawResponseBinary, cb)` — parses whitelist entry info, extracts EC key, computes doublings table (`BLE_COMPLETE_PAIRING`)
+- `syncPool(cb, count)`, `syncKeys(cb)`, `syncSettings()` — unchanged phone sync methods
+- `simulatePair(cb)` — dev-mode full pairing simulation without a real vehicle
+
+**New phone-side IPC handlers** (`app-side/ble-crypto.js` + `app-side/index.js`):
+- `BLE_PAIR_SETUP` — generates/retrieves watch keypair, builds pair + verify BLE messages in one call
+- `BLE_COMPLETE_PAIRING` — parses raw whitelist entry response, extracts vehicle EC key, returns doublings table
+
+**Test coverage** (`__tests__/pairing-controller.test.js`, 13 tests):
+- Auto-tap flow (UNKNOWN_KEY): end-to-end success, state sequence, EC key extraction, doublings table, key pool, enrolled key
+- Manual NFC tap flow: confirming state, artifacts stored
+- Ambient response skipping: 1, 2 (pass), 4 (fails at attempt 3 — expected)
+- Error paths: pairSetup failure, whitelist error, completePairing failure, BLE connect failure
+- NFC tap timeout (60s)
+- ok-without-tap (auto-approved key, fix for infinite waitForNFC loop)
+- cancel() before NFC tap; cancel() during scan
+
 ### End-to-End VCR Test Suite (✅ Complete)
 
 **Approach**: `ble-native.js` and `session.js` run completely unmodified. `BLEHarness` (`__mocks__/zos.js`) intercepts `@zos/ble` native calls at the `mstWriteCharacteristic`/`mstOnCharaNotification` boundary. `CarSimulator` (`__tests__/helpers/car-simulator.js`) implements full vehicle-side P-256 ECDH and HMAC-SHA256 — generating realistic framed BLE responses at the raw byte level.
@@ -205,7 +236,7 @@ The vehicle's 65-byte EC public key is **NOT sent during pairing**. It must be *
 
 ### Navigation & UI (✅ Complete)
 - **Main page** (`page/index.js`): Vehicle control — lock/unlock/frunk/trunk buttons with live door status overlay; small **BLE** button for debug access
-- **BLE debug page** (`page/ble/index.js`): Scan, pair, clear keys, manage pool, view connection log
+- **BLE debug page** (`page/ble/index.js`): Scan, pair (via `createPairingController`), clear keys, manage pool, view connection log. Wizard UI removed — all pairing logic is in `lib/tesla-ble/pairing.js`
 
 ## Architecture Overview
 
@@ -701,11 +732,13 @@ amazla_key/
 ├── page/
 │   ├── index.js                  # Main UI (lock/unlock/trunk/frunk + vehicle status)
 │   └── ble/
-│       └── index.js              # BLE debug page (scan, pair, pool management)
+│       └── index.js              # BLE debug page (scan, pair via controller, pool management)
 ├── setting/
 │   └── index.js                  # Companion settings page (vehicle name + VIN entry)
 ├── lib/
+│   ├── phone.js                  # Phone class — IPC wrapper for companion app methods
 │   └── tesla-ble/
+│       ├── pairing.js            # createPairingController — headless pairing state machine
 │       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
 │       ├── ble.js                # Low-level BLE — easy-ble wrapper (kept for reference)
 │       ├── session.js            # Session management (ECDH, signing, commands)
@@ -724,6 +757,8 @@ amazla_key/
     │   ├── car-simulator.js      # CarSimulator — full P-256/HMAC vehicle response simulator
     │   └── scenarios.js          # Pre-built vehicle state patches (lockedCar, sleeping, etc.)
     ├── car-simulator.test.js     # End-to-end VCR tests (BLE connect → session → RKE → status)
+    ├── pairing-controller.test.js # Pairing controller integration tests (13 tests)
+    ├── phone.test.js             # Phone class unit tests
     ├── session-protocol.test.js  # Session protocol unit tests
     ├── ble-communication.test.js # BLE layer tests
     ├── pairing-flow.test.js      # Pairing handshake tests
