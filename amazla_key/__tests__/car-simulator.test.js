@@ -22,6 +22,7 @@ import { bleHarness, _fsStore } from '../__mocks__/zos.js'
 import { CarSimulator } from './helpers/car-simulator.js'
 import { lockedCar, unlockedCar, allDoorsOpen, sleeping } from './helpers/scenarios.js'
 import bleCrypto, { bytesToBinaryString } from '../app-side/ble-crypto.js'
+import { encodeBytes, encodeVarintField, concat } from '../lib/tesla-ble/protocol/protobuf.js'
 import { createECDH } from 'crypto'
 
 // Track real timers created by production code (e.g., CCCD fallback) so tests can clear them.
@@ -427,6 +428,13 @@ describe('connection error paths', () => {
     expect(result.error).toMatch(/BLE connection failed/i)
   })
 
+  test('vehicleMac missing when BLE disconnected → fails with MAC not found', async () => {
+    store.vehicleMac = null   // doublings table still present from setupStore
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/MAC not found/i)
+  })
+
   test('disconnect during GATT setup → retries once and succeeds', async () => {
     jest.useFakeTimers()
     try {
@@ -444,5 +452,343 @@ describe('connection error paths', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+})
+
+// ─── session info response edge cases ────────────────────────────────────────
+
+describe('session info response edge cases', () => {
+  // Connect BLE once before each test so requestSessionInfo reaches _doSessionInfoRequest
+  beforeEach(async () => {
+    await p((cb) => teslaBLE.connect('AA:BB:CC:DD:EE:FF', cb))
+  })
+
+  test('BLE send error in _doSessionInfoRequest → reports error', async () => {
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: false, error: 'Write failed' })
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('Write failed')
+  })
+
+  test('null result.data in session info response → reports no-data error', async () => {
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: null })
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/no data/i)
+  })
+
+  test('response has payload but no sessionInfo → reports missing sessionInfo error', async () => {
+    // A response with field 10 (payload) present but no field 3/6 (sessionInfo)
+    // passes the intermediate-ack guard but hits the "else" branch in the handler
+    const responseBytes = encodeBytes(10, new Uint8Array([0x01, 0x02, 0x03]))
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: responseBytes })
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/No session info/i)
+  })
+
+  test('intermediate ack before SessionInfo → re-registers handler, session still establishes', async () => {
+    // sim._sendIntermediateAck=true makes _handleSessionInfo send a two-field bare response
+    // first (no sessionInfo/payload/signedMessageStatus), then the real SessionInfo.
+    // session.js lines 147 (sort comparator), 153-156 (intermediate ack re-queue).
+    sim._sendIntermediateAck = true
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(true)
+    expect(session.established).toBe(true)
+  })
+
+  test('vehicleEcPublicKey saved as fallback from SessionInfo when not in store (line 165)', async () => {
+    // Stub teslaBLE.send: capture handler, clear vehicleEcPublicKey, deliver valid SessionInfo.
+    // session.js line 165: store.vehicleEcPublicKey = publicKey from response.
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => {
+      capturedHandler = cb
+      store.vehicleEcPublicKey = null  // clear AFTER _doSessionInfoRequest started
+    }
+
+    const resultPromise = p((cb) => session.requestSessionInfo(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const si = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(2, sim.vehiclePubKey),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, si) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    expect(result.success).toBe(true)
+    expect(store.vehicleEcPublicKey).toBeDefined()
+  })
+
+  test('SessionInfo with no valid pubKey → uses stored vehiclePublicKey (lines 168-172)', async () => {
+    // Deliver a SessionInfo response where pubKey is absent (only counter+epoch+clockTime).
+    // session.js else branch (168-172): falls back to this.vehiclePublicKey from proceedWithSession.
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
+
+    const resultPromise = p((cb) => session.requestSessionInfo(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const siNoPubKey = concat(
+      encodeVarintField(1, 1),       // counter only — no pubKey field
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    // vehiclePublicKey was already set from store, so session establishes despite no pubKey in response
+    expect(result.success).toBe(true)
+    expect(session.vehiclePublicKey).toBeDefined()
+  })
+
+  test('SessionInfo no pubKey and no store key → error (lines 169-174)', async () => {
+    // Call _doSessionInfoRequest directly (bypasses proceedWithSession key check).
+    // Clear vehiclePublicKey and vehicleEcPublicKey INSIDE stub so else branch at 168
+    // finds both null → "Vehicle public key not found" error.
+    store.vehicleEcPublicKey = null
+    session.vehiclePublicKey = sim.vehiclePubKey  // set so _doSessionInfoRequest can proceed
+
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => {
+      session.vehiclePublicKey = null  // null AFTER request sent, BEFORE response processed
+      capturedHandler = cb
+    }
+
+    const resultPromise = p((cb) => session._doSessionInfoRequest(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const siNoPubKey = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Vehicle public key not found/i)
+  })
+
+  test('SessionInfo with null epoch → logs empty-epoch branch (line 186)', async () => {
+    // Provide SessionInfo with pubKey but no epoch field → this.epoch = null → line 186
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
+
+    const resultPromise = p((cb) => session.requestSessionInfo(cb))
+
+    // SessionInfo: pubKey (65 bytes) + counter + clockTime, but NO epoch (field 3)
+    const siNoEpoch = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(2, sim.vehiclePubKey),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, siNoEpoch) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    // Session still establishes despite null epoch (defensive path)
+    expect(result.success).toBe(true)
+  })
+
+  test('vehiclePublicKey wrong length → error (lines 195-198)', async () => {
+    // Set vehiclePublicKey to a 64-byte key (truthy, wrong length).
+    // Deliver SessionInfo without pubKey → else branch leaves vehiclePublicKey at 64 bytes.
+    // Lines 195-198: Invalid vehicle public key error.
+    session.vehiclePublicKey = new Uint8Array(64)  // wrong length, non-null
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
+
+    const resultPromise = p((cb) => session._doSessionInfoRequest(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const siNoPubKey = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/Invalid vehicle public key/i)
+  })
+
+  test('exception thrown inside sessionInfoResponseHandler → catch (lines 226-228)', async () => {
+    // Stub send: corrupt ephemeralPrivateKey to a non-Uint8Array so ecdhFixed throws.
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => {
+      session.ephemeralPrivateKey = 'corrupt'  // causes ecdhFixed to throw TypeError
+      capturedHandler = cb
+    }
+
+    const resultPromise = p((cb) => session.requestSessionInfo(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const si = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(2, sim.vehiclePubKey),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, si) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  test('no ECDH table after response received → error (lines 202-203)', async () => {
+    // Stub send: capture handler, then delete doublings table, deliver valid SessionInfo.
+    // session.js lines 202-203: _ecdhTable is null → error.
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => {
+      capturedHandler = cb
+      delete _fsStore['vehicle_doublings_table.dat']
+      store.vehicleDoublingsTable = null  // clears cache
+    }
+
+    const resultPromise = p((cb) => session.requestSessionInfo(cb))
+
+    const epoch = new Uint8Array(16).fill(0xab)
+    const si = concat(
+      encodeVarintField(1, 1),
+      encodeBytes(2, sim.vehiclePubKey),
+      encodeBytes(3, epoch),
+      encodeVarintField(4, Math.floor(Date.now() / 1000)),
+    )
+    capturedHandler({ success: true, data: encodeBytes(3, si) })
+
+    const result = await resultPromise
+    teslaBLE.send = origSend
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/ECDH table/i)
+  })
+})
+
+// ─── sendCommand error paths ──────────────────────────────────────────────────
+
+describe('sendCommand error paths', () => {
+  beforeEach(async () => {
+    const r = await p((cb) => session.requestSessionInfo(cb))
+    if (!r.success) throw new Error('Session setup failed: ' + r.error)
+  })
+
+  test('BLE send failure → reports error, clears waiting state', async () => {
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: false, error: 'TX failed' })
+    const result = await p((cb) => session.sendCommand(1, cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('TX failed')
+    expect(session._waitingForSecondResponse).toBe(false)
+  })
+
+  test('null result.data in getVehicleStatus → reports no-data error', async () => {
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: null })
+    const result = await p((cb) => session.getVehicleStatus(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/no data/i)
+  })
+
+  test('sendCommand: null result.data → inner catch reports error and clears waiting state', async () => {
+    // parseRoutableMessage(null) throws → inner catch in sendCommand (lines 311-316)
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: null })
+    const result = await p((cb) => session.sendCommand(1, cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toBeTruthy()
+    expect(session._waitingForSecondResponse).toBe(false)
+  })
+
+  test('sendCommand: buildAuthenticatedCommand throws → outer catch reports error', async () => {
+    // _cmdHmacFn=null causes _buildHMACTag to throw → outer catch in doSend (lines 315-316)
+    session._cmdHmacFn = null
+    const result = await p((cb) => session.sendCommand(1, cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/HMAC not initialized/i)
+  })
+
+  test('sendCommand: auto-establish fails → propagates failure (lines 322-323)', async () => {
+    // Use a fresh session (not established) and ensure doublings table is missing
+    // so requestSessionInfo fails immediately → callback(result) at lines 322-323.
+    // Must delete the file AND clear the cache (setter) so the getter sees no table.
+    delete _fsStore['vehicle_doublings_table.dat']
+    store.vehicleDoublingsTable = null   // clears in-memory cache via setter
+    const freshSession = new TeslaSession()
+    const result = await p((cb) => freshSession.sendCommand(1, cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/doublings table/i)
+  })
+
+  test('getVehicleStatus: parseVehicleStatus throws → catch reports error', async () => {
+    // data={} passes null guard, decodeMessage({}) returns empty, payload=null,
+    // parseVehicleStatus(null) throws → catch in getVehicleStatus (lines 354-355)
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: {} })
+    const result = await p((cb) => session.getVehicleStatus(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toBeTruthy()
+  })
+
+  test('second response with actionStatus clears _secondResponseTimer (lines 304-306)', async () => {
+    // Stub teslaBLE.send to capture the inlineHandler so we can fire it directly twice.
+    // First call: no actionStatus → sets _waitingForSecondResponse + timer.
+    // Second call: has actionStatus → hits clearTimeout path (session.js lines 304-306).
+    let capturedHandler = null
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
+
+    let cmdResult = null
+    session.sendCommand(1, (r) => {
+      if (!r._requeue) cmdResult = r
+    })
+
+    expect(capturedHandler).not.toBeNull()
+
+    // First response: bare field-5 → no actionStatus, no sessionInfo — intermediate ack
+    capturedHandler({ success: true, data: encodeVarintField(5, 0) })
+    expect(session._waitingForSecondResponse).toBe(true)
+    expect(session._secondResponseTimer).not.toBeNull()
+
+    // Second response: field-1 = 1 → actionStatus = 1 → hits clearTimeout
+    capturedHandler({ success: true, data: encodeVarintField(1, 1) })
+    expect(session._secondResponseTimer).toBeNull()
+    expect(session._waitingForSecondResponse).toBe(false)
+    expect(cmdResult).not.toBeNull()
+    expect(cmdResult.success).toBe(true)
+
+    teslaBLE.send = origSend
   })
 })

@@ -41,6 +41,10 @@ class BLEHarness {
     this._rxExpected             = 0
     this._scanCb                 = null  // mstStartScan result callback
     this._disconnectDuringPrepare = false // fire connected:2 before prepareCb
+    this._failConnect            = false  // fire connected:1 (immediate failure)
+    this._blockConnect           = false  // don't call connect callback (for timeout tests)
+    this._prepareFails           = false  // fire prepareCb with non-zero status
+    this._blockDescWrite         = false  // don't fire descWriteCb (lets CCCD fallback timer run)
   }
 
   setSimulator(sim) { this._simulator = sim }
@@ -50,21 +54,33 @@ class BLEHarness {
   // mstConnect: fire "connected" synchronously so tests don't need timer ticks
   connect(macBuffer, callback) {
     this._connectCb = callback
+    if (this._blockConnect) return        // caller's timeout fires instead
+    if (this._failConnect) {
+      this._failConnect = false
+      callback({ connected: 1 })          // connected:1 = failed
+      return
+    }
     callback({ connected: 0, connect_id: 1 })
   }
 
-  // mstBuildProfile: fire prepareCb synchronously, or simulate disconnect during GATT setup
+  // mstBuildProfile: fire prepareCb synchronously, or simulate disconnect/failure during GATT setup
   buildProfile() {
     if (this._disconnectDuringPrepare) {
       this._disconnectDuringPrepare = false
       if (this._connectCb) this._connectCb({ connected: 2 })
       return  // don't call prepareCb — vehicle dropped before profile was ready
     }
+    if (this._prepareFails) {
+      this._prepareFails = false
+      if (this._prepareCb) this._prepareCb(-1, 5)  // non-zero status = GATT failure
+      return
+    }
     if (this._prepareCb) this._prepareCb(1, 0)
   }
 
-  // mstWriteDescriptor (CCCD): fire descWriteCb synchronously
-  writeDescriptor(profile, uuid, descUUID, data, len) {
+  // mstWriteDescriptor (CCCD): fire descWriteCb synchronously (unless _blockDescWrite is set)
+  writeDescriptor(profile, uuid, descUUID, _data, _len) {
+    if (this._blockDescWrite) return
     if (this._descWriteCb) this._descWriteCb(profile, uuid, descUUID, 0)
   }
 

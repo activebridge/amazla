@@ -49,9 +49,11 @@ export class CarSimulator {
     this._session = null
 
     // Behavior injection flags (reset between tests)
-    this._nextCommandError   = false  // next command returns actionStatus=2 (error)
-    this._skipSecondResponse = false  // don't send actionStatus (triggers 10 s timeout)
-    this._responseDelay      = 0      // ms delay before sending responses
+    this._nextCommandError        = false  // next command returns actionStatus=2 (error)
+    this._skipSecondResponse      = false  // don't send actionStatus (triggers 10 s timeout)
+    this._sendTwoResponses        = false  // send SessionInfo push then actionStatus (covers clearTimeout path)
+    this._sendIntermediateAck     = false  // send bare intermediate ack before real SessionInfo
+    this._responseDelay           = 0      // ms delay before sending responses
 
     // Pairing state
     this._enrolledPublicKey  = null   // watch public key extracted from pair message
@@ -106,6 +108,14 @@ export class CarSimulator {
     const clockTime = Math.floor(Date.now() / 1000)
 
     this._session = { sessionKey, cmdKey, epoch, counter, clockTime }
+
+    // Optionally send a bare intermediate ack first (covers session.js lines 153-156).
+    // Two fields (5 + 7) so Object.keys() has ≥2 entries — exercises the sort comparator
+    // on line 147 of session.js that is otherwise never reached.
+    if (this._sendIntermediateAck) {
+      this._sendIntermediateAck = false
+      harness.notify(this._frame(concat(encodeVarintField(5, 0), encodeVarintField(7, 0))))
+    }
 
     // Build SessionInfo response: RoutableMessage { field 3: SessionInfo }
     // parseSessionInfo expects: field1=counter, field2=pubKey(65b), field3=epoch(16b), field4=clockTime
@@ -188,12 +198,20 @@ export class CarSimulator {
   // Normal command response: single notification with actionStatus = 1 (success).
   // session.js detects actionStatus present → success path → no two-response dance needed.
   // skipSecondResponse mode: send SessionInfo only (no actionStatus) → triggers 10 s timeout.
+  // sendTwoResponses mode: send SessionInfo push then actionStatus → covers clearTimeout path.
   _sendCommandResponse(harness) {
     if (this._skipSecondResponse) {
       // Deliver intermediate ack (SessionInfo only) — session.js will wait for actionStatus
       // which never arrives, triggering the 10 s timeout in sendCommand.
       const push = this._buildSessionInfoPush()
       this._deliver(harness, push)
+    } else if (this._sendTwoResponses) {
+      this._sendTwoResponses = false
+      // Two-response pattern: SessionInfo push first, then actionStatus (success).
+      // session.js lines 304-306: clearTimeout fires when second response arrives.
+      const push = this._buildSessionInfoPush()
+      this._deliver(harness, push)
+      this._deliver(harness, encodeVarintField(1, 1))  // actionStatus = 1
     } else {
       const actionResp = encodeVarintField(1, 1)  // actionStatus = 1 (success)
       this._deliver(harness, actionResp)

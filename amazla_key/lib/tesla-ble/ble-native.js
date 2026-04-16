@@ -169,17 +169,18 @@ class TeslaBLENative {
       if (result.connected === 2) {
         // Disconnect event
         this.connected = false
+        if (done) {
+          // Post-connection disconnect — connection was already established
+          if (this.onDisconnect) this.onDisconnect()
+          return
+        }
         if (setupStarted) {
           console.log('[BLE] Disconnect during setup')
           this._cleanup()
           settle({ success: false, error: 'Vehicle disconnected during setup', attemptNumber })
           return
         }
-        if (!done) {
-          settle({ success: false, error: 'Connection failed', attemptNumber })
-          return
-        }
-        if (this.onDisconnect) this.onDisconnect()
+        settle({ success: false, error: 'Connection failed', attemptNumber })
         return
       }
 

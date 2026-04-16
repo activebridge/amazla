@@ -32,7 +32,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 - `BLE_PAIR_SETUP` — generates/retrieves watch keypair, builds pair + verify BLE messages in one call
 - `BLE_COMPLETE_PAIRING` — parses raw whitelist entry response, extracts vehicle EC key, returns doublings table
 
-**Test coverage** (`__tests__/pairing-controller.test.js`, 13 tests):
+**Test coverage** (`__tests__/pairing-controller.test.js`, 23 tests):
 - Auto-tap flow (UNKNOWN_KEY): end-to-end success, state sequence, EC key extraction, doublings table, key pool, enrolled key
 - Manual NFC tap flow: confirming state, artifacts stored
 - Ambient response skipping: 1, 2 (pass), 4 (fails at attempt 3 — expected)
@@ -45,7 +45,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 **Approach**: `ble-native.js` and `session.js` run completely unmodified. `BLEHarness` (`__mocks__/zos.js`) intercepts `@zos/ble` native calls at the `mstWriteCharacteristic`/`mstOnCharaNotification` boundary. `CarSimulator` (`__tests__/helpers/car-simulator.js`) implements full vehicle-side P-256 ECDH and HMAC-SHA256 — generating realistic framed BLE responses at the raw byte level.
 
-**Coverage** (16 tests, ~0.6s total):
+**Coverage** (27 tests):
 - BLE connect + session establishment
 - Session blocked on empty key pool
 - RKE: lock, unlock, trunk, frunk (idempotent lock included)
