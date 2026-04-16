@@ -7,7 +7,6 @@ import {
   mstOnCharaValueArrived,
   mstOnDescWriteComplete,
   mstOnPrepare,
-  mstSetMTU,
   mstStartScan,
   mstStopScan,
   mstWriteCharacteristic,
@@ -23,8 +22,6 @@ const BLE_CHUNK_SIZE = 20
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   timeouts: [5000, 8000, 10000],
-  maxAttempts: 3,
-  retryDelayMs: 2000,
 }
 
 // MAC string "AA:BB:CC:DD:EE:FF" → 6-byte ArrayBuffer (no split/array allocation)
@@ -81,7 +78,6 @@ class TeslaBLENative {
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
-    this._mtu = 20
   }
 
   _cleanup() {
@@ -103,7 +99,6 @@ class TeslaBLENative {
     this.responseCallback = null
     this._rxBuf = null
     this._rxExpected = 0
-    this._mtu = 20
     this._lastResponseData = null
     this._lastResponseTime = 0
   }
@@ -146,9 +141,7 @@ class TeslaBLENative {
     let setupStarted = false
     const timeoutMs =
       CONNECTION_CONFIG.timeouts[attemptNumber] || CONNECTION_CONFIG.timeouts[CONNECTION_CONFIG.timeouts.length - 1]
-    const attemptLabel = `${attemptNumber + 1}/${CONNECTION_CONFIG.maxAttempts}`
-
-    console.log(`[BLE] Connecting to: ${mac} (attempt ${attemptLabel}, ${timeoutMs}ms timeout)`)
+    console.log(`[BLE] Connecting to: ${mac} (attempt ${attemptNumber + 1}, ${timeoutMs}ms timeout)`)
 
     const timeout = setTimeout(() => {
       if (done) return
@@ -233,16 +226,6 @@ class TeslaBLENative {
         mstOnDescWriteComplete((_prof, uuid, descUUID, status) => {
           console.log(`[BLE] descWriteComplete uuid=${uuid} desc=${descUUID} status=${status}`)
           if (done) return
-          // MTU negotiation
-          try {
-            mstSetMTU(247, (mtuResult) => {
-              const negotiated = mtuResult && mtuResult.mtu ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log(`[BLE] MTU negotiated: ${mtuResult && mtuResult.mtu} → payload ${this._mtu}`)
-            })
-          } catch (e) {
-            console.log(`[BLE] mstSetMTU not available: ${e.message || e}`)
-          }
           console.log('[BLE] CCCD confirmed, ready')
           settle({ success: true, mac })
         })
@@ -325,7 +308,7 @@ class TeslaBLENative {
   }
 
   _sendMessage(message) {
-    if (message.length <= this._mtu) {
+    if (message.length <= BLE_CHUNK_SIZE) {
       console.log(`[BLE] TX ${message.length} bytes (single write)`)
       mstWriteCharacteristic(this._profile, TESLA_WRITE_UUID, message.buffer, message.length)
     } else {

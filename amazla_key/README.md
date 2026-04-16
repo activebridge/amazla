@@ -647,7 +647,6 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 |-----------|-------------|
 | `buildWhitelistOperation(pubKeyMsg)` | Add a key to the vehicle whitelist (requires NFC keycard tap) |
 | `buildUnsignedMessageWithWhitelist(op)` | Wrap whitelist operation in unsigned message (field 16) |
-| `session.requestVehiclePublicKey(cb)` | Fetch vehicle's EC public key via `GetWhitelistEntryInfo` |
 
 ### Key Roles
 
@@ -707,22 +706,20 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
 | GATT discovery | Skipped via `mstBuildProfile(pair:false)` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
-| Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (see Pending) |
-| MTU negotiation | `mstSetMTU(247)` after connect, stored in `this._mtu` | `ExchangeMTU()` before first write | ⚠️ Partial (chunk writer still 20 B) |
+| Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (no MTU API in ZeppOS docs) |
+| MTU negotiation | Not implemented (`mstSetMTU` undocumented, removed) | `ExchangeMTU()` before first write | ❌ No equivalent API confirmed |
 | Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
 
-### MTU Chunk Writer Opportunity
+### MTU Note
 
-`mstSetMTU(247)` is called after connect and the negotiated MTU is stored in `this._mtu`. However `_sendChunk` still uses hardcoded `BLE_CHUNK_SIZE = 20`.
-
-**Fix**: Replace `BLE_CHUNK_SIZE` with `this._mtu` in `_sendMessage` / `_sendChunk` — a one-line change. Not a correctness issue, but reduces TX round-trips (~3× for typical command sizes).
+`mstSetMTU` is not in the ZeppOS BLE documentation. It was removed from `ble-native.js`. BLE writes use fixed 20-byte chunks (`BLE_CHUNK_SIZE = 20`) with 20ms pacing — confirmed working on device. Larger chunks would require a documented MTU negotiation API.
 
 ## Pending
 
 | Item | Status | Notes |
 |------|--------|-------|
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
-| MTU chunk writer | ⚠️ Minor | Use `this._mtu` instead of `BLE_CHUNK_SIZE = 20` in `_sendChunk` |
+| MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented, removed. No known ZeppOS API for MTU negotiation. |
 | Field test with car | ⏳ | All optimizations implemented, needs on-vehicle validation |
 
 ## File Structure
@@ -887,46 +884,13 @@ enum InformationRequestType {
 
 ### Implementation in This App
 
-**File**: `lib/tesla-ble/session.js`
+EC key extraction is handled by the phone during pairing via `BLE_COMPLETE_PAIRING` (`app-side/ble-crypto.js` → `completePairing`). The phone parses the raw verify response, extracts field 17 (`WhitelistEntryInfo`), and returns the 65-byte EC key + precomputed doublings table. The watch stores them via `Phone.completePairing()` in `lib/phone.js`.
 
-```javascript
-// After pairing completes, call:
-session.requestVehiclePublicKey((result) => {
-  if (result.success) {
-    // Vehicle public key obtained and saved to storage
-    // Phone can now precompute ECDH doublings table
-  }
-})
-```
-
-**What happens**:
-1. Builds `InformationRequest` with `GET_WHITELIST_ENTRY_INFO` (type 6)
-2. Sends to vehicle via signed/encrypted BLE message
-3. Parses `WhitelistEntryInfo` response
-4. Extracts `publicKey` field (65 bytes)
-5. Saves to persistent storage (`vehicle_ec_public_key`)
-6. Triggers phone-side table precomputation
-
-### Why This Matters
-
-**Before this fix**:
-- Code looked for field 17 in pairing completion response ❌
-- Field 17 never appeared (wrong phase of protocol)
-- EC key was never saved
-- Precomputation table couldn't be generated
-- ECDH always took 8 seconds
-
-**After this fix**:
-- Explicit `GetWhitelistEntryInfo` request ✅
-- Vehicle responds with field 17 reliably
-- EC key saved to storage
-- Precomputation table generated on first connection
-- Subsequent ECDH: 3.5-4 seconds (2× speedup)
+If the EC key is missing from storage when the watch tries to establish a session, it returns an error: `"Vehicle EC key missing — re-pair via phone"`. There is no watch-side recovery path.
 
 ### References
 
 - **Tesla SDK Proto**: https://github.com/teslamotors/vehicle-command/blob/main/pkg/protocol/protobuf/vcsec.proto
-- **Session Class**: `lib/tesla-ble/session.js` → `requestVehiclePublicKey()`
 - **Protocol Constants**: `lib/tesla-ble/protocol/vcsec.js` → `buildInformationRequest()`
 
 ## Performance Optimizations

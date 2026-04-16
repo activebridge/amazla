@@ -17,10 +17,8 @@ import {
   generateRoutingAddress,
   generateUUID,
   INFO_REQUEST_GET_STATUS,
-  INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
   parseRoutableMessage,
   parseVehicleStatus,
-  parseWhitelistEntryInfo,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
@@ -52,85 +50,6 @@ class TeslaSession {
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
     if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
     return this._cmdHmacFn(buildHMACTagInput(store.vehicleVin || new Uint8Array(0), epoch, counter, expiresAt, payloadBytes))
-  }
-  requestVehiclePublicKey(callback) {
-    const ensureConnectedAndFetch = () => {
-      if (teslaBLE.isConnected()) {
-        console.log('[SESSION] ✓ BLE connected, requesting vehicle public key')
-        doFetch()
-        return
-      }
-
-      const mac = store.vehicleMac
-      if (!mac) {
-        callback({ success: false, error: 'Vehicle MAC not found' })
-        return
-      }
-
-      console.log('[SESSION] Connecting to vehicle for EC key fetch...')
-      teslaBLE.disconnect()
-
-      teslaBLE.connect(mac, (result) => {
-        if (!result.success) {
-          callback({ success: false, error: `BLE connection failed: ${result.error || 'unknown'}` })
-          return
-        }
-
-        console.log('[SESSION] ✓ Connected, fetching EC key')
-        doFetch()
-      })
-    }
-
-    const doFetch = () => {
-      console.log('[SESSION] Requesting vehicle public key via GetWhitelistEntryInfo...')
-      const infoRequest = buildInformationRequest(
-        INFO_REQUEST_GET_WHITELIST_ENTRY_INFO,
-        null,
-        null,
-        0, // slot 0 = first enrolled key
-      )
-      const unsignedMsg = buildUnsignedMessage({ informationRequest: infoRequest })
-      const signedMsg = buildSignedMessage({ payload: unsignedMsg, signatureType: 2 }) // SIGNATURE_TYPE_PRESENT_KEY
-      const toMsg = buildToVCSECMessage(signedMsg)
-      const routableMsg = buildRoutableMessage({
-        toDomain: DOMAIN_VEHICLE_SECURITY,
-        payload: toMsg,
-        uuid: generateUUID(),
-      })
-
-      teslaBLE.send(routableMsg, (r) => {
-        if (!r.success) {
-          console.log('[SESSION] GetWhitelistEntryInfo request failed:', r.error)
-          callback({ success: false, error: 'Failed to get whitelist entry info' })
-          return
-        }
-        try {
-          let fields = decodeMessage(r.data)
-          if (fields[10] instanceof Uint8Array) {
-            fields = decodeMessage(fields[10])
-          }
-          if (fields[17] instanceof Uint8Array) {
-            const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
-            if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
-              this.vehiclePublicKey = wlEntryInfo.publicKey
-              store.vehicleEcPublicKey = this.vehiclePublicKey
-
-              console.log('[SESSION] ✓ Got vehicle public key from WhitelistEntryInfo (65 bytes)')
-              callback({ success: true, vehiclePublicKey: this.vehiclePublicKey })
-              return
-            }
-          }
-
-          console.log('[SESSION] WhitelistEntryInfo response missing field 17 with public key')
-          callback({ success: false, error: 'No public key in whitelist entry info' })
-        } catch (e) {
-          console.log('[SESSION] Error parsing whitelist entry info response:', e.message)
-          callback({ success: false, error: `Failed to parse whitelist entry info: ${e.message}` })
-        }
-      })
-    }
-
-    ensureConnectedAndFetch()
   }
   requestSessionInfo(callback) {
     // Early exit if table not available - don't proceed with session at all
@@ -179,16 +98,8 @@ class TeslaSession {
       if (!this.vehiclePublicKey) {
         this.vehiclePublicKey = store.vehicleEcPublicKey || null
         if (!this.vehiclePublicKey) {
-          console.log('[SESSION] Vehicle EC key not in storage, attempting to fetch via GetWhitelistEntryInfo...')
-          return this.requestVehiclePublicKey((keyResult) => {
-            if (keyResult.success) {
-              console.log('[SESSION] Successfully obtained vehicle public key, now requesting session info...')
-              proceedWithSession()
-            } else {
-              console.log('[SESSION] Failed to fetch vehicle EC key, continuing with fallback...')
-              this._doSessionInfoRequest(callback)
-            }
-          })
+          callback({ success: false, error: 'Vehicle EC key missing — re-pair via phone' })
+          return
         }
       }
       this._doSessionInfoRequest(callback)

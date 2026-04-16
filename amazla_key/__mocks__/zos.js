@@ -31,14 +31,16 @@ class BLEHarness {
   constructor() { this.reset() }
 
   reset() {
-    this._simulator   = null
-    this._connectCb   = null  // mstConnect callback (for disconnect simulation)
-    this._prepareCb   = null  // mstOnPrepare handler
-    this._descWriteCb = null  // mstOnDescWriteComplete handler
-    this._notifyCb    = null  // mstOnCharaNotification handler
-    this._valueCb     = null  // mstOnCharaValueArrived handler
-    this._rxBuf       = null  // inbound chunk reassembly (watch → car)
-    this._rxExpected  = 0
+    this._simulator              = null
+    this._connectCb              = null  // mstConnect callback (for disconnect simulation)
+    this._prepareCb              = null  // mstOnPrepare handler
+    this._descWriteCb            = null  // mstOnDescWriteComplete handler
+    this._notifyCb               = null  // mstOnCharaNotification handler
+    this._valueCb                = null  // mstOnCharaValueArrived handler
+    this._rxBuf                  = null  // inbound chunk reassembly (watch → car)
+    this._rxExpected             = 0
+    this._scanCb                 = null  // mstStartScan result callback
+    this._disconnectDuringPrepare = false // fire connected:2 before prepareCb
   }
 
   setSimulator(sim) { this._simulator = sim }
@@ -51,8 +53,13 @@ class BLEHarness {
     callback({ connected: 0, connect_id: 1 })
   }
 
-  // mstBuildProfile: fire prepareCb synchronously
+  // mstBuildProfile: fire prepareCb synchronously, or simulate disconnect during GATT setup
   buildProfile() {
+    if (this._disconnectDuringPrepare) {
+      this._disconnectDuringPrepare = false
+      if (this._connectCb) this._connectCb({ connected: 2 })
+      return  // don't call prepareCb — vehicle dropped before profile was ready
+    }
     if (this._prepareCb) this._prepareCb(1, 0)
   }
 
@@ -97,6 +104,18 @@ class BLEHarness {
   simulateDisconnect() {
     if (this._connectCb) this._connectCb({ connected: 2 })
   }
+
+  // mstStartScan: store the result callback so tests can emit devices
+  setScanCb(cb) { this._scanCb = cb }
+
+  // Test helper: push a scan result as if the vehicle was found
+  emitScanDevice(name, mac) {
+    if (!this._scanCb) return
+    const parts = mac.split(':')
+    const bytes = new Uint8Array(6)
+    parts.forEach((h, i) => { bytes[i] = parseInt(h, 16) })
+    this._scanCb({ dev_name: name, dev_addr: bytes.buffer, rssi: -60 })
+  }
 }
 
 export const bleHarness = new BLEHarness()
@@ -106,14 +125,13 @@ export const mstConnect             = (mac, cb)          => bleHarness.connect(m
 export const mstBuildProfile        = (obj)              => bleHarness.buildProfile()
 export const mstWriteDescriptor     = (p, u, d, data, l) => bleHarness.writeDescriptor(p, u, d, data, l)
 export const mstWriteCharacteristic = (p, uuid, data, l) => bleHarness.receiveChunk(uuid, data, l)
-export const mstSetMTU              = (mtu, cb)          => cb && cb({ mtu })
 export const mstOnPrepare           = (cb)               => { bleHarness._prepareCb = cb }
 export const mstOnCharaNotification = (cb)               => { bleHarness._notifyCb = cb }
 export const mstOnCharaValueArrived = (cb)               => { bleHarness._valueCb = cb }
 export const mstOnDescWriteComplete = (cb)               => { bleHarness._descWriteCb = cb }
 export const mstDisconnect          = ()                 => {}
 export const mstDestroyProfileInstance = ()             => {}
-export const mstStartScan           = ()                 => true
-export const mstStopScan            = ()                 => true
+export const mstStartScan           = (cb, _opts)        => { bleHarness.setScanCb(cb); return true }
+export const mstStopScan            = ()                 => { bleHarness._scanCb = null; return true }
 
 export default {}

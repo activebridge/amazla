@@ -197,7 +197,9 @@ describe('manual NFC tap flow (WAIT → tap → OK)', () => {
       ctrl.start()
     })
 
-    // After start(), WAIT was delivered synchronously → confirming state entered
+    // Flush 20ms chunk pacing so pair message fully arrives at car and WAIT is delivered.
+    // 300ms is enough for any reasonable message size (< 60s NFC timeout, < 500ms doVerify timer).
+    await jest.advanceTimersByTimeAsync(300)
     expect(states).toContain('confirming')
     expect(sim._pairingPending).toBe(true)
 
@@ -225,6 +227,8 @@ describe('manual NFC tap flow (WAIT → tap → OK)', () => {
       ctrl.start()
     })
 
+    // Flush chunk pacing so pair message arrives and WAIT is delivered before NFC tap
+    await jest.advanceTimersByTimeAsync(300)
     sim.triggerNFCTap()
     await jest.runAllTimersAsync()
     const result = await promise
@@ -423,5 +427,61 @@ describe('cancel()', () => {
       ctrl.start()
       ctrl.cancel()
     }).not.toThrow()
+  })
+})
+
+// ─── BLE scan path ────────────────────────────────────────────────────────────
+
+describe('BLE scan path (no saved MAC)', () => {
+  beforeEach(() => {
+    store.vehicleMac = null  // force scan path
+    sim.setPairingAutoTap(true)
+  })
+
+  test('finds vehicle, connects and completes pairing', async () => {
+    const promise = runPairing(makePhone())
+
+    // Emit device synchronously — scan callback fires before setTimeout
+    expect(bleHarness._scanCb).toBeDefined()
+    bleHarness.emitScanDevice('S0000000000000000C', 'AA:BB:CC:DD:EE:FF')
+
+    // Flush: 500ms connect delay + chunk pacing + doVerify timer
+    await jest.runAllTimersAsync()
+    const result = await promise
+
+    expect(result.success).toBe(true)
+    expect(result.states).toContain('scanning')
+    expect(result.states).toContain('connecting')
+    expect(result.states).toContain('done')
+  })
+
+  test('reports error when no vehicle found within scan timeout', async () => {
+    const promise = runPairing(makePhone())
+
+    // Don't emit any device — let scan time out (15s + 500ms in ble-native)
+    await jest.advanceTimersByTimeAsync(16000)
+    const result = await promise
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/no tesla found/i)
+    expect(result.states).toContain('scanning')
+  })
+})
+
+// ─── pool sync failure ────────────────────────────────────────────────────────
+
+describe('pool sync failure after pairing', () => {
+  test('onSuccess still fires when syncPool fails', async () => {
+    sim.setPairingAutoTap(true)
+    const phone = makePhone({
+      syncPool(cb) { cb({ success: false, error: 'network timeout' }) },
+    })
+
+    const promise = runPairing(phone)
+    await jest.runAllTimersAsync()
+    const result = await promise
+
+    expect(result.success).toBe(true)
+    expect(result.states).toContain('done')
   })
 })

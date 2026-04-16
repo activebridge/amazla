@@ -51,7 +51,7 @@ const store = {
     return get('vehicleEcPublicKey')
   },
   set vehicleEcPublicKey(value) {
-    set('vehicleEcPublicKey', bytesToBinaryString(value))
+    set('vehicleEcPublicKey', value ? bytesToBinaryString(value) : null)
   },
   get vehicleDoublingsTable() {
     if (_doublingsTableCache) return _doublingsTableCache

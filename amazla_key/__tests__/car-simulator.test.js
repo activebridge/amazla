@@ -75,7 +75,7 @@ function setupStore(sim) {
   store.vehicleMac        = 'AA:BB:CC:DD:EE:FF'
   store.vehicleEcPublicKey = sim.vehiclePubKey
   store.vehicleVin         = bytesToBinaryString(sim.vin)
-  store.watchPublicKey     = new Uint8Array(65).fill(0x04)  // dummy — not used in passive entry
+  store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65).fill(0x04))  // dummy enrolled key
   storeDoublingsTable(sim)
   buildPool(5)
 }
@@ -268,21 +268,28 @@ describe('second-response timeout', () => {
   test('skipSecondResponse → session times out and returns error', async () => {
     jest.useFakeTimers()
     try {
-      const r = await p((cb) => session.requestSessionInfo(cb))
+      // Session setup: advance timers alongside await to flush 20ms BLE chunk pacing
+      const [r] = await Promise.all([
+        p((cb) => session.requestSessionInfo(cb)),
+        jest.advanceTimersByTimeAsync(500),
+      ])
       if (!r.success) throw new Error('Session setup: ' + r.error)
 
       sim.skipSecondResponse()
 
       let cbResult = null
-      session.sendCommand(1 /* LOCK */, (res) => {
-        // First call: intermediate ack with _requeue — session is waiting
-        if (res._requeue) return
-        // Second call: from timeout path
-        cbResult = res
+      const cmdPromise = new Promise((resolve) => {
+        session.sendCommand(1 /* LOCK */, (res) => {
+          // First call: intermediate ack with _requeue — session is waiting
+          if (res._requeue) return
+          // Second call: from timeout path
+          cbResult = res
+          resolve()
+        })
       })
 
-      // Advance past the 10-second timeout in sendCommand
-      jest.advanceTimersByTime(11000)
+      // Advance past chunk pacing (~80ms) + 10-second command timeout
+      await Promise.all([cmdPromise, jest.advanceTimersByTimeAsync(11000)])
 
       expect(cbResult).not.toBeNull()
       expect(cbResult.success).toBe(false)
@@ -303,5 +310,139 @@ describe('session auto-establishment', () => {
     expect(result.success).toBe(true)
     expect(session.established).toBe(true)
     expect(sim.state.locked).toBe(false)
+  })
+})
+
+// ─── ensureSessionEstablished ─────────────────────────────────────────────────
+
+describe('ensureSessionEstablished', () => {
+  test('calls back immediately when session already established', async () => {
+    await p((cb) => session.requestSessionInfo(cb))
+    expect(session.established).toBe(true)
+    const result = await p((cb) => session.ensureSessionEstablished(cb))
+    expect(result.success).toBe(true)
+  })
+
+  test('fails immediately when not paired (no vehicleMac)', async () => {
+    store.reset()
+    const result = await p((cb) => session.ensureSessionEstablished(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/not paired/i)
+  })
+
+  test('concurrent callers all get callbacks — only one connection made', async () => {
+    let connectCount = 0
+    const origConnect = teslaBLE.connect.bind(teslaBLE)
+    teslaBLE.connect = (mac, cb, attempt) => {
+      connectCount++
+      origConnect(mac, cb, attempt)
+    }
+
+    const results = await Promise.all([
+      p((cb) => session.ensureSessionEstablished(cb)),
+      p((cb) => session.ensureSessionEstablished(cb)),
+      p((cb) => session.ensureSessionEstablished(cb)),
+    ])
+
+    teslaBLE.connect = origConnect
+    expect(results.every(r => r.success)).toBe(true)
+    expect(connectCount).toBe(1)
+  })
+})
+
+// ─── getVehicleStatus ─────────────────────────────────────────────────────────
+
+describe('getVehicleStatus', () => {
+  test('returns status when session established', async () => {
+    await p((cb) => session.requestSessionInfo(cb))
+    sim.setState(unlockedCar())
+    const result = await p((cb) => session.getVehicleStatus(cb))
+    expect(result.success).toBe(true)
+    expect(result.status).toBeDefined()
+    expect(result.status.vehicleLockState).toBe(0)  // unlocked
+  })
+
+  test('fails when session not established', async () => {
+    const result = await p((cb) => session.getVehicleStatus(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/session not established/i)
+  })
+
+  test('fails when EC key missing', async () => {
+    store.vehicleEcPublicKey = null  // clears from storage via guarded setter
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/ec key missing/i)
+  })
+
+  test('propagates BLE send error', async () => {
+    await p((cb) => session.requestSessionInfo(cb))
+    const origSend = teslaBLE.send.bind(teslaBLE)
+    teslaBLE.send = (_msg, cb) => cb({ success: false, error: 'BLE write failed' })
+    const result = await p((cb) => session.getVehicleStatus(cb))
+    teslaBLE.send = origSend
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/BLE write failed/)
+  })
+})
+
+// ─── connection error paths ───────────────────────────────────────────────────
+
+describe('connection error paths', () => {
+  test('no doublings table → fails immediately with descriptive error', async () => {
+    store.reset()
+    store.vehicleMac         = 'AA:BB:CC:DD:EE:FF'
+    store.vehicleVin         = bytesToBinaryString(sim.vin)
+    store.vehicleEcPublicKey = sim.vehiclePubKey
+    buildPool(5)
+    // no doublings table
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/doublings table/i)
+  })
+
+  test('already connected → skips BLE connect, reuses existing connection', async () => {
+    await p((cb) => teslaBLE.connect('AA:BB:CC:DD:EE:FF', cb))
+    expect(teslaBLE.isConnected()).toBe(true)
+
+    let connectCount = 0
+    const origConnect = teslaBLE.connect.bind(teslaBLE)
+    teslaBLE.connect = (mac, cb, attempt) => { connectCount++; origConnect(mac, cb, attempt) }
+
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    teslaBLE.connect = origConnect
+
+    expect(result.success).toBe(true)
+    expect(connectCount).toBe(0)
+  })
+
+  test('connection failure (non-retry error) → returns BLE connection error', async () => {
+    const origConnect = teslaBLE.connect.bind(teslaBLE)
+    teslaBLE.connect = (_mac, cb) => cb({ success: false, error: 'Connection failed' })
+
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    teslaBLE.connect = origConnect
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/BLE connection failed/i)
+  })
+
+  test('disconnect during GATT setup → retries once and succeeds', async () => {
+    jest.useFakeTimers()
+    try {
+      bleHarness._disconnectDuringPrepare = true
+
+      // Promise.all drives the async chain while advancing timers to flush:
+      //   2000ms retry delay + BLE chunk pacing (several 20ms timers)
+      const [result] = await Promise.all([
+        p((cb) => session.requestSessionInfo(cb)),
+        jest.advanceTimersByTimeAsync(5000),
+      ])
+
+      expect(result.success).toBe(true)
+      expect(session.established).toBe(true)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
