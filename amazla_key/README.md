@@ -95,11 +95,16 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │                                                                              │
 │      Watch                                    Phone                          │
 │        │                                        │                            │
-│   ┌────┴────┐   App opens                        │                            │
-│   │ Count   │                                   │                            │
-│   │ pool    │  ──────────────────────────────►  │                            │
-│   └────┬────┘     BLE_SYNC_POOL                 │                            │
-│        │          { currentCount: N }           │                            │
+│   ┌────┴──────┐  App opens                      │                            │
+│   │ Count     │                                 │                            │
+│   │ pool (N)  │                                 │                            │
+│   │ N >= 10?  │  → skip sync                    │                            │
+│   │ N < 10?   │  → request pool                 │                            │
+│   └────┬──────┘                                 │                            │
+│        │                                        │                            │
+│        │  ──────────────────────────────────►   │                            │
+│        │     BLE_SYNC_POOL                      │                            │
+│        │     { currentCount: N }                │                            │
 │        │                                        │                            │
 │        │                              ┌─────────┴──────────┐                 │
 │        │                              │ N >= 33?           │                 │
@@ -125,8 +130,8 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 ```
 
 **Triggers**:
-- `page/index.js` `build()` — proactive sync on every app open
-- `page/ble/index.js` `build()` — additional sync on BLE debug page open
+- `page/index.js` `build()` — proactive sync on app open, gated by `store.keyPoolCount < 10`
+- `page/ble/index.js` `build()` — forced sync on BLE debug page open (debug surface)
 - `teslaSession.onPoolLow` callback — declared but not yet invoked from `popKey()`; planned reactive sync path
 
 ## Pairing Flow
@@ -137,44 +142,79 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │                    (One-time setup to add watch as key)                      │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│      Watch                         Tesla                        User         │
-│        │                             │                            │          │
-│   ┌────┴────┐                        │                            │          │
-│   │ Scan    │                        │                            │          │
-│   │ for BLE │                        │                            │          │
-│   │ devices │                        │                            │          │
-│   └────┬────┘                        │                            │          │
-│        │                             │                            │          │
-│        │  ◄── BLE Advertisement ───  │                            │          │
-│        │      Name: "S{vin_hash}C"   │                            │          │
-│        │                             │                            │          │
-│        │  ─── BLE Connect ────────►  │                            │          │
-│        │                             │                            │          │
-│        │  ─── WhitelistOperation ──► │                            │          │
-│        │      (Add public key)       │                            │          │
-│        │      + KeyMetadata          │                            │          │
-│        │        (ANDROID_DEVICE)     │                            │          │
-│        │                             │                            │          │
-│        │  ◄── OPERATIONSTATUS_WAIT ─ │                            │          │
-│        │      "Waiting for keycard"  │                            │          │
-│        │                             │                            │          │
-│   ┌────┴────┐                        │                       ┌────┴────┐     │
-│   │ Display │                        │                       │ Tap key │     │
-│   │ "Tap    │                        │  ◄── NFC Tap ──────   │ card on │     │
-│   │ keycard"│                        │                       │ console │     │
-│   └────┬────┘                        │                       └────┬────┘     │
-│        │                             │                            │          │
-│        │  ◄── OPERATIONSTATUS_OK ──  │                            │          │
-│        │      "Key added"            │                            │          │
-│        │                             │                            │          │
-│   ┌────┴────┐                        │                            │          │
-│   │ Save    │                        │                            │          │
-│   │ MAC     │                        │                            │          │
-│   │ address │                        │                            │          │
-│   └────┬────┘                        │                            │          │
-│        │                             │                            │          │
-│        ▼                             ▼                            ▼          │
-│   Paired! Watch is now an authorized key.                                    │
+│    Phone              Watch                Tesla                User         │
+│      │                  │                    │                    │          │
+│      │                  │ ◄─── taps PAIR ────┼────────────────────┤          │
+│      │ ◄── pairSetup ── │                    │                    │          │
+│   ┌──┴──────┐           │                    │                    │          │
+│   │Generate │           │                    │                    │          │
+│   │watch    │           │                    │                    │          │
+│   │keypair  │           │                    │                    │          │
+│   │Build    │           │                    │                    │          │
+│   │pair +   │           │                    │                    │          │
+│   │verify   │           │                    │                    │          │
+│   │messages │           │                    │                    │          │
+│   └──┬──────┘           │                    │                    │          │
+│      │ ── pairMsg,  ──► │                    │                    │          │
+│      │    verifyMsg     │                    │                    │          │
+│      │                  │ ◄── BLE adv ────── │                    │          │
+│      │                  │   Name:"S{vin}C"   │                    │          │
+│      │                  │ ─── connect ─────► │                    │          │
+│      │                  │                    │                    │          │
+│      │                  │ ─── pairMsg ─────► │                    │          │
+│      │                  │  (WhitelistOp +    │                    │          │
+│      │                  │   watch pubkey +   │                    │          │
+│      │                  │   KeyMetadata      │                    │          │
+│      │                  │   ANDROID_DEVICE)  │                    │          │
+│      │                  │ ◄── STATUS_WAIT ── │                    │          │
+│      │                  │ "Waiting keycard"  │                    │          │
+│      │               ┌──┴───┐                │                    │          │
+│      │               │Show  │                │                    │          │
+│      │               │"Tap  │                │                    │          │
+│      │               │card" │                │                    │          │
+│      │               └──┬───┘                │                    │          │
+│      │                  │                    │ ◄── NFC tap ────── │          │
+│      │                  │ ◄── STATUS_OK ──── │                    │          │
+│      │                  │   "Key added"      │                    │          │
+│      │                  │ ─── verifyMsg ───► │                    │          │
+│      │                  │   (GetWhitelist    │                    │          │
+│      │                  │    EntryInfo)      │                    │          │
+│      │                  │ ◄── EntryInfo ──── │                    │          │
+│      │                  │  {vehicleECKey,    │                    │          │
+│      │                  │   slot, role}      │                    │          │
+│      │ ◄ completePair ─ │                    │                    │          │
+│      │   (rawBytes)     │                    │                    │          │
+│   ┌──┴──────┐           │                    │                    │          │
+│   │Parse EC │           │                    │                    │          │
+│   │key      │           │                    │                    │          │
+│   │Compute  │           │                    │                    │          │
+│   │doublings│           │                    │                    │          │
+│   │table    │           │                    │                    │          │
+│   └──┬──────┘           │                    │                    │          │
+│      │ ── {ecKey,   ──► │                    │                    │          │
+│      │    doublings}    │                    │                    │          │
+│      │               ┌──┴───┐                │                    │          │
+│      │               │Save  │                │                    │          │
+│      │               │ECkey,│                │                    │          │
+│      │               │MAC,  │                │                    │          │
+│      │               │dblngs│                │                    │          │
+│      │               └──┬───┘                │                    │          │
+│      │ ◄── syncPool ─── │                    │                    │          │
+│   ┌──┴──────┐           │                    │                    │          │
+│   │Generate │           │                    │                    │          │
+│   │33 P-256 │           │                    │                    │          │
+│   │keypairs │           │                    │                    │          │
+│   └──┬──────┘           │                    │                    │          │
+│      │ ── pool(raw) ──► │                    │                    │          │
+│      │               ┌──┴───┐                │                    │          │
+│      │               │Save  │                │                    │          │
+│      │               │key_  │                │                    │          │
+│      │               │pool  │                │                    │          │
+│      │               │.dat  │                │                    │          │
+│      │               └──┬───┘                │                    │          │
+│      │                  │                    │                    │          │
+│      ▼                  ▼                    ▼                    ▼          │
+│   Paired! Watch is authorized key with session pool ready.                   │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -247,18 +287,25 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   │ }                               │                     │                  │
 │   │                                 │                     │                  │
 │   │ signed_msg = {                  │                     │                  │
-│   │   payload: unsigned_msg,        │                     │                  │
-│   │   signature_type: HMAC,         │                     │                  │
+│   │   payload: unsigned_msg         │                     │                  │
+│   │ }                               │                     │                  │
+│   │                                 │                     │                  │
+│   │ signature_data = {              │                     │                  │
+│   │   public_key: eph_pub,          │                     │                  │
+│   │   signature_type:               │                     │                  │
+│   │     HMAC_PERSONALIZED,          │                     │                  │
 │   │   counter: ++counter,           │                     │                  │
 │   │   epoch: epoch,                 │                     │                  │
 │   │   expires_at: clock + 60s,      │                     │                  │
-│   │   signature: HMAC-SHA256(       │                     │                  │
-│   │     session_key, signed_msg     │                     │                  │
-│   │   )                             │                     │                  │
+│   │   tag: HMAC-SHA256(             │                     │                  │
+│   │     subKey, metadata||payload)  │                     │                  │
 │   │ }                               │                     │                  │
+│   │ // subKey = HMAC(session_key,   │                     │                  │
+│   │ //   "authenticated command")   │                     │                  │
 │   └────┬────────────────────────────┘                     │                  │
 │        │                                                  │                  │
-│        │  ─── RoutableMessage(ToVCSEC(signed_msg)) ────►  │                  │
+│        │  ─── RoutableMessage{ payload:ToVCSEC(signed),   │                  │
+│        │        signature_data } ──────────────────────►  │                  │
 │        │                                                  │                  │
 │        │                                    ┌─────────────┴─────────────┐    │
 │        │                                    │ Verify HMAC signature     │    │

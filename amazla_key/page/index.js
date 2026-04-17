@@ -10,6 +10,7 @@ import UI, { button, img, page, rect } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
 import Phone from '../lib/phone.js'
+import store from '../lib/store.js'
 import tesla from '../lib/tesla.js'
 
 const { height } = getDeviceInfo()
@@ -214,7 +215,7 @@ Page(
       setPageBrightTime(300)
 
       phone = new Phone(this)
-      phone.syncPool()
+      if (store.keyPoolCount < 10) phone.syncPool()
       phone.syncSettings()
 
       tesla.onChange(render)
