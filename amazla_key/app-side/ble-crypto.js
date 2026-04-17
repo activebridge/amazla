@@ -68,10 +68,19 @@ function bigIntToBytes32(n) {
   return b
 }
 
+const _csprng =
+  typeof globalThis !== 'undefined' &&
+  globalThis.crypto &&
+  typeof globalThis.crypto.getRandomValues === 'function'
+    ? (buf) => globalThis.crypto.getRandomValues(buf)
+    : null
+if (!_csprng) console.log('[crypto] WebCrypto unavailable — using Math.random (insecure)')
+
 // Generate one ephemeral P-256 keypair. Returns { privBytes, pubBytes }.
 function generateKeypair() {
   const privRaw = new Uint8Array(32)
-  for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
+  if (_csprng) _csprng(privRaw)
+  else for (let j = 0; j < 32; j++) privRaw[j] = Math.floor(Math.random() * 256)
   let k = BigInt(`0x${bytesToHex(privRaw)}`) % P256_N
   if (k === 0n) k = 1n
   const privBytes = bigIntToBytes32(k)
