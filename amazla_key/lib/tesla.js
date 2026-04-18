@@ -178,6 +178,10 @@ class Tesla {
 
       self._notify() // clear busy indicator immediately
       setTimeout(() => {
+        if (self.busy) {
+          if (cb) cb({ success: true })
+          return
+        }
         self.refresh(() => {
           if (cb) cb({ success: true })
         })

@@ -158,16 +158,6 @@ describe('auto-tap pairing (UNKNOWN_KEY response, no NFC wait)', () => {
     expect(store.vehicleDoublingsTable.length).toBe(4096)
   })
 
-  test('populates key pool after pairing', async () => {
-    sim.setPairingAutoTap(true)
-    const promise = runPairing(makePhone())
-    await jest.runAllTimersAsync()
-    await promise
-
-    expect(store.keyPool).toBeDefined()
-    expect(store.keyPool.length).toBeGreaterThan(0)
-  })
-
   test('simulator records the enrolled watch public key', async () => {
     sim.setPairingAutoTap(true)
     const promise = runPairing(makePhone())
@@ -266,12 +256,22 @@ describe('ambient responses before verify WEI', () => {
     expect(store.vehicleEcPublicKey).toBeInstanceOf(Uint8Array)
   })
 
-  test('4 ambients: attempt 3 is NOT skipped, completePairing fails on ambient bytes', async () => {
-    // doVerify skips ambients while attempt < 3 (attempts 0,1,2).
-    // At attempt=3 it stops skipping and calls completePairing on whatever arrives.
-    // With 4 ambients the 4th lands at attempt=3 (ambient bytes, no WEI) → error.
+  test('5 ambients: WEI lands at attempt=5, pairing still succeeds', async () => {
+    // doVerify skips ambients while attempt < 5 (attempts 0..4 skip).
+    // With 5 ambients the WEI arrives at attempt=5 and is parsed successfully.
     sim.setPairingAutoTap(true)
-    sim.setAmbientCount(4)  // 4 ambients; WEI follows but is never reached
+    sim.setAmbientCount(5)
+
+    const promise = runPairing(makePhone())
+    await jest.runAllTimersAsync()
+    const result = await promise
+
+    expect(result.success).toBe(true)
+  })
+
+  test('6 ambients: attempt 5 is NOT skipped, completePairing fails on ambient bytes', async () => {
+    sim.setPairingAutoTap(true)
+    sim.setAmbientCount(6)  // 6 ambients; WEI follows but never reached
 
     const promise = runPairing(makePhone())
     await jest.runAllTimersAsync()
@@ -468,20 +468,3 @@ describe('BLE scan path (no saved MAC)', () => {
   })
 })
 
-// ─── pool sync failure ────────────────────────────────────────────────────────
-
-describe('pool sync failure after pairing', () => {
-  test('onSuccess still fires when syncPool fails', async () => {
-    sim.setPairingAutoTap(true)
-    const phone = makePhone({
-      syncPool(cb) { cb({ success: false, error: 'network timeout' }) },
-    })
-
-    const promise = runPairing(phone)
-    await jest.runAllTimersAsync()
-    const result = await promise
-
-    expect(result.success).toBe(true)
-    expect(result.states).toContain('done')
-  })
-})

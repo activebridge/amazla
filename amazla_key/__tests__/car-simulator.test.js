@@ -522,7 +522,9 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, si) })
+    const tag = sim.signSessionInfo(session.ephemeralPublicKey, session._lastRequestUuid, si)
+    const data = concat(encodeBytes(15, si), encodeBytes(13, sim.buildSessionInfoSigData(tag)))
+    capturedHandler({ success: true, data })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -546,7 +548,9 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+    const tag = sim.signSessionInfo(session.ephemeralPublicKey, session._lastRequestUuid, siNoPubKey)
+    const data = concat(encodeBytes(15, siNoPubKey), encodeBytes(13, sim.buildSessionInfoSigData(tag)))
+    capturedHandler({ success: true, data })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -578,7 +582,7 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+    capturedHandler({ success: true, data: encodeBytes(15, siNoPubKey) })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -601,7 +605,9 @@ describe('session info response edge cases', () => {
       encodeBytes(2, sim.vehiclePubKey),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, siNoEpoch) })
+    const tag = sim.signSessionInfo(session.ephemeralPublicKey, session._lastRequestUuid, siNoEpoch)
+    const data = concat(encodeBytes(15, siNoEpoch), encodeBytes(13, sim.buildSessionInfoSigData(tag)))
+    capturedHandler({ success: true, data })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -627,7 +633,7 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, siNoPubKey) })
+    capturedHandler({ success: true, data: encodeBytes(15, siNoPubKey) })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -654,7 +660,7 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, si) })
+    capturedHandler({ success: true, data: encodeBytes(15, si) })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -683,7 +689,7 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(3, si) })
+    capturedHandler({ success: true, data: encodeBytes(15, si) })
 
     const result = await resultPromise
     teslaBLE.send = origSend
@@ -740,15 +746,14 @@ describe('sendCommand error paths', () => {
   })
 
   test('sendCommand: auto-establish fails → propagates failure (lines 322-323)', async () => {
-    // Use a fresh session (not established) and ensure doublings table is missing
-    // so requestSessionInfo fails immediately → callback(result) at lines 322-323.
-    // Must delete the file AND clear the cache (setter) so the getter sees no table.
+    // Fresh session with missing artifacts → ensureSessionEstablished fails,
+    // error propagates through sendCommand callback at lines 322-323.
     delete _fsStore['vehicle_doublings_table.dat']
-    store.vehicleDoublingsTable = null   // clears in-memory cache via setter
+    store.vehicleDoublingsTable = null
     const freshSession = new TeslaSession()
     const result = await p((cb) => freshSession.sendCommand(1, cb))
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/doublings table/i)
+    expect(result.error).toMatch(/not paired|doublings table/i)
   })
 
   test('getVehicleStatus: parseVehicleStatus throws → catch reports error', async () => {

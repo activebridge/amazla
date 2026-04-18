@@ -132,7 +132,6 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 **Triggers**:
 - `page/index.js` `build()` — proactive sync on app open, gated by `store.keyPoolCount < 10`
 - `page/ble/index.js` `build()` — forced sync on BLE debug page open (debug surface)
-- `teslaSession.onPoolLow` callback — declared but not yet invoked from `popKey()`; planned reactive sync path
 
 ## Pairing Flow
 
@@ -257,6 +256,13 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   │ session_key = SHA1(             │                     │                  │
 │   │   shared_secret                 │                     │                  │
 │   │ )[:16]                          │                     │                  │
+│   │                                 │                     │                  │
+│   │ Verify SessionInfo HMAC tag:    │                     │                  │
+│   │ subKey = HMAC(session_key,      │                     │                  │
+│   │   "session info")               │                     │                  │
+│   │ expected = HMAC(subKey,         │                     │                  │
+│   │   TLV(sigType, VIN, uuid)||info)│                     │                  │
+│   │ reject on mismatch              │                     │                  │
 │   └────┬────────────────────────────┘                     │                  │
 │        │                                                  │                  │
 │        │  Session established!                            │                  │
@@ -521,6 +527,7 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | RX reassembly timeout | 1000ms per chunk | 1 second per chunk | ✅ Match |
 | HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
+| SessionInfo tag verification | `subKey=HMAC(sessionKey,"session info")`, tag over TLV(sigType=HMAC, VIN, uuid) + encodedInfo | Same | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
 | GATT discovery | Skipped via `mstBuildProfile(pair:false)` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
 | Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (no MTU API in ZeppOS docs) |
@@ -554,7 +561,7 @@ amazla_key/
 │   └── tesla-ble/
 │       ├── pairing.js            # createPairingController — headless pairing state machine
 │       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
-│       ├── ble.js                # Low-level BLE — easy-ble wrapper (kept for reference)
+│       ├── ble.js                # Low-level BLE — easy-ble wrapper (unused, dead code)
 │       ├── session.js            # Session management (ECDH, signing, commands)
 │       ├── index.js              # Tesla BLE API (high-level wrapper)
 │       ├── crypto/
@@ -629,10 +636,9 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 ### 2. Session Keys (auto-synced)
 
 Session keys sync automatically — no manual step needed:
-- App open → watch asks phone for pool if below 33 keys
+- App open → watch asks phone for pool if `keyPoolCount < 10`
 - Phone generates 33 P-256 keypairs and returns them as raw binary
 - Watch stores to `key_pool.dat` — ready for offline use
-- Reactive refill via `onPoolLow` during use is declared but not yet wired; pool drains until next app open
 
 The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`.
 

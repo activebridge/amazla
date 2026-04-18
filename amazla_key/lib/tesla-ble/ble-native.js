@@ -4,7 +4,6 @@ import {
   mstDestroyProfileInstance,
   mstDisconnect,
   mstOnCharaNotification,
-  mstOnCharaValueArrived,
   mstOnDescWriteComplete,
   mstOnPrepare,
   mstStartScan,
@@ -12,6 +11,7 @@ import {
   mstWriteCharacteristic,
   mstWriteDescriptor,
 } from '@zos/ble'
+import { bytesToHex } from './crypto/binary-utils.js'
 
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
@@ -73,8 +73,6 @@ class TeslaBLENative {
     this._macBuffer = null
     this.responseCallback = null
     this.onDisconnect = null
-    this._lastResponseData = null
-    this._lastResponseTime = 0
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
@@ -99,8 +97,6 @@ class TeslaBLENative {
     this.responseCallback = null
     this._rxBuf = null
     this._rxExpected = 0
-    this._lastResponseData = null
-    this._lastResponseTime = 0
   }
 
   scan(callback, duration = 10000) {
@@ -215,10 +211,7 @@ class TeslaBLENative {
         }
         this._profile = profile
 
-        // Register data handlers immediately after profile ready
-        mstOnCharaValueArrived((_prof, uuid, data, _status) => {
-          if (uuid.toUpperCase() === TESLA_READ_UUID_UC) this._handleResponse(data)
-        })
+        // Subscribe to indications (matches Tesla Go SDK: single handler, indication-only)
         mstOnCharaNotification((_prof, uuid, data, _len) => {
           if (uuid.toUpperCase() === TESLA_READ_UUID_UC) this._handleResponse(data)
         })
@@ -265,6 +258,7 @@ class TeslaBLENative {
       callback({ success: false, error: 'Not connected' })
       return
     }
+    console.log(`[BLE TX] ${bytesToHex(data)}`)
     const wrappedCallback = (result) => {
       if (result.success && result._requeue) {
         console.log('[BLE] Re-queuing callback for multi-response command')
@@ -294,6 +288,7 @@ class TeslaBLENative {
       callback({ success: false, error: 'Not connected' })
       return
     }
+    console.log(`[BLE TX] ${bytesToHex(data)}`)
     const responseTimeout = setTimeout(() => {
       console.log('[BLE] Response timeout')
       this.responseCallback = null
@@ -336,13 +331,6 @@ class TeslaBLENative {
     }
     if (this._rxBuf === null) {
       const now = Date.now()
-      const sig = `${chunk.length}_${chunk[0] || 0}_${chunk[1] || 0}`
-      if (sig === this._lastResponseData && now - this._lastResponseTime < 200) {
-        console.log('[BLE] Duplicate first chunk ignored')
-        return
-      }
-      this._lastResponseData = sig
-      this._lastResponseTime = now
       if (chunk.length < 2) {
         console.log(`[BLE] First chunk too short: ${chunk.length} bytes`)
         const cb = this.responseCallback
@@ -375,6 +363,7 @@ class TeslaBLENative {
     const cb = this.responseCallback
     this.responseCallback = null
     console.log(`[BLE] Got complete response: ${payload.length} bytes`)
+    console.log(`[BLE RX] ${bytesToHex(payload)}`)
     cb({ success: true, data: payload })
   }
 

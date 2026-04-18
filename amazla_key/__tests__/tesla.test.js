@@ -372,6 +372,24 @@ describe('lock()', () => {
 
     expect(listener).toHaveBeenCalled()
   })
+
+  test('skips post-command refresh if user issued another command in 1s gap', () => {
+    tesla.connection.status = 'online'
+    mockCommand()
+    mockEstablished()
+    const statusSpy = jest.spyOn(teslaSession, 'getVehicleStatus')
+      .mockImplementation(cb => cb({ success: true, status: makeStatus() }))
+
+    const cb = jest.fn()
+    tesla.lock(cb)
+    // First command done, busy=false. User taps again within the 1s window:
+    tesla.busy = true
+    jest.advanceTimersByTime(1000)
+
+    // Refresh must be skipped — new command's refresh will handle it
+    expect(statusSpy).not.toHaveBeenCalled()
+    expect(cb).toHaveBeenCalledWith({ success: true })
+  })
 })
 
 describe('unlock()', () => {

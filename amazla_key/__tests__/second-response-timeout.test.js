@@ -32,7 +32,7 @@ describe('sendCommand — second response timeout handling', () => {
     teslaBLE.send = function(_message, cb) {
       // Deliver a SessionInfo-only routable message (no actionStatus)
       const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
-      const routable = encodeBytes(3, sessionInfoBytes)
+      const routable = encodeBytes(15, sessionInfoBytes)
       cb({ success: true, data: routable })
     }
 
@@ -77,7 +77,7 @@ describe('sendCommand — second response timeout handling', () => {
     const origSend = teslaBLE.send
     teslaBLE.send = function(_message, cb) {
       const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
-      const routable = encodeBytes(3, sessionInfoBytes)
+      const routable = encodeBytes(15, sessionInfoBytes)
       cb({ success: true, data: routable })
     }
 

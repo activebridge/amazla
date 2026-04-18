@@ -1,6 +1,6 @@
 import store from '../store.js'
 import teslaBLE from './ble-native.js'
-import { createSessionHmacs } from './crypto/hmac.js'
+import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
 import { ecdhFixed } from './crypto/p256.js'
 import { sha1 } from './crypto/sha256.js'
 import { decodeMessage } from './protocol/protobuf.js'
@@ -8,6 +8,7 @@ import {
   buildHMACTagInput,
   buildInformationRequest,
   buildRoutableMessage,
+  buildSessionInfoHmacInput,
   buildSessionInfoRequest,
   buildSignatureData,
   buildSignedMessage,
@@ -25,7 +26,6 @@ import {
 
 class TeslaSession {
   constructor() {
-    this.onPoolLow = null // Callback when pool gets low - receives callback(count) to request from phone
     this.reset()
   }
   reset() {
@@ -41,6 +41,7 @@ class TeslaSession {
     this._connecting = false // guard against duplicate connection attempts
     this.pendingCallbacks = null
     this._cmdHmacFn = null
+    this._lastRequestUuid = null
     this._waitingForSecondResponse = false
     if (this._secondResponseTimer) {
       clearTimeout(this._secondResponseTimer)
@@ -118,6 +119,7 @@ class TeslaSession {
     this.ephemeralPublicKey = keypair.publicKeyBytes // Uint8Array[65]
     this.routingAddress = generateRoutingAddress()
     const uuid = generateUUID()
+    this._lastRequestUuid = uuid
     const sessionInfoRequest = buildSessionInfoRequest(
       this.ephemeralPublicKey,
       null, // SessionInfoRequest contains ONLY publicKey; challenge comes from request UUID (field 50)
@@ -208,6 +210,35 @@ class TeslaSession {
           console.log(`[SESSION] ECDH done in ${Date.now() - _ecdhStart}ms`)
           const keyMaterial = sha1(sharedSecret)
           this.sessionKey = keyMaterial.slice(0, 16)
+
+          // Verify SessionInfo HMAC tag before trusting session state.
+          if (!response.sessionInfoTag) {
+            console.log('[SESSION] ❌ Unauthenticated SessionInfo (no tag)')
+            callback({ success: false, error: 'Unauthenticated SessionInfo response' })
+            return
+          }
+          const infoHmac = createSessionInfoHmac(this.sessionKey)
+          const expectedTag = infoHmac(
+            buildSessionInfoHmacInput(
+              store.vehicleVin || new Uint8Array(0),
+              this._lastRequestUuid || new Uint8Array(0),
+              response.sessionInfoBytes,
+            ),
+          )
+          if (expectedTag.length !== response.sessionInfoTag.length) {
+            console.log('[SESSION] ❌ SessionInfo HMAC length mismatch')
+            callback({ success: false, error: 'Invalid SessionInfo HMAC' })
+            return
+          }
+          let diff = 0
+          for (let i = 0; i < expectedTag.length; i++) diff |= expectedTag[i] ^ response.sessionInfoTag[i]
+          if (diff !== 0) {
+            console.log('[SESSION] ❌ SessionInfo HMAC mismatch')
+            callback({ success: false, error: 'Invalid SessionInfo HMAC' })
+            return
+          }
+          console.log('[SESSION] ✓ SessionInfo tag verified')
+
           const { cmdHmac } = createSessionHmacs(this.sessionKey)
           this._cmdHmacFn = cmdHmac
           this.established = true
@@ -317,7 +348,7 @@ class TeslaSession {
       }
     }
     if (!this.established) {
-      this.requestSessionInfo((result) => {
+      this.ensureSessionEstablished((result) => {
         if (!result.success) {
           callback(result)
           return

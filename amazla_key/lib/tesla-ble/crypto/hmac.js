@@ -49,6 +49,10 @@ const createHmac = (key) => {
 const CMD_LABEL = new Uint8Array([
   97, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 101, 100, 32, 99, 111, 109, 109, 97, 110, 100,
 ])
+// "session info" — label for SessionInfo tag subkey derivation.
+const SESSION_INFO_LABEL = new Uint8Array([
+  115, 101, 115, 115, 105, 111, 110, 32, 105, 110, 102, 111,
+])
 
 const createSessionHmacs = (sessionKey) => {
   const { hmac } = createHmac(sessionKey)
@@ -57,4 +61,11 @@ const createSessionHmacs = (sessionKey) => {
   return { hmac, cmdHmac }
 }
 
-export { createHmac, createSessionHmacs }
+const createSessionInfoHmac = (sessionKey) => {
+  const { hmac } = createHmac(sessionKey)
+  const subKey = hmac(SESSION_INFO_LABEL)
+  const { hmac: infoHmac } = createHmac(subKey)
+  return infoHmac
+}
+
+export { createHmac, createSessionHmacs, createSessionInfoHmac }

@@ -221,8 +221,6 @@ function onTestBLE() {
 
   // 2. Single-chunk reassembly: header [0x00,0x03] + payload [0xAA,0xBB,0xCC]
   var rx1 = null
-  teslaBLE._lastResponseData = null
-  teslaBLE._lastResponseTime = 0
   teslaBLE._rxBuf = null
   teslaBLE._rxExpected = 0
   teslaBLE.responseCallback = (r) => {
@@ -234,8 +232,6 @@ function onTestBLE() {
 
   // 3. Multi-chunk reassembly: header+[0x01,0x02] then [0x03,0x04]
   var rx2 = null
-  teslaBLE._lastResponseData = null
-  teslaBLE._lastResponseTime = 0
   teslaBLE._rxBuf = null
   teslaBLE._rxExpected = 0
   teslaBLE.responseCallback = (r) => {
@@ -246,23 +242,6 @@ function onTestBLE() {
   if (rx2 && rx2.length === 4 && rx2[0] === 0x01 && rx2[3] === 0x04) ok('reassembly 2chunk')
   else notOk('reassembly 2chunk')
 
-  // 4. Duplicate dedup: same chunk twice within 200ms — only one callback
-  var dupCount = 0
-  teslaBLE._lastResponseData = null
-  teslaBLE._lastResponseTime = 0
-  teslaBLE._rxBuf = null
-  teslaBLE._rxExpected = 0
-  teslaBLE.responseCallback = (r) => {
-    if (r.success) dupCount++
-  }
-  var dupBuf = new Uint8Array([0x00, 0x02, 0xde, 0xad]).buffer
-  teslaBLE._handleResponse(dupBuf)
-  teslaBLE._handleResponse(dupBuf) // duplicate within 200ms — should be ignored
-  if (dupCount === 1) {
-    ok('dedup')
-  } else {
-    notOk(`dedup got=${dupCount}`)
-  }
   teslaBLE.responseCallback = null
 
   // 5. BLE scan 3s — verifies BLE hardware + mstStartScan callable
@@ -310,13 +289,6 @@ Page(
 
       BLE.reset()
       teslaSession.reset()
-
-      teslaSession.onPoolLow = () => {
-        console.log(`[BLE] Pool low (${store.keyPoolCount}), syncing`)
-        phone.syncPool((r) => {
-          addLog(r.success ? '✓ Pool replenished' : 'Pool replenish failed', r.success ? 0x44ff44 : 0xff8844)
-        })
-      }
 
       // Sync watch key on page open; only log if newly stored.
       phone.syncKeys((result) => {

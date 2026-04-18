@@ -270,25 +270,6 @@ describe('TeslaBLENative unit tests', () => {
     })
   })
 
-  test('_handleResponse: duplicate first chunk within 200ms is ignored', () => {
-    const cb = jest.fn()
-    teslaBLENative.responseCallback = cb
-    teslaBLENative._lastResponseData = null
-    teslaBLENative._lastResponseTime = 0
-
-    // Send a partial first chunk (total=4 bytes, delivers 2)
-    const chunk1 = new Uint8Array([0, 4, 10, 11])
-    teslaBLENative._handleResponse(chunk1)
-    expect(cb).not.toHaveBeenCalled()  // waiting for rest
-
-    // Reset and send IDENTICAL first chunk synchronously (same sig, same timestamp)
-    teslaBLENative._rxBuf = null
-    teslaBLENative._rxExpected = 0
-    teslaBLENative._handleResponse(chunk1)
-    // Duplicate detected — responseCallback NOT called, _rxBuf still null (ignored)
-    expect(cb).not.toHaveBeenCalled()
-  })
-
   test('getMAC returns mac after successful connect', (done) => {
     teslaBLENative.reset()
     expect(teslaBLENative.getMAC()).toBeNull()

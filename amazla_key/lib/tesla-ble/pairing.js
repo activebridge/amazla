@@ -152,7 +152,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
       if (!r.success) { onError('No response from Tesla. Try pairing again.'); return }
       var fields = decodeMessage(r.data)
       var fkeys = Object.keys(fields).join(',')
-      if (fkeys === '3' && attempt < 3) {
+      if (fkeys === '3' && attempt < 5) {
         log('Ambient#' + (attempt + 1) + ' skip')
         BLE.waitForNextResponse(6000, (r2) => { handleResponse(r2, attempt + 1) })
         return
@@ -162,13 +162,8 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         if (cancelled) return
         if (!result.success) { onError(result.error || 'Parse failed'); return }
         log('EC key + table saved')
-        phone.syncPool((r2) => {
-          if (cancelled) return
-          if (r2.success) log('Pool ready')
-          else log('Pool failed: ' + (r2.error || '?'))
-          onState('done')
-          onSuccess()
-        }, 0)
+        onState('done')
+        onSuccess()
       })
     }
 

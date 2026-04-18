@@ -113,6 +113,26 @@ const buildHMACTagInput = (vin, epoch, counter, expiresAt, payloadBytes) => {
   wb(0xff); wBytes(payloadBytes)                      // TAG_END + payload
   return buf
 }
+// Builds the HMAC input buffer for SessionInfo tag verification per Tesla SDK.
+// Layout: TLV metadata fields || 0xFF || encodedSessionInfoBytes
+//   TAG_SIGNATURE_TYPE(0): SIGNATURE_TYPE_HMAC=6
+//   TAG_PERSONALIZATION(2): VIN bytes
+//   TAG_CHALLENGE(6): request uuid bytes
+//   TAG_END(0xFF)
+const buildSessionInfoHmacInput = (vin, challenge, encodedInfo) => {
+  const vinBytes = vin instanceof Uint8Array ? vin : new Uint8Array(0)
+  const challengeBytes = challenge instanceof Uint8Array ? challenge : new Uint8Array(0)
+  const totalLen = 3 + 2 + vinBytes.length + 2 + challengeBytes.length + 1 + encodedInfo.length
+  const buf = new Uint8Array(totalLen)
+  let off = 0
+  const wb = (byte) => { buf[off++] = byte }
+  const wBytes = (bytes) => { buf.set(bytes, off); off += bytes.length }
+  wb(0x00); wb(0x01); wb(0x06)                               // TAG_SIGNATURE_TYPE: HMAC=6
+  wb(0x02); wb(vinBytes.length); wBytes(vinBytes)            // TAG_PERSONALIZATION
+  wb(0x06); wb(challengeBytes.length); wBytes(challengeBytes)// TAG_CHALLENGE
+  wb(0xff); wBytes(encodedInfo)                              // TAG_END + info
+  return buf
+}
 const buildRoutableMessage = ({ toDomain, routingAddress, payload, sessionInfoRequest, signatureData, uuid }) => {
   const parts = []
   if (toDomain !== undefined) {
@@ -164,78 +184,32 @@ const parseSessionInfo = (data) => {
 }
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
+  // SessionInfo lives in RoutableMessage field 15 (bytes session_info) per spec.
   let sessionInfo = null
-  // A valid SessionInfo has either epoch bytes or a public key blob
-  const isValidSessionInfo = (si) => si && (si.epoch || si.publicKey)
-  if (fields[3]) {
+  const sessionInfoBytes = fields[15] instanceof Uint8Array ? fields[15] : null
+  if (sessionInfoBytes) {
     try {
-      sessionInfo = parseSessionInfo(fields[3])
-      if (isValidSessionInfo(sessionInfo)) {
-        console.log('[SESSION] Found SessionInfo in field 3')
-      } else {
-        sessionInfo = null
-      }
-    } catch (e) {
-    }
+      const candidate = parseSessionInfo(sessionInfoBytes)
+      if (candidate && (candidate.epoch || candidate.publicKey)) sessionInfo = candidate
+    } catch (_e) {}
   }
-  if (!sessionInfo && fields[6]) {
+  // SignatureData in field 13. For SessionInfo responses, the tag lives at
+  // SignatureData.session_info_tag (field 6) → HMAC_Signature_Data.tag (field 1).
+  let sessionInfoTag = null
+  if (fields[13] instanceof Uint8Array) {
     try {
-      sessionInfo = parseSessionInfo(fields[6])
-      if (isValidSessionInfo(sessionInfo)) {
-        console.log('[SESSION] Found SessionInfo in field 6')
-      } else {
-        sessionInfo = null
+      const sig = decodeMessage(fields[13])
+      if (sig[6] instanceof Uint8Array) {
+        const hmacSig = decodeMessage(sig[6])
+        if (hmacSig[1] instanceof Uint8Array) sessionInfoTag = hmacSig[1]
       }
-    } catch (e) {
-    }
+    } catch (_e) {}
   }
-  if (!sessionInfo && fields[10]) {
-    try {
-      const fromVcsecFields = decodeMessage(fields[10])
-      if (fromVcsecFields[3]) {
-        try {
-          const candidate = parseSessionInfo(fromVcsecFields[3])
-          if (isValidSessionInfo(candidate)) {
-            sessionInfo = candidate
-            console.log('[SESSION] Found SessionInfo in field 10.field[3]')
-          }
-        } catch (e) {
-        }
-      }
-      if (!sessionInfo) {
-        for (const fieldNum in fromVcsecFields) {
-          const fieldData = fromVcsecFields[fieldNum]
-          if (!fieldData || fieldData.length < 10) continue
-
-          try {
-            const candidate = parseSessionInfo(fieldData)
-            if (isValidSessionInfo(candidate)) {
-              sessionInfo = candidate
-              console.log('[SESSION] Found SessionInfo in field 10.field[' + fieldNum + ']')
-              break
-            }
-          } catch (e) {
-          }
-        }
-      }
-    } catch (e) {
-      console.log('[SESSION] Could not parse field 10 as FromVCSECMessage: ' + e.message)
-    }
-  }
-  if (!sessionInfo && fields[15]) {
-    try {
-      const candidate = parseSessionInfo(fields[15])
-      if (isValidSessionInfo(candidate)) {
-        sessionInfo = candidate
-        console.log('[SESSION] Found SessionInfo in field 15')
-      }
-    } catch (e) {
-    }
-  }
-  
   return {
     actionStatus:        fields[1] ?? null,
     sessionInfo:         sessionInfo,
+    sessionInfoBytes:    sessionInfoBytes,
+    sessionInfoTag:      sessionInfoTag,
     payload:             fields[10] ?? null,
     signedMessageStatus: fields[12] ?? null,
   }
@@ -268,6 +242,7 @@ export {
   buildSignedMessage,
   buildToVCSECMessage,
   buildHMACTagInput,
+  buildSessionInfoHmacInput,
   buildKeyIdentity,
   buildHMACPersonalizedData,
   buildClosureMoveRequest,

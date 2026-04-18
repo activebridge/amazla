@@ -15,6 +15,21 @@ import { decodeMessage, encodeVarintField, encodeBytes, concat } from '../../lib
 
 // "authenticated command" — matches CMD_LABEL in lib/tesla-ble/crypto/hmac.js
 const CMD_LABEL = Buffer.from('authenticated command')
+// "session info" — matches SESSION_INFO_LABEL in lib/tesla-ble/crypto/hmac.js
+const SESSION_INFO_LABEL = Buffer.from('session info')
+
+// SessionInfo HMAC input per Tesla SDK: TLV { sig_type=HMAC(6), perso=VIN, challenge=uuid } + 0xFF + encodedInfo
+const buildSessionInfoHmacInput = (vin, challenge, encodedInfo) => {
+  const vinLen = vin.length, chLen = challenge.length
+  const buf = new Uint8Array(3 + 2 + vinLen + 2 + chLen + 1 + encodedInfo.length)
+  let o = 0
+  buf[o++] = 0x00; buf[o++] = 0x01; buf[o++] = 0x06           // TAG_SIGNATURE_TYPE: HMAC=6
+  buf[o++] = 0x02; buf[o++] = vinLen; buf.set(vin, o); o += vinLen
+  buf[o++] = 0x06; buf[o++] = chLen;  buf.set(challenge, o); o += chLen
+  buf[o++] = 0xff
+  buf.set(encodedInfo, o)
+  return buf
+}
 
 // InformationRequestType enum values (vcsec.proto)
 const INFO_REQUEST_GET_STATUS               = 0
@@ -68,10 +83,12 @@ export class CarSimulator {
 
   onReceive(payload, harness) {
     const fields = decodeMessage(payload)
+    // request_uuid at RoutableMessage field 50 — echoed in response, used as challenge
+    const requestUuid = fields[50] instanceof Uint8Array ? fields[50] : new Uint8Array(0)
 
     // SessionInfoRequest lives at RoutableMessage field 14
     if (fields[14] instanceof Uint8Array) {
-      this._handleSessionInfo(fields[14], harness)
+      this._handleSessionInfo(fields[14], requestUuid, harness)
       return
     }
 
@@ -90,7 +107,7 @@ export class CarSimulator {
 
   // ── Session establishment ─────────────────────────────────────────────────
 
-  _handleSessionInfo(sessionInfoRequestBytes, harness) {
+  _handleSessionInfo(sessionInfoRequestBytes, requestUuid, harness) {
     const siReqFields = decodeMessage(sessionInfoRequestBytes)
     const ephemeralPubKey = siReqFields[1]  // Uint8Array, 65 bytes
 
@@ -101,13 +118,14 @@ export class CarSimulator {
     const keyMat    = createHash('sha1').update(shared).digest()
     const sessionKey = keyMat.subarray(0, 16)
     const cmdKey    = createHmac('sha256', sessionKey).update(CMD_LABEL).digest()
+    const infoKey   = createHmac('sha256', sessionKey).update(SESSION_INFO_LABEL).digest()
 
     // Fixed epoch and realistic clock for tests
     const epoch     = new Uint8Array(16).fill(0xab)
     const counter   = 1
     const clockTime = Math.floor(Date.now() / 1000)
 
-    this._session = { sessionKey, cmdKey, epoch, counter, clockTime }
+    this._session = { sessionKey, cmdKey, infoKey, epoch, counter, clockTime }
 
     // Optionally send a bare intermediate ack first (covers session.js lines 153-156).
     // Two fields (5 + 7) so Object.keys() has ≥2 entries — exercises the sort comparator
@@ -117,16 +135,26 @@ export class CarSimulator {
       harness.notify(this._frame(concat(encodeVarintField(5, 0), encodeVarintField(7, 0))))
     }
 
-    // Build SessionInfo response: RoutableMessage { field 3: SessionInfo }
-    // parseSessionInfo expects: field1=counter, field2=pubKey(65b), field3=epoch(16b), field4=clockTime
+    // Build SessionInfo: field1=counter, field2=pubKey(65b), field3=epoch(16b), field4=clockTime
     const si = concat(
       encodeVarintField(1, counter),
       encodeBytes(2, this.vehiclePubKey),
       encodeBytes(3, epoch),
       encodeVarintField(4, clockTime),
     )
-    const response = encodeBytes(3, si)
+    const tag = this._signSessionInfo(infoKey, requestUuid, si)
+    const response = concat(encodeBytes(15, si), encodeBytes(13, this._sessionInfoSigData(tag)))
     harness.notify(this._frame(response))
+  }
+
+  // SignatureData { session_info_tag (field 6) = HMAC_Signature_Data { tag (field 1) } }
+  _sessionInfoSigData(tag) {
+    return encodeBytes(6, encodeBytes(1, tag))
+  }
+
+  _signSessionInfo(infoKey, challenge, encodedInfo) {
+    const input = buildSessionInfoHmacInput(this.vin, challenge, encodedInfo)
+    return new Uint8Array(createHmac('sha256', infoKey).update(input).digest())
   }
 
   // ── Authenticated command dispatch ────────────────────────────────────────
@@ -227,7 +255,7 @@ export class CarSimulator {
       encodeBytes(3, this._session.epoch),
       encodeVarintField(4, this._session.clockTime),
     )
-    return encodeBytes(3, si)  // RoutableMessage field 3
+    return encodeBytes(15, si)  // RoutableMessage field 15 = session_info
   }
 
   _buildStatusResponse() {
@@ -364,6 +392,21 @@ export class CarSimulator {
   setPairingAutoTap(enabled) { this._pairingAutoTap = !!enabled }
   injectPairingError(code)   { this._pairingError = code !== undefined ? code : 5 }
   setAmbientCount(n)         { this._ambientCount = n }
+
+  // Compute SessionInfo HMAC tag given an ephemeral public key (from watch)
+  // and an already-encoded SessionInfo payload. For hand-crafted test fixtures.
+  signSessionInfo(ephemeralPubKey, challenge, encodedInfo) {
+    this._ecdh.setPrivateKey(this.vehiclePrivKey)
+    const shared    = this._ecdh.computeSecret(Buffer.from(ephemeralPubKey))
+    const sessionKey = createHash('sha1').update(shared).digest().subarray(0, 16)
+    const infoKey   = createHmac('sha256', sessionKey).update(SESSION_INFO_LABEL).digest()
+    return this._signSessionInfo(infoKey, challenge, encodedInfo)
+  }
+
+  // SignatureData wrapper { session_info_tag (field 6) = HMAC_Signature_Data { tag (field 1) } }
+  buildSessionInfoSigData(tag) {
+    return this._sessionInfoSigData(tag)
+  }
 
   triggerNFCTap() {
     if (!this._pairingPending || !this._pairingHarness) return

@@ -285,12 +285,12 @@ function makeSessionInfoBytes(counter, clockTime) {
 }
 
 describe('parseRoutableMessage', () => {
-  test('extracts payload (field 10) and sessionInfo (field 3)', () => {
+  test('extracts payload (field 10) and sessionInfo (field 15)', () => {
     const innerPayload = new Uint8Array([0x01, 0x02, 0x03])
     const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
 
     const encoded = [
-      encodeBytes(3, sessionInfoBytes),
+      encodeBytes(15, sessionInfoBytes),
       encodeBytes(10, innerPayload),
     ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
 
@@ -301,22 +301,7 @@ describe('parseRoutableMessage', () => {
     expect(parsed.sessionInfo.clockTime).toBe(1234)
   })
 
-  test('extracts sessionInfo from field 6 (real vehicle response format)', () => {
-    // The actual Tesla vehicle sends SessionInfo in field 6, not field 3.
-    // This is the case fixed in _doSessionInfoRequest: the handler must not
-    // give up when field 3 is absent — it must also check field 6.
-    const sessionInfoBytes = makeSessionInfoBytes(99, 5678)
-    const encoded = encodeBytes(6, sessionInfoBytes)
-
-    const parsed = parseRoutableMessage(encoded)
-    expect(parsed.sessionInfo).not.toBeNull()
-    expect(parsed.sessionInfo.counter).toBe(99)
-    expect(parsed.sessionInfo.clockTime).toBe(5678)
-    expect(parsed.sessionInfo.publicKey.length).toBe(65)
-    expect(parsed.sessionInfo.epoch.length).toBe(16)
-  })
-
-  test('returns null sessionInfo when field 3 absent', () => {
+  test('returns null sessionInfo when field 15 absent', () => {
     const msg = encodeBytes(10, new Uint8Array([0xaa]))
     const parsed = parseRoutableMessage(msg)
     expect(parsed.sessionInfo).toBeNull()
@@ -349,9 +334,9 @@ describe('parseRoutableMessage', () => {
     expect(isIntermediateAck).toBe(true)
   })
 
-  test('real SessionInfo response (field 6) does NOT trigger intermediate ack condition', () => {
+  test('real SessionInfo response (field 15) does NOT trigger intermediate ack condition', () => {
     const sessionInfoBytes = makeSessionInfoBytes(7, 9999)
-    const encoded = encodeBytes(6, sessionInfoBytes)
+    const encoded = encodeBytes(15, sessionInfoBytes)
     const parsed = parseRoutableMessage(encoded)
     const isIntermediateAck = !parsed.sessionInfo && !parsed.payload && !parsed.signedMessageStatus
     expect(isIntermediateAck).toBe(false)
