@@ -182,6 +182,32 @@ const parseSessionInfo = (data) => {
     handle:     fields[6] ?? 0,
   }
 }
+// MessageStatus { operation_status(1 OperationStatus_E), signed_message_fault(2 MessageFault_E) }
+// Carried at RoutableMessage.signed_message_status (field 12).
+const parseMessageStatus = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    operationStatus:    typeof fields[1] === 'number' ? fields[1] : 0,
+    signedMessageFault: typeof fields[2] === 'number' ? fields[2] : 0,
+  }
+}
+// CommandStatus { operationStatus(1 OperationStatus_E), signedMessageStatus(2), whitelistOperationStatus(3) }
+// Carried at FromVCSECMessage.commandStatus (field 4). OperationStatus_E: OK=0, WAIT=1, ERROR=2.
+const parseCommandStatus = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    operationStatus: typeof fields[1] === 'number' ? fields[1] : 0,
+  }
+}
+// FromVCSECMessage { vehicleStatus(1), commandStatus(4), whitelistInfo(16), whitelistEntryInfo(17), nominalError(46) }
+// Carried at RoutableMessage.protobuf_message_as_bytes (field 10).
+const parseFromVCSECMessage = (data) => {
+  const fields = decodeMessage(data)
+  return {
+    vehicleStatus: fields[1] instanceof Uint8Array ? fields[1] : null,
+    commandStatus: fields[4] instanceof Uint8Array ? parseCommandStatus(fields[4]) : null,
+  }
+}
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
   // SessionInfo lives in RoutableMessage field 15 (bytes session_info) per spec.
@@ -205,13 +231,29 @@ const parseRoutableMessage = (data) => {
       }
     } catch (_e) {}
   }
+  // Unwrap FromVCSECMessage carried at field 10.
+  const payload = fields[10] instanceof Uint8Array ? fields[10] : null
+  let vehicleStatus = null
+  let commandStatus = null
+  if (payload) {
+    try {
+      const vcsec = parseFromVCSECMessage(payload)
+      vehicleStatus = vcsec.vehicleStatus
+      commandStatus = vcsec.commandStatus
+    } catch (_e) {}
+  }
+  let signedMessageStatus = null
+  if (fields[12] instanceof Uint8Array) {
+    try { signedMessageStatus = parseMessageStatus(fields[12]) } catch (_e) {}
+  }
   return {
-    actionStatus:        fields[1] ?? null,
     sessionInfo:         sessionInfo,
     sessionInfoBytes:    sessionInfoBytes,
     sessionInfoTag:      sessionInfoTag,
-    payload:             fields[10] ?? null,
-    signedMessageStatus: fields[12] ?? null,
+    payload:             payload,
+    vehicleStatus:       vehicleStatus,
+    commandStatus:       commandStatus,
+    signedMessageStatus: signedMessageStatus,
   }
 }
 const generateUUID = () => {
@@ -249,6 +291,9 @@ export {
   buildSignatureData,
   parseSessionInfo,
   parseRoutableMessage,
+  parseFromVCSECMessage,
+  parseCommandStatus,
+  parseMessageStatus,
   parseWhitelistEntryInfo,
   generateUUID,
   generateRoutingAddress,

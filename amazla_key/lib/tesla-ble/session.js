@@ -308,11 +308,14 @@ class TeslaSession {
           try {
             const response = parseRoutableMessage(result.data)
 
-            // Vehicle sends two responses: (1) status push (SessionInfo only), (2) action response (with actionStatus)
-            if (!response.actionStatus && !this._waitingForSecondResponse) {
+            // Vehicle sends up to two responses per authenticated command:
+            //   1. SessionInfo-only push (field 15) — updates counter/epoch/clock
+            //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — terminal
+            // Treat "no commandStatus and no signedMessageStatus" as first-response waiting.
+            const isTerminal = !!(response.commandStatus || response.signedMessageStatus)
+            if (!isTerminal && !this._waitingForSecondResponse) {
               this._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
-              // Set a timeout to clear waiting state if second response never arrives
               if (this._secondResponseTimer) clearTimeout(this._secondResponseTimer)
               this._secondResponseTimer = setTimeout(() => {
                 if (this._waitingForSecondResponse) {
@@ -331,12 +334,23 @@ class TeslaSession {
               return
             }
 
-            // This is the real response with actionStatus, or we already got first response
             if (this._secondResponseTimer) {
               clearTimeout(this._secondResponseTimer)
               this._secondResponseTimer = null
             }
             this._waitingForSecondResponse = false
+
+            // Auth-layer fault (counter/epoch mismatch, invalid signature, etc.)
+            const mFault = response.signedMessageStatus && response.signedMessageStatus.signedMessageFault
+            if (mFault) {
+              callback({ success: false, error: `Signed message fault ${mFault}`, response })
+              return
+            }
+            // VCSEC-level ERROR (command rejected — obstruction, unauthorized, etc.)
+            if (response.commandStatus && response.commandStatus.operationStatus === 2) {
+              callback({ success: false, error: 'Command rejected by vehicle', response })
+              return
+            }
             callback({ success: true, response })
           } catch (e) {
             this._waitingForSecondResponse = false
@@ -379,7 +393,7 @@ class TeslaSession {
           return
         }
         const response = parseRoutableMessage(result.data)
-        const vehicleStatus = parseVehicleStatus(response.payload)
+        const vehicleStatus = parseVehicleStatus(response.vehicleStatus)
         callback({ success: true, status: vehicleStatus })
       } catch (e) {
         console.log(`[SESSION] getVehicleStatus error: ${e.message}`)

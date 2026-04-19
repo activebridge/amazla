@@ -174,8 +174,7 @@ export class CarSimulator {
     // Error injection
     if (this._nextCommandError) {
       this._nextCommandError = false
-      const errResp = encodeVarintField(1, 2)  // actionStatus = 2 (error)
-      this._deliver(harness, errResp)
+      this._deliver(harness, this._buildCommandResponse(2))  // OPERATIONSTATUS_ERROR
       return
     }
 
@@ -223,27 +222,24 @@ export class CarSimulator {
 
   // ── Response building ─────────────────────────────────────────────────────
 
-  // Normal command response: single notification with actionStatus = 1 (success).
-  // session.js detects actionStatus present → success path → no two-response dance needed.
-  // skipSecondResponse mode: send SessionInfo only (no actionStatus) → triggers 10 s timeout.
-  // sendTwoResponses mode: send SessionInfo push then actionStatus → covers clearTimeout path.
+  // Normal command response: FromVCSECMessage { commandStatus.operationStatus = OK(0) } in payload.
+  // skipSecondResponse mode: send SessionInfo-only push (no FromVCSECMessage) → triggers 10 s timeout.
+  // sendTwoResponses mode: SessionInfo push then FromVCSECMessage → covers clearTimeout path.
   _sendCommandResponse(harness) {
     if (this._skipSecondResponse) {
-      // Deliver intermediate ack (SessionInfo only) — session.js will wait for actionStatus
-      // which never arrives, triggering the 10 s timeout in sendCommand.
-      const push = this._buildSessionInfoPush()
-      this._deliver(harness, push)
+      this._deliver(harness, this._buildSessionInfoPush())
     } else if (this._sendTwoResponses) {
       this._sendTwoResponses = false
-      // Two-response pattern: SessionInfo push first, then actionStatus (success).
-      // session.js lines 304-306: clearTimeout fires when second response arrives.
-      const push = this._buildSessionInfoPush()
-      this._deliver(harness, push)
-      this._deliver(harness, encodeVarintField(1, 1))  // actionStatus = 1
+      this._deliver(harness, this._buildSessionInfoPush())
+      this._deliver(harness, this._buildCommandResponse(0))
     } else {
-      const actionResp = encodeVarintField(1, 1)  // actionStatus = 1 (success)
-      this._deliver(harness, actionResp)
+      this._deliver(harness, this._buildCommandResponse(0))
     }
+  }
+
+  // RoutableMessage { payload(10) = FromVCSECMessage { commandStatus(4) = { operationStatus(1) } } }
+  _buildCommandResponse(operationStatus) {
+    return encodeBytes(10, encodeBytes(4, encodeVarintField(1, operationStatus)))
   }
 
   _buildSessionInfoPush() {
@@ -276,8 +272,8 @@ export class CarSimulator {
       encodeVarintField(3, s.sleepStatus),
       encodeVarintField(4, s.userPresence),
     )
-    // RoutableMessage field 10 = FromVCSECMessage payload (parseVehicleStatus reads from payload)
-    return encodeBytes(10, vehicleStatus)
+    // RoutableMessage.payload(10) = FromVCSECMessage { vehicleStatus(1) = VehicleStatus }
+    return encodeBytes(10, encodeBytes(1, vehicleStatus))
   }
 
   _buildWhitelistEntryInfoResponse() {

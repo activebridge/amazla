@@ -206,10 +206,9 @@ describe('RKE commands', () => {
     if (!r.success) throw new Error('Session setup failed: ' + r.error)
     sim.injectCommandError()
     const result = await p((cb) => session.lock(cb))
-    // actionStatus = 2 (error) — session.js returns success:true with response,
-    // the actionStatus value is in result.response.actionStatus
-    expect(result.success).toBe(true)
-    expect(result.response.actionStatus).toBe(2)
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/rejected/i)
+    expect(result.response.commandStatus.operationStatus).toBe(2)
   })
 })
 
@@ -767,10 +766,9 @@ describe('sendCommand error paths', () => {
     expect(result.error).toBeTruthy()
   })
 
-  test('second response with actionStatus clears _secondResponseTimer (lines 304-306)', async () => {
-    // Stub teslaBLE.send to capture the inlineHandler so we can fire it directly twice.
-    // First call: no actionStatus → sets _waitingForSecondResponse + timer.
-    // Second call: has actionStatus → hits clearTimeout path (session.js lines 304-306).
+  test('second response with commandStatus clears _secondResponseTimer', async () => {
+    // First response: non-terminal (no commandStatus / signedMessageStatus) → waiting.
+    // Second response: FromVCSECMessage { commandStatus { operationStatus=OK } } → clearTimeout + success.
     let capturedHandler = null
     const origSend = teslaBLE.send.bind(teslaBLE)
     teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
@@ -782,13 +780,14 @@ describe('sendCommand error paths', () => {
 
     expect(capturedHandler).not.toBeNull()
 
-    // First response: bare field-5 → no actionStatus, no sessionInfo — intermediate ack
+    // First: bare field-5 → no commandStatus, no signedMessageStatus → waiting
     capturedHandler({ success: true, data: encodeVarintField(5, 0) })
     expect(session._waitingForSecondResponse).toBe(true)
     expect(session._secondResponseTimer).not.toBeNull()
 
-    // Second response: field-1 = 1 → actionStatus = 1 → hits clearTimeout
-    capturedHandler({ success: true, data: encodeVarintField(1, 1) })
+    // Second: FromVCSECMessage.commandStatus.operationStatus = OK(0)
+    const okResponse = encodeBytes(10, encodeBytes(4, encodeVarintField(1, 0)))
+    capturedHandler({ success: true, data: okResponse })
     expect(session._secondResponseTimer).toBeNull()
     expect(session._waitingForSecondResponse).toBe(false)
     expect(cmdResult).not.toBeNull()
