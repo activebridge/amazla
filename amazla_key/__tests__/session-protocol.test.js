@@ -192,16 +192,15 @@ describe('buildRoutableMessage — signatureData at field 13', () => {
 })
 
 describe('buildSessionInfoRequest', () => {
-  test('buildClosureMoveRequest encodes closureId and moveType and placed at field 3 when used', () => {
-    const cmr = buildClosureMoveRequest(5, 0) // rear trunk, move
-    // Place in UnsignedMessage via buildUnsignedMessage
+  test('buildClosureMoveRequest sets closure slot field to action enum, placed at field 4 in UnsignedMessage', () => {
+    const cmr = buildClosureMoveRequest(5, 3) // rear trunk = OPEN
     const um = buildUnsignedMessage({ closureMoveRequest: cmr })
     const fields = decodeMessage(um)
-    // field 3 should be the closureMoveRequest bytes
-    expect(fields[3]).toBeDefined()
-    const cmrFields = decodeMessage(fields[3])
-    expect(cmrFields[1]).toBe(5)
-    expect(cmrFields[2]).toBe(0)
+    // field 4 = closureMoveRequest bytes per vcsec.proto
+    expect(fields[4]).toBeDefined()
+    const cmrFields = decodeMessage(fields[4])
+    // ClosureMoveRequest.rearTrunk (field 5) = CLOSURE_MOVE_TYPE_OPEN (3)
+    expect(cmrFields[5]).toBe(3)
   })
 
   test('places publicKey at field 1, challenge at field 2', () => {

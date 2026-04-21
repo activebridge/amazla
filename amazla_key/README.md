@@ -466,6 +466,8 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 
 ### Pairing Operations
 
+Pairing-specific builders live in `lib/tesla-ble/protocol/vcsec-pairing.js` (split from `vcsec.js`).
+
 | Operation | Description |
 |-----------|-------------|
 | `buildWhitelistOperation(pubKeyMsg)` | Add a key to the vehicle whitelist (requires NFC keycard tap) |
@@ -546,6 +548,29 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented, removed. No known ZeppOS API for MTU negotiation. |
 | Field test with car | ⏳ | All optimizations implemented, needs on-vehicle validation |
 
+## Future Work
+
+### Infotainment Domain (AES-GCM)
+
+Current scope covers the VCSEC domain only (lock, trunk, frunk, status) — HMAC-signed plaintext protobuf. The infotainment domain (`DOMAIN_INFOTAINMENT = 3`) unlocks lights, horn, windows, sunroof, charge port, and media controls, but uses AES-128-GCM encrypted payloads over the same BLE transport.
+
+**What's needed:**
+- Pure-JS AES-128-GCM implementation (~300-500 LOC — no WebCrypto on ZeppOS QuickJS)
+- Second `SessionInfoRequest` with `domain = 3` → separate session key
+- `CarServer.Action` protobuf schema (new message family)
+- Encrypt/decrypt path parallel to existing HMAC path
+
+**Reusable:**
+- Existing P-256 keypool serves both domains (same ephemeral keys, two handshakes)
+- Same BLE transport, same `RoutableMessage` envelope, same framing
+- Simulator scaffolding extends cleanly
+
+**Optimizations:**
+- Ship AES S-box / T-tables as static constants (~4KB, 3-5× speedup)
+- Cache per-session AES key schedule + GHASH `H` in memory (amortize across commands in the 5-min session window)
+
+No phone-side precomputation shortcut exists — AES key schedule and GHASH `H` depend on the runtime `sessionKey` derived post-ECDH.
+
 ## File Structure
 
 ```
@@ -558,7 +583,9 @@ amazla_key/
 │   └── index.js                  # Companion settings page (vehicle name + VIN entry)
 ├── lib/
 │   ├── phone.js                  # Phone class — IPC wrapper for companion app methods
+│   ├── tesla.js                  # High-level Tesla API (lock/unlock/status facade)
 │   └── tesla-ble/
+│       ├── README.md             # Module-level design notes
 │       ├── pairing.js            # createPairingController — headless pairing state machine
 │       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
 │       ├── ble.js                # Low-level BLE — easy-ble wrapper (unused, dead code)
@@ -567,20 +594,24 @@ amazla_key/
 │       ├── crypto/
 │       │   ├── p256.js           # P-256 elliptic curve (ECDH, precomputed table)
 │       │   ├── sha256.js         # SHA-256 / SHA-1
-│       │   └── hmac.js           # HMAC-SHA256 + hex utilities
+│       │   ├── hmac.js           # HMAC-SHA256
+│       │   └── binary-utils.js   # Hex / binary-string helpers
 │       └── protocol/
 │           ├── protobuf.js       # Protobuf encoding/decoding
-│           └── vcsec.js          # Tesla VCSEC message builders/parsers
+│           ├── vcsec.js          # Tesla VCSEC message builders/parsers
+│           └── vcsec-pairing.js  # Pairing-specific builders (WhitelistOperation, etc.)
 ├── __mocks__/
 │   └── zos.js                    # @zos/* stubs + BLEHarness (VCR-style BLE interception)
 └── __tests__/
     ├── helpers/
     │   ├── car-simulator.js      # CarSimulator — full P-256/HMAC vehicle response simulator
-    │   └── scenarios.js          # Pre-built vehicle state patches (lockedCar, sleeping, etc.)
+    │   ├── scenarios.js          # Pre-built vehicle state patches (lockedCar, sleeping, etc.)
+    │   └── session-setup.js      # Shared boot harness (store + BLE + sim) for session tests
     ├── car-simulator.test.js     # End-to-end VCR tests (BLE connect → session → RKE → status)
-    ├── pairing-controller.test.js # Pairing controller integration tests (13 tests)
+    ├── pairing-controller.test.js # Pairing controller integration tests
     ├── phone.test.js             # Phone class unit tests
     ├── session-protocol.test.js  # Session protocol unit tests
+    ├── session-edge.test.js      # Session edge cases (HMAC verify, fault paths)
     ├── ble-communication.test.js # BLE layer tests
     ├── pairing-flow.test.js      # Pairing handshake tests
     ├── vcsec.test.js             # VCSEC protobuf encode/decode

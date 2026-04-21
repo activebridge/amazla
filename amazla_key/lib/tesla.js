@@ -4,7 +4,7 @@ import teslaSession from './tesla-ble/session.js'
 
 var CLOSURE_REAR_TRUNK = 5
 var CLOSURE_FRUNK = 6
-var MOVE_OPEN = 0
+var MOVE_OPEN = 3
 
 class Tesla {
   constructor() {

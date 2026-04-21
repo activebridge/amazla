@@ -59,54 +59,49 @@ class TeslaSession {
       callback({ success: false, error: 'Doublings table not found. Please complete pairing first.' })
       return
     }
-    const ensureConnected = () => {
-      if (teslaBLE.isConnected()) {
-        console.log('[SESSION] ✓ BLE already connected and ready')
-        proceedWithSession()
-        return
-      }
-
-      const mac = store.vehicleMac
-      if (!mac) {
-        callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
-        return
-      }
-      const doConnect = (attempt) => {
-        console.log(`[SESSION] Connecting to vehicle: ${mac} (attempt ${attempt})`)
-        teslaBLE.connect(mac, (result) => {
-          console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
-          if (!result.success) {
-            // Retry once on "disconnected during setup" — vehicle needs a moment
-            if (attempt === 1 && result.error && result.error.indexOf('disconnected during setup') !== -1) {
-              console.log('[SESSION] Vehicle dropped connection during setup, retrying in 2s...')
-              setTimeout(() => {
-                doConnect(2)
-              }, 2000)
-              return
-            }
-            console.log(`[SESSION] ✗ Connection failed: ${result.error || 'unknown'}`)
-            callback({ success: false, error: `BLE connection failed: ${result.error || 'unknown'}` })
-            return
-          }
-          console.log('[SESSION] ✓ Connected to vehicle, proceeding')
-          proceedWithSession()
-        })
-      }
-      doConnect(1)
+    this._ensureConnected(callback)
+  }
+  _ensureConnected(callback) {
+    if (teslaBLE.isConnected()) {
+      console.log('[SESSION] ✓ BLE already connected and ready')
+      this._proceedWithSession(callback)
+      return
     }
-
-    const proceedWithSession = () => {
-      if (!this.vehiclePublicKey) {
-        this.vehiclePublicKey = store.vehicleEcPublicKey || null
-        if (!this.vehiclePublicKey) {
-          callback({ success: false, error: 'Vehicle EC key missing — re-pair via phone' })
+    const mac = store.vehicleMac
+    if (!mac) {
+      callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
+      return
+    }
+    this._doConnect(mac, 1, callback)
+  }
+  _doConnect(mac, attempt, callback) {
+    console.log(`[SESSION] Connecting to vehicle: ${mac} (attempt ${attempt})`)
+    teslaBLE.connect(mac, (result) => {
+      console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
+      if (!result.success) {
+        // Retry once on "disconnected during setup" — vehicle needs a moment
+        if (attempt === 1 && result.error && result.error.indexOf('disconnected during setup') !== -1) {
+          console.log('[SESSION] Vehicle dropped connection during setup, retrying in 2s...')
+          setTimeout(() => this._doConnect(mac, 2, callback), 2000)
           return
         }
+        console.log(`[SESSION] ✗ Connection failed: ${result.error || 'unknown'}`)
+        callback({ success: false, error: `BLE connection failed: ${result.error || 'unknown'}` })
+        return
       }
-      this._doSessionInfoRequest(callback)
+      console.log('[SESSION] ✓ Connected to vehicle, proceeding')
+      this._proceedWithSession(callback)
+    })
+  }
+  _proceedWithSession(callback) {
+    if (!this.vehiclePublicKey) {
+      this.vehiclePublicKey = store.vehicleEcPublicKey || null
+      if (!this.vehiclePublicKey) {
+        callback({ success: false, error: 'Vehicle EC key missing — re-pair via phone' })
+        return
+      }
     }
-
-    ensureConnected()
+    this._doSessionInfoRequest(callback)
   }
   _doSessionInfoRequest(callback) {
     const keypair = store.popKey()
@@ -118,148 +113,156 @@ class TeslaSession {
     this.ephemeralPrivateKey = keypair.privateKeyBytes // Uint8Array[32]
     this.ephemeralPublicKey = keypair.publicKeyBytes // Uint8Array[65]
     this.routingAddress = generateRoutingAddress()
-    const uuid = generateUUID()
-    this._lastRequestUuid = uuid
-    const sessionInfoRequest = buildSessionInfoRequest(
-      this.ephemeralPublicKey,
-      null, // SessionInfoRequest contains ONLY publicKey; challenge comes from request UUID (field 50)
-    )
+    this._lastRequestUuid = generateUUID()
+
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
-      sessionInfoRequest: sessionInfoRequest,
-      uuid: uuid,
+      // SessionInfoRequest contains ONLY publicKey; challenge comes from request UUID (field 50).
+      sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
+      uuid: this._lastRequestUuid,
     })
     console.log(`[SESSION] TX request (first 64 bytes of ${message.length} total bytes)`)
-    const sessionInfoResponseHandler = (result) => {
-      if (!result.success) {
-        callback({ success: false, error: result.error })
+
+    const handler = (result) => this._handleSessionInfoResponse(result, callback, handler)
+    teslaBLE.send(message, handler)
+  }
+  _handleSessionInfoResponse(result, callback, handler) {
+    if (!result.success) {
+      callback({ success: false, error: result.error })
+      return
+    }
+    try {
+      if (!result.data) {
+        console.log('[SESSION] ERROR: result.data is null/undefined')
+        callback({ success: false, error: 'No data in response' })
         return
       }
-      try {
-        if (!result.data) {
-          console.log('[SESSION] ERROR: result.data is null/undefined')
-          callback({ success: false, error: 'No data in response' })
-          return
-        }
-        console.log(`[SESSION] Raw response: ${result.data.length} bytes`)
+      console.log(`[SESSION] Raw response: ${result.data.length} bytes`)
 
-        const rawFields = decodeMessage(result.data)
-        const fieldKeys = Object.keys(rawFields)
-          .sort((a, b) => a - b)
-          .join(',')
-        const response = parseRoutableMessage(result.data)
+      const fieldKeys = Object.keys(decodeMessage(result.data))
+        .sort((a, b) => a - b)
+        .join(',')
+      const response = parseRoutableMessage(result.data)
 
-        // If no sessionInfo, payload, or status — this is an intermediate ack from the vehicle.
-        // Signal _requeue so wrappedCallback re-registers sessionInfoResponseHandler for the real response.
-        if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
-          console.log(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
-          teslaBLE.responseCallback = sessionInfoResponseHandler
-          return
-        }
+      // Intermediate ack from vehicle: no sessionInfo, payload, or status. Re-register for the real response.
+      if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
+        console.log(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
+        teslaBLE.responseCallback = handler
+        return
+      }
 
-        console.log(`[SESSION] RX bytes: ${result.data ? result.data.length : 0}`)
-        if (response.sessionInfo) {
-          if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
-            this.vehiclePublicKey = response.sessionInfo.publicKey
-            console.log('[SESSION] Got vehicle public key from SessionInfo response')
-            if (!store.vehicleEcPublicKey) {
-              store.vehicleEcPublicKey = response.sessionInfo.publicKey
-              console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
-            }
-          } else {
-            console.log('[SESSION] SessionInfo response has no valid public key')
-            if (!this.vehiclePublicKey) this.vehiclePublicKey = store.vehicleEcPublicKey || null
-            if (!this.vehiclePublicKey) {
-              console.log('[SESSION] ❌ No vehicle public key available from storage or response')
-              callback({ success: false, error: 'Vehicle public key not found. Complete pairing first.' })
-              return
-            }
-          }
-
-          this.epoch = response.sessionInfo.epoch
-          this.counter = response.sessionInfo.counter
-          this.clockTime = response.sessionInfo.clockTime
-
-          // Log epoch safely
-          if (this.epoch && this.epoch.length > 0) {
-            console.log(`[SESSION] Epoch loaded: ${this.epoch.length} bytes`)
-          } else {
-            console.log('[SESSION] Epoch: <null or empty>')
-          }
-
-          if (this.vehiclePublicKey) {
-            console.log(`[SESSION] Vehicle public key: ${this.vehiclePublicKey.length} bytes`)
-          } else {
-            console.log('[SESSION] ERROR: vehiclePublicKey is null/undefined')
-          }
-          if (!this.vehiclePublicKey || this.vehiclePublicKey.length !== 65) {
-            const actualLength = this.vehiclePublicKey ? this.vehiclePublicKey.length : 0
-            console.log(`[SESSION] ❌ INVALID PUBLIC KEY: ${actualLength} bytes, need 65`)
-            callback({ success: false, error: `Invalid vehicle public key: ${actualLength} bytes` })
-            return
-          }
-          const _ecdhTable = store.vehicleDoublingsTable
-          if (!_ecdhTable) {
-            callback({ success: false, error: 'No ECDH table — re-pair to generate' })
-            return
-          }
-          console.log('[SESSION] Starting ECDH (precomputed table)...')
-          const _ecdhStart = Date.now()
-          const sharedSecret = ecdhFixed(this.ephemeralPrivateKey, _ecdhTable)
-          console.log(`[SESSION] ECDH done in ${Date.now() - _ecdhStart}ms`)
-          const keyMaterial = sha1(sharedSecret)
-          this.sessionKey = keyMaterial.slice(0, 16)
-
-          // Verify SessionInfo HMAC tag before trusting session state.
-          if (!response.sessionInfoTag) {
-            console.log('[SESSION] ❌ Unauthenticated SessionInfo (no tag)')
-            callback({ success: false, error: 'Unauthenticated SessionInfo response' })
-            return
-          }
-          const infoHmac = createSessionInfoHmac(this.sessionKey)
-          const expectedTag = infoHmac(
-            buildSessionInfoHmacInput(
-              store.vehicleVin || new Uint8Array(0),
-              this._lastRequestUuid || new Uint8Array(0),
-              response.sessionInfoBytes,
-            ),
-          )
-          if (expectedTag.length !== response.sessionInfoTag.length) {
-            console.log('[SESSION] ❌ SessionInfo HMAC length mismatch')
-            callback({ success: false, error: 'Invalid SessionInfo HMAC' })
-            return
-          }
-          let diff = 0
-          for (let i = 0; i < expectedTag.length; i++) diff |= expectedTag[i] ^ response.sessionInfoTag[i]
-          if (diff !== 0) {
-            console.log('[SESSION] ❌ SessionInfo HMAC mismatch')
-            callback({ success: false, error: 'Invalid SessionInfo HMAC' })
-            return
-          }
-          console.log('[SESSION] ✓ SessionInfo tag verified')
-
-          const { cmdHmac } = createSessionHmacs(this.sessionKey)
-          this._cmdHmacFn = cmdHmac
-          this.established = true
-          console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
-          callback({
-            success: true,
-            counter: this.counter,
-            epoch: this.epoch ? this.epoch.length : 0,
-          })
-        } else {
-          console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
-          console.log(`[SESSION] Fields present: [${fieldKeys}]`)
-          callback({ success: false, error: `No session info in response. Fields: [${fieldKeys}]` })
-        }
-      } catch (e) {
-        console.log(`[SESSION] Exception: ${e.message}`)
-        if (e.stack) console.log(`[SESSION] Stack: ${e.stack}`)
-        callback({ success: false, error: e.message })
+      console.log(`[SESSION] RX bytes: ${result.data ? result.data.length : 0}`)
+      if (!response.sessionInfo) {
+        console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
+        console.log(`[SESSION] Fields present: [${fieldKeys}]`)
+        callback({ success: false, error: `No session info in response. Fields: [${fieldKeys}]` })
+        return
+      }
+      this._processSessionInfo(response, callback)
+    } catch (e) {
+      console.log(`[SESSION] Exception: ${e.message}`)
+      if (e.stack) console.log(`[SESSION] Stack: ${e.stack}`)
+      callback({ success: false, error: e.message })
+    }
+  }
+  _processSessionInfo(response, callback) {
+    // Whether we should persist the response's pubkey as a fallback — defer the
+    // actual write until AFTER HMAC verification so an unauthenticated response
+    // cannot seed store.vehicleEcPublicKey.
+    let persistResponsePubKey = false
+    if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
+      this.vehiclePublicKey = response.sessionInfo.publicKey
+      console.log('[SESSION] Got vehicle public key from SessionInfo response')
+      if (!store.vehicleEcPublicKey) persistResponsePubKey = true
+    } else {
+      console.log('[SESSION] SessionInfo response has no valid public key')
+      if (!this.vehiclePublicKey) this.vehiclePublicKey = store.vehicleEcPublicKey || null
+      if (!this.vehiclePublicKey) {
+        console.log('[SESSION] ❌ No vehicle public key available from storage or response')
+        callback({ success: false, error: 'Vehicle public key not found. Complete pairing first.' })
+        return
       }
     }
-    teslaBLE.send(message, sessionInfoResponseHandler)
+
+    this.epoch = response.sessionInfo.epoch
+    this.counter = response.sessionInfo.counter
+    this.clockTime = response.sessionInfo.clockTime
+
+    if (this.epoch && this.epoch.length > 0) {
+      console.log(`[SESSION] Epoch loaded: ${this.epoch.length} bytes`)
+    } else {
+      console.log('[SESSION] Epoch: <null or empty>')
+    }
+    // After the if/else above, this.vehiclePublicKey is guaranteed non-null
+    // (else-branch returns early on null). The length guard remains because a
+    // corrupted stored pubkey could be the wrong size.
+    console.log(`[SESSION] Vehicle public key: ${this.vehiclePublicKey.length} bytes`)
+    if (this.vehiclePublicKey.length !== 65) {
+      console.log(`[SESSION] ❌ INVALID PUBLIC KEY: ${this.vehiclePublicKey.length} bytes, need 65`)
+      callback({ success: false, error: `Invalid vehicle public key: ${this.vehiclePublicKey.length} bytes` })
+      return
+    }
+
+    if (!this._deriveSessionKey(callback)) return
+    if (!this._verifySessionInfoTag(response, callback)) return
+
+    if (persistResponsePubKey) {
+      store.vehicleEcPublicKey = response.sessionInfo.publicKey
+      console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
+    }
+
+    const { cmdHmac } = createSessionHmacs(this.sessionKey)
+    this._cmdHmacFn = cmdHmac
+    this.established = true
+    console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
+    callback({
+      success: true,
+      counter: this.counter,
+      epoch: this.epoch ? this.epoch.length : 0,
+    })
+  }
+  _deriveSessionKey(callback) {
+    const ecdhTable = store.vehicleDoublingsTable
+    if (!ecdhTable) {
+      callback({ success: false, error: 'No ECDH table — re-pair to generate' })
+      return false
+    }
+    console.log('[SESSION] Starting ECDH (precomputed table)...')
+    const start = Date.now()
+    const sharedSecret = ecdhFixed(this.ephemeralPrivateKey, ecdhTable)
+    console.log(`[SESSION] ECDH done in ${Date.now() - start}ms`)
+    this.sessionKey = sha1(sharedSecret).slice(0, 16)
+    return true
+  }
+  _verifySessionInfoTag(response, callback) {
+    if (!response.sessionInfoTag) {
+      console.log('[SESSION] ❌ Unauthenticated SessionInfo (no tag)')
+      callback({ success: false, error: 'Unauthenticated SessionInfo response' })
+      return false
+    }
+    const infoHmac = createSessionInfoHmac(this.sessionKey)
+    const expectedTag = infoHmac(
+      buildSessionInfoHmacInput(
+        store.vehicleVin || new Uint8Array(0),
+        this._lastRequestUuid || new Uint8Array(0),
+        response.sessionInfoBytes,
+      ),
+    )
+    if (expectedTag.length !== response.sessionInfoTag.length) {
+      console.log('[SESSION] ❌ SessionInfo HMAC length mismatch')
+      callback({ success: false, error: 'Invalid SessionInfo HMAC' })
+      return false
+    }
+    let diff = 0
+    for (let i = 0; i < expectedTag.length; i++) diff |= expectedTag[i] ^ response.sessionInfoTag[i]
+    if (diff !== 0) {
+      console.log('[SESSION] ❌ SessionInfo HMAC mismatch')
+      callback({ success: false, error: 'Invalid SessionInfo HMAC' })
+      return false
+    }
+    console.log('[SESSION] ✓ SessionInfo tag verified')
+    return true
   }
   // Shared auth message builder: counter++, HMAC tag, SignatureData, RoutableMessage.
   // Takes a pre-built UnsignedMessage; returns the RoutableMessage bytes ready to send.

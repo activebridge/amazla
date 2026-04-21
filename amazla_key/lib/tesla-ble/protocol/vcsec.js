@@ -14,7 +14,7 @@ const buildUnsignedMessage = ({ informationRequest, rkeAction, closureMoveReques
   const parts = []
   if (informationRequest) parts.push(encodeBytes(1, informationRequest))
   if (rkeAction !== undefined) parts.push(encodeEnum(2, rkeAction))
-  if (closureMoveRequest) parts.push(encodeBytes(3, closureMoveRequest))
+  if (closureMoveRequest) parts.push(encodeBytes(4, closureMoveRequest))
   return concat(...parts)
 }
 const buildInformationRequest = (requestType, keyId, publicKey, slot) => {
@@ -64,13 +64,10 @@ const buildHMACPersonalizedData = (epoch, counter, expiresAt, tag) => {
   return concat(...parts)
 }
 
-// ClosureMoveRequest { closure_id(1 enum), move_type(2 enum) }
-const buildClosureMoveRequest = (closureId, moveType) => {
-  const parts = []
-  if (closureId !== undefined) parts.push(encodeEnum(1, closureId))
-  if (moveType !== undefined) parts.push(encodeEnum(2, moveType))
-  return concat(...parts)
-}
+// ClosureMoveRequest { frontDriverDoor(1), frontPassengerDoor(2), rearDriverDoor(3),
+// rearPassengerDoor(4), rearTrunk(5), frontTrunk(6), chargePort(7), tonneau(8) }
+// Each field carries a ClosureMoveType_E value (NONE=0, MOVE=1, STOP=2, OPEN=3, CLOSE=4).
+const buildClosureMoveRequest = (closureId, moveType) => encodeEnum(closureId, moveType)
 // SignatureData { signer_identity(1 KeyIdentity), HMAC_Personalized_data(8) }
 // Placed in RoutableMessage.signature_data (field 13) for authenticated commands.
 const buildSignatureData = (signerPublicKey, epoch, counter, expiresAt, tag) => {
