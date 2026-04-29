@@ -30,7 +30,8 @@
         "page": {
           "pages": [
             "page/index",
-            "page/ble/index"
+            "page/ble/index",
+            "page/kpay/index.page"
           ]
         },
         "app-side": { "path": "app-side/index" },

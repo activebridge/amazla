@@ -1,4 +1,3 @@
-import { BasePage } from '@zeppos/zml/base-page'
 import { getDeviceInfo } from '@zos/device'
 import { setPageBrightTime, setWakeUpRelaunch } from '@zos/display'
 import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
@@ -208,36 +207,34 @@ const onSimulatePair = () => {
   })
 }
 
-Page(
-  BasePage({
-    build() {
-      setWakeUpRelaunch(true)
-      setPageBrightTime(300)
+Page({
+  build() {
+    setWakeUpRelaunch(true)
+    setPageBrightTime(300)
 
-      phone = new Phone(this)
-      if (store.keyPoolCount < 10) phone.syncPool()
-      phone.syncSettings()
+    phone = new Phone()
+    if (store.keyPoolCount < 10) phone.syncPool()
+    phone.syncSettings()
 
-      tesla.onChange(render)
-      tesla.connect()
+    tesla.onChange(render)
+    tesla.connect()
 
-      onKey({
-        callback: (key, keyEvent) => {
-          if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
-            tesla.locked ? tesla.unlock() : tesla.lock()
-          }
-          return false
-        },
-      })
+    onKey({
+      callback: (key, keyEvent) => {
+        if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
+          tesla.locked ? tesla.unlock() : tesla.lock()
+        }
+        return false
+      },
+    })
 
-      render()
-      hmUI.setStatusBarVisible(false)
-      keepScreenOn(true)
-    },
+    render()
+    hmUI.setStatusBarVisible(false)
+    keepScreenOn(true)
+  },
 
-    onDestroy() {
-      tesla.offChange(render)
-      keepScreenOn(false)
-    },
-  }),
-)
+  onDestroy() {
+    tesla.offChange(render)
+    keepScreenOn(false)
+  },
+})

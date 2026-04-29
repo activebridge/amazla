@@ -1,5 +1,10 @@
-import { BaseSideService } from '@zeppos/zml/base-side'
-import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from './ble-crypto.js'
+import { MessageBuilder } from '../shared/message-side'
+import { kpayConfig } from '../shared/kpay-config'
+import kpayAppSide from 'kpay-amazfit/app-side'
+import bleCrypto, { binaryStringToBytes, bytesToBinaryString } from './ble-crypto.js'
+
+const messageBuilder = new MessageBuilder()
+const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
 
 const dispatch = async (method, response, params = {}) => {
   try {
@@ -16,7 +21,6 @@ const dispatch = async (method, response, params = {}) => {
 }
 
 const actions = {
-  // Return existing enrolled keypair, or generate and store one if missing.
   BLE_SYNC_KEYS: async () => {
     console.log('[App] Syncing BLE keys to watch')
     const stored = settings.settingsStorage.getItem('tesla_public_key')
@@ -38,9 +42,6 @@ const actions = {
     }
   },
 
-  // Build pair + verify messages in one call.
-  // Returns { watchPublicKey, pairMsg, verifyMsg } — watch uses pairMsg for enrollment,
-  // verifyMsg for whitelist query; raw Tesla response goes to BLE_COMPLETE_PAIRING.
   BLE_PAIR_SETUP: async () => {
     console.log('[App] BLE_PAIR_SETUP: syncing keys and building pair/verify messages')
     const stored = settings.settingsStorage.getItem('tesla_public_key')
@@ -54,21 +55,25 @@ const actions = {
     return bleCrypto.pairSetup(publicKeyBinary)
   },
 
-  // Parse raw Tesla BLE verify response, extract vehicle EC key, compute doublings table.
-  // Replaces BLE_VERIFY_PAIR + watch-side decodeRawFields + BLE_PRECOMPUTE_TABLE.
   BLE_COMPLETE_PAIRING: async ({ rawResponse }) => {
     console.log('[App] BLE_COMPLETE_PAIRING: parsing verify response and computing table')
     const rawBytes = binaryStringToBytes(rawResponse)
     return bleCrypto.completePairing(rawBytes)
   },
 
-  // Sync key pool: watch sends current count, phone returns a full replacement pool if below target.
-  // All logic lives here — watch just stores whatever comes back.
   BLE_SYNC_POOL: async ({ currentCount = 0 }) => {
     const TARGET = 33
     console.log(`[App] BLE_SYNC_POOL: have ${currentCount}, target ${TARGET}`)
     if (currentCount >= TARGET) return { success: true, pool: null }
     return bleCrypto.generateKeyPool(TARGET)
+  },
+
+  SAVE_VEHICLE_MAC: async ({ mac }) => {
+    if (!mac) return { success: false, error: 'mac required' }
+    settings.settingsStorage.setItem('vehicleMac', mac)
+    settings.settingsStorage.setItem('vehiclePairedAt', String(Date.now()))
+    console.log('[App] SAVE_VEHICLE_MAC', mac)
+    return { success: true }
   },
 
   GET_SETTINGS: async () => {
@@ -83,8 +88,6 @@ const actions = {
     }
   },
 
-  // Precompute doublings table for watch-side fixed-base ECDH.
-  // Called once after pairing; watch stores result as binary for fast cold-start ECDH.
   BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {
     console.log('[App] Building ECDH doublings table for vehicle key')
     const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyBinary)
@@ -93,9 +96,6 @@ const actions = {
     return { success: true, table: bytesToBinaryString(bytes) }
   },
 
-  // Simulates a full pairing flow with a generated vehicle key — no car needed.
-  // All computation is real (P-256 keypairs, doublings table, key pool).
-  // Watch stores the result identically to a real pairing so session establishment works.
   SIMULATE_PAIR: async () => {
     console.log('[App] SIMULATE_PAIR: generating fake vehicle pairing data')
 
@@ -116,19 +116,21 @@ const actions = {
   },
 }
 
-AppSideService(
-  BaseSideService({
-    onInit() {
-      settings.settingsStorage.setItem('debug', '')
-      settings.settingsStorage.addListener('change', async ({ key, newValue, oldValue }) => {})
-    },
+AppSideService({
+  onInit() {
+    settings.settingsStorage.setItem('debug', '')
+    settings.settingsStorage.addListener('change', () => {})
 
-    onRequest(req, res) {
-      dispatch(req.method, res, req.params || {})
-    },
-
-    onRun() {},
-
-    onDestroy() {},
-  }),
-)
+    kpay.init()
+    messageBuilder.listen(() => {})
+    messageBuilder.on('request', (ctx) => {
+      const jsonRpc = messageBuilder.buf2Json(ctx.request.payload)
+      if (kpay.onRequest(jsonRpc)) return
+      dispatch(jsonRpc.method, (_err, data) => ctx.response({ data }), jsonRpc.params || {})
+    })
+  },
+  onRun() {},
+  onDestroy() {
+    kpay.destroy()
+  },
+})

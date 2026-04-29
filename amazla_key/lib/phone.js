@@ -2,13 +2,18 @@ import store from './store.js'
 import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
 
 class Phone {
-  constructor(page) {
-    this._page = page
+  constructor(messageBuilder) {
+    if (messageBuilder) {
+      this._mb = messageBuilder
+      return
+    }
+    const app = typeof getApp === 'function' ? getApp() : null
+    this._mb = app && app._options && app._options.globalData ? app._options.globalData.messageBuilder : null
   }
 
-  // Private: wraps page.request and rejects on !r.success
   _request(method, params) {
-    return this._page.request({ method, params: params || {} }).then((r) => {
+    if (!this._mb) return Promise.reject(new Error('messageBuilder not available'))
+    return this._mb.request({ method, params: params || {} }).then((r) => {
       if (!r || !r.success) throw new Error((r && r.error) || `${method} failed`)
       return r
     })
@@ -59,6 +64,11 @@ class Phone {
       store.watchPublicKey = r.watchPublicKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })
+  }
+
+  // Persist Tesla MAC to companion settingsStorage so the settings page can show paired state.
+  saveVehicleMac(mac, cb) {
+    this._call('SAVE_VEHICLE_MAC', { mac }, cb, () => {})
   }
 
   // Parse raw Tesla verify response, extract vehicle EC key, compute doublings table.

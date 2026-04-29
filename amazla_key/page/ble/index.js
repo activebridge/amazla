@@ -1,4 +1,3 @@
-import { BasePage } from '@zeppos/zml/base-page'
 import * as hmUI from '@zos/ui'
 import UI, { button as uiButton, rect as uiRect, text as uiText } from '../../../pages/ui.js'
 import { keepScreenOn } from '../../../zeppify/index.js'
@@ -112,6 +111,13 @@ function onPair() {
       addLog('✓ Paired!', 0x44ff44)
       updateChecklist()
       pairingCtrl = null
+      var mac = store.vehicleMac
+      if (mac) {
+        phone.saveVehicleMac(mac, (r) => {
+          if (r.success) addLog('✓ MAC saved', 0x44ff44)
+          else addLog('MAC save failed', 0xff8800)
+        })
+      }
     },
     onError(msg) {
       state = 'IDLE'
@@ -267,8 +273,7 @@ function onClear() {
   updateChecklist()
   store.reset()
 }
-Page(
-  BasePage({
+Page({
     build() {
       console.log(
         `[BLE-LIFECYCLE] build() called, __blePageInit=${BLE.__blePageInit}, __pageBuilt=${__pageBuilt}`,
@@ -277,7 +282,7 @@ Page(
       // Guard against duplicate builds (ZeppOS garbage collection or router issues)
       if (__pageBuilt) {
         console.log('[BLE-LIFECYCLE] Page already built — refreshing checklist and status')
-        phone = new Phone(this)
+        phone = new Phone()
         try { updateChecklist() } catch (e) { console.log('[BLE] updateChecklist err', e && e.message) }
         return
       }
@@ -285,7 +290,7 @@ Page(
 
       logWidgets = []
       UI.reset()
-      phone = new Phone(this)
+      phone = new Phone()
 
       BLE.reset()
       teslaSession.reset()
@@ -541,5 +546,4 @@ Page(
       console.log('[BLE-LIFECYCLE] onHide() called')
       keepScreenOn(false)
     },
-  }),
-)
+})
