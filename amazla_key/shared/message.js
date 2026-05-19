@@ -16,6 +16,22 @@ function initLogger() {
 
 const DEBUG = true
 
+// Large payloads (e.g. the 16 KB doublings table over BLE) froze the watch
+// for seconds because each chunk was hex-/JSON-serialized synchronously on
+// the QuickJS thread. Cap the heavy log paths: small frames log fully, big
+// ones log just a size marker — no bin2hex / JSON.stringify of the payload.
+const RAW_LOG_MAX = 256
+const _len = (b) => (b && typeof b.byteLength === 'number' ? b.byteLength : b && typeof b.length === 'number' ? b.length : 0)
+const hexCap = (b) => (_len(b) > RAW_LOG_MAX ? `[${_len(b)}B]` : bin2hex(b))
+const jstr = (v) => {
+  if (v && typeof v !== 'string' && _len(v) > RAW_LOG_MAX) return `[${_len(v)}B]`
+  try {
+    return JSON.stringify(v)
+  } catch (_e) {
+    return String(v)
+  }
+}
+
 export const MESSAGE_SIZE = 3600
 export const MESSAGE_HEADER = 16
 export const MESSAGE_PAYLOAD = MESSAGE_SIZE - MESSAGE_HEADER
@@ -267,7 +283,7 @@ export class MessageBuilder extends EventBus {
 
     this.ble &&
       this.ble.createConnect((index, data, size) => {
-        DEBUG && logger.warn('[RAW] [R] receive index=>%d size=>%d bin=>%s', index, size, bin2hex(data))
+        DEBUG && logger.warn('[RAW] [R] receive index=>%d size=>%d bin=>%s', index, size, hexCap(data))
         this.onFragmentData(data)
       })
 
@@ -291,7 +307,7 @@ export class MessageBuilder extends EventBus {
 
     messaging &&
       messaging.peerSocket.addListener('message', (message) => {
-        DEBUG && logger.warn('[RAW] [R] receive size=>%d bin=>%s', message.byteLength, bin2hex(message))
+        DEBUG && logger.warn('[RAW] [R] receive size=>%d bin=>%s', message.byteLength, hexCap(message))
         this.onMessage(message)
       })
 
@@ -431,7 +447,7 @@ export class MessageBuilder extends EventBus {
 
   sendBin(buf, debug = DEBUG) {
     // ble 发送消息
-    debug && logger.warn('[RAW] [S] send size=%d bin=%s', buf.byteLength, bin2hex(buf.buffer))
+    debug && logger.warn('[RAW] [S] send size=%d bin=%s', buf.byteLength, hexCap(buf))
     const result = this.ble.send(buf.buffer, buf.byteLength)
 
     if (!result) {
@@ -441,7 +457,7 @@ export class MessageBuilder extends EventBus {
 
   sendBinBySide(buf, debug = DEBUG) {
     // side 发送消息
-    debug && logger.warn('[RAW] [S] send size=%d bin=%s', buf.byteLength, bin2hex(buf.buffer))
+    debug && logger.warn('[RAW] [S] send size=%d bin=%s', buf.byteLength, hexCap(buf))
     messaging.peerSocket.send(buf.buffer)
   }
 
@@ -841,7 +857,7 @@ export class MessageBuilder extends EventBus {
     const data = this.readBin(bin)
     this.emit('raw', bin)
 
-    DEBUG && logger.debug('receive data=>', JSON.stringify(data))
+    DEBUG && logger.debug('receive data=>', _len(data && data.payload) > RAW_LOG_MAX ? `[type=${data.type} port2=${data.port2} payload ${_len(data.payload)}B]` : JSON.stringify(data))
     if (data.flag === MessageFlag.App && data.type === MessageType.Shake) {
       this.appSidePort = data.port2
       logger.debug('appSidePort=>', data.port2)
@@ -927,7 +943,7 @@ export class MessageBuilder extends EventBus {
 
       const transact = ({ traceId, payload, dataType }) => {
         this.errorIfBleDisconnect()
-        DEBUG && logger.debug('traceId=>%d payload=>%s', traceId, payload.toString('hex'))
+        DEBUG && logger.debug('traceId=>%d payload=>%s', traceId, hexCap(payload))
         if (traceId === requestId) {
           let result
           switch (dataType) {
@@ -945,7 +961,7 @@ export class MessageBuilder extends EventBus {
               break
           }
           DEBUG && logger.debug('request id=>%d payload=>%j', requestId, data)
-          DEBUG && logger.debug('response id=>%d payload=>%j', requestId, result)
+          DEBUG && logger.debug('response id=>%d payload=>%s', requestId, jstr(result))
 
           this.off('response', transact)
           this.off('error', error)
@@ -1023,7 +1039,7 @@ export class MessageBuilder extends EventBus {
       let hasReturned = false
 
       const transact = ({ traceId, payload, dataType }) => {
-        DEBUG && logger.debug('traceId=>%d payload=>%s', traceId, payload.toString('hex'))
+        DEBUG && logger.debug('traceId=>%d payload=>%s', traceId, hexCap(payload))
         if (traceId === requestId) {
           let result
           switch (dataType) {
@@ -1041,7 +1057,7 @@ export class MessageBuilder extends EventBus {
               break
           }
           DEBUG && logger.debug('request id=>%d payload=>%j', requestId, data)
-          DEBUG && logger.debug('response id=>%d payload=>%j', requestId, result)
+          DEBUG && logger.debug('response id=>%d payload=>%s', requestId, jstr(result))
 
           timer1 && clearTimeout(timer1)
           timer1 = null

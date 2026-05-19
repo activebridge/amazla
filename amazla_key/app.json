@@ -2,7 +2,7 @@
   "configVersion": "v3",
   "app": {
     "appId": 1110931,
-    "appName": "Amazla Key (BLE)",
+    "appName": "Amazla Key",
     "appType": "app",
     "version": {
       "code": 1,
@@ -12,11 +12,7 @@
     "vender": "activebridge",
     "description": "Tesla digital key for ZeppOS smartwatches. Lock/unlock your vehicle via Bluetooth LE."
   },
-  "permissions": [
-    "data:os.device.info",
-    "device:os.local_storage",
-    "device:os.ble"
-  ],
+  "permissions": ["data:os.device.info", "device:os.local_storage", "device:os.ble"],
   "runtime": {
     "apiVersion": {
       "compatible": "3.0.0",
@@ -28,11 +24,7 @@
     "common": {
       "module": {
         "page": {
-          "pages": [
-            "page/index",
-            "page/ble/index",
-            "page/kpay/index.page"
-          ]
+          "pages": ["page/index", "page/ble/index", "page/kpay/index.page"]
         },
         "app-side": { "path": "app-side/index" },
         "setting": { "path": "setting/index" },
@@ -56,7 +48,7 @@
   },
   "i18n": {
     "en-US": {
-      "appName": "Amazla Key (BLE)",
+      "appName": "Amazla Key",
       "appDescription": "Tesla digital key for ZeppOS smartwatches. Lock/unlock your vehicle via Bluetooth LE."
     }
   },

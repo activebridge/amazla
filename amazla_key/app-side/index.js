@@ -1,12 +1,21 @@
-import { MessageBuilder } from '../shared/message-side'
-import { kpayConfig } from '../shared/kpay-config'
 import kpayAppSide from 'kpay-amazfit/app-side'
+import { kpayConfig } from '../shared/kpay-config'
+import { MessageBuilder } from '../shared/message-side'
 import bleCrypto, { binaryStringToBytes, bytesToBinaryString } from './ble-crypto.js'
 
 const messageBuilder = new MessageBuilder()
 const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
 
+// Methods whose responses are raw binary (watch requests them with dataType:'bin').
+// Envelope: [0x01][payload bytes] on success, [0x00][utf-8 error] on failure.
+// Avoids the JSON \uXXXX 2x size blowup that OOM-rebooted the watch on big tables.
+const BINARY_METHODS = { BLE_PRECOMPUTE_TABLE: 1, BLE_SYNC_POOL: 1, BLE_COMPLETE_PAIRING: 1 }
+
+const okBin = (...parts) => Buffer.concat([Buffer.from([1]), ...parts.map((p) => Buffer.from(p))])
+const errBin = (msg) => Buffer.concat([Buffer.from([0]), Buffer.from(String(msg || 'error'), 'utf-8')])
+
 const dispatch = async (method, response, params = {}) => {
+  const isBin = !!BINARY_METHODS[method]
   try {
     const func = actions[method]
     if (func) {
@@ -14,9 +23,10 @@ const dispatch = async (method, response, params = {}) => {
       response(null, result)
       return
     }
-    response(null, { success: false, error: `Unknown method: ${method}` })
+    response(null, isBin ? errBin(`Unknown method: ${method}`) : { success: false, error: `Unknown method: ${method}` })
   } catch (e) {
-    response(null, { success: false, error: (e && e.message) || 'dispatch error' })
+    const msg = (e && e.message) || 'dispatch error'
+    response(null, isBin ? errBin(msg) : { success: false, error: msg })
   }
 }
 
@@ -55,17 +65,22 @@ const actions = {
     return bleCrypto.pairSetup(publicKeyBinary)
   },
 
+  // Binary response: [0x01][65-byte ecKey][16384-byte table]
   BLE_COMPLETE_PAIRING: async ({ rawResponse }) => {
     console.log('[App] BLE_COMPLETE_PAIRING: parsing verify response and computing table')
-    const rawBytes = binaryStringToBytes(rawResponse)
-    return bleCrypto.completePairing(rawBytes)
+    const r = bleCrypto.completePairing(binaryStringToBytes(rawResponse))
+    if (!r.success) return errBin(r.error)
+    return okBin(binaryStringToBytes(r.ecKey), binaryStringToBytes(r.table))
   },
 
+  // Binary response: [0x01][pool bytes]. Empty payload = already have enough keys.
   BLE_SYNC_POOL: async ({ currentCount = 0 }) => {
     const TARGET = 33
     console.log(`[App] BLE_SYNC_POOL: have ${currentCount}, target ${TARGET}`)
-    if (currentCount >= TARGET) return { success: true, pool: null }
-    return bleCrypto.generateKeyPool(TARGET)
+    if (currentCount >= TARGET) return okBin()
+    const r = bleCrypto.generateKeyPool(TARGET)
+    if (!r.success) return errBin(r.error)
+    return okBin(binaryStringToBytes(r.pool))
   },
 
   SAVE_VEHICLE_MAC: async ({ mac }) => {
@@ -88,12 +103,12 @@ const actions = {
     }
   },
 
+  // Binary response: [0x01][16384-byte table]
   BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {
     console.log('[App] Building ECDH doublings table for vehicle key')
     const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyBinary)
-    if (!result.success) return result
-    const bytes = new Uint8Array(result.buffer)
-    return { success: true, table: bytesToBinaryString(bytes) }
+    if (!result.success) return errBin(result.error)
+    return okBin(new Uint8Array(result.buffer))
   },
 
   SIMULATE_PAIR: async () => {

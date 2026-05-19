@@ -1,6 +1,14 @@
 import store from './store.js'
 import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
 
+// Copy a buffer view into a fresh Uint8Array so the large underlying BLE
+// message buffer can be GC'd once the bytes we need are extracted.
+function toU8(view) {
+  const u = new Uint8Array(view.length)
+  u.set(view)
+  return u
+}
+
 class Phone {
   constructor(messageBuilder) {
     if (messageBuilder) {
@@ -16,6 +24,24 @@ class Phone {
     return this._mb.request({ method, params: params || {} }).then((r) => {
       if (!r || !r.success) throw new Error((r && r.error) || `${method} failed`)
       return r
+    })
+  }
+
+  // Binary response request. Server replies with a raw buffer envelope:
+  //   [0x01][payload...] on success, [0x00][utf-8 error] on failure.
+  // Used for large payloads (doublings table, key pool) where JSON's \uXXXX
+  // escaping doubled the size and OOM-rebooted the watch on reassembly.
+  _requestBin(method, params) {
+    if (!this._mb) return Promise.reject(new Error('messageBuilder not available'))
+    return this._mb.request({ method, params: params || {} }, { dataType: 'bin' }).then((buf) => {
+      if (!buf || buf.length < 1) throw new Error(`${method}: empty response`)
+      const body = buf.subarray ? buf.subarray(1) : buf.slice(1)
+      if (buf[0] !== 1) {
+        let msg = ''
+        for (let i = 0; i < body.length; i++) msg += String.fromCharCode(body[i])
+        throw new Error(msg || `${method} failed`)
+      }
+      return body
     })
   }
 
@@ -36,9 +62,14 @@ class Phone {
   // Pass count=0 to force full regeneration (e.g. after pairing).
   syncPool(cb, count) {
     var currentCount = count !== undefined ? count : store.keyPoolCount
-    this._call('BLE_SYNC_POOL', { currentCount }, cb, (r) => {
-      if (r.pool) store.keyPool = binaryStringToBytes(r.pool)
-    })
+    this._requestBin('BLE_SYNC_POOL', { currentCount })
+      .then((body) => {
+        if (body.length > 0) store.keyPool = toU8(body)
+        if (cb) cb({ success: true })
+      })
+      .catch((e) => {
+        if (cb) cb({ success: false, error: e.message })
+      })
   }
 
   // Sync vehicle name and VIN from companion settings. Writes store.vehicleName/vehicleVin.
@@ -74,12 +105,17 @@ class Phone {
   // Parse raw Tesla verify response, extract vehicle EC key, compute doublings table.
   // Writes store.vehicleEcPublicKey + store.vehicleDoublingsTable. cb: { success }
   completePairing(rawResponseBinary, cb) {
-    this._call('BLE_COMPLETE_PAIRING', { rawResponse: rawResponseBinary }, cb, (r) => {
-      if (!r.ecKey) throw new Error('No EC key in response')
-      if (!r.table) throw new Error('No table in response')
-      store.vehicleEcPublicKey = binaryStringToBytes(r.ecKey)
-      store.vehicleDoublingsTable = binaryStringToBytes(r.table)
-    })
+    this._requestBin('BLE_COMPLETE_PAIRING', { rawResponse: rawResponseBinary })
+      .then((body) => {
+        // [65-byte ecKey][16384-byte table]
+        if (body.length < 66) throw new Error('Malformed pairing response')
+        store.vehicleEcPublicKey = toU8(body.subarray(0, 65))
+        store.vehicleDoublingsTable = toU8(body.subarray(65))
+        if (cb) cb({ success: true })
+      })
+      .catch((e) => {
+        if (cb) cb({ success: false, error: e.message })
+      })
   }
 
   // Dev-mode: simulate full pairing flow without a real vehicle.
@@ -94,15 +130,14 @@ class Phone {
         store.vehicleMac = r.mac
         store.vehicleVin = r.vin
         vehicleEcKeyBinary = r.vehicleEcKeyBinary
-        return this._request('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary: vehicleEcKeyBinary })
+        return this._requestBin('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary: vehicleEcKeyBinary })
       })
-      .then((r) => {
-        if (!r.table) throw new Error('Table failed')
-        store.vehicleDoublingsTable = binaryStringToBytes(r.table)
-        return this._request('BLE_SYNC_POOL', { currentCount: 0 })
+      .then((tableBody) => {
+        store.vehicleDoublingsTable = toU8(tableBody)
+        return this._requestBin('BLE_SYNC_POOL', { currentCount: 0 })
       })
-      .then((r) => {
-        if (r.pool) store.keyPool = binaryStringToBytes(r.pool)
+      .then((poolBody) => {
+        if (poolBody.length > 0) store.keyPool = toU8(poolBody)
         cb({ success: true })
       })
       .catch((e) => {

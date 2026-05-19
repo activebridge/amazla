@@ -82,7 +82,8 @@ export const openVehicleDialog = (e, settingsStorage) => {
     close()
   })
 
-  setTimeout(() => nameInput.focus(), 220)
+  const target = !nameInput.value ? nameInput : !vinInput.value ? vinInput : null
+  if (target) setTimeout(() => target.focus(), 220)
 }
 
 const injectStyles = (doc) => {

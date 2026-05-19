@@ -5,8 +5,8 @@ import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/bin
 const localStorage = new LocalStorage()
 
 let _doublingsTableCache = null
-let _keyPoolCache = null   // full pool file as Uint8Array
-let _keyPoolOffset = 0     // bytes consumed from front (persisted in localStorage)
+let _keyPoolCache = null // full pool file as Uint8Array
+let _keyPoolOffset = 0 // bytes consumed from front (persisted in localStorage)
 
 const readBinary = (path) => {
   try {
@@ -73,7 +73,11 @@ const store = {
   // Use this in UI code (updateChecklist) instead of !!vehicleDoublingsTable.
   get hasDoublingsTable() {
     if (_doublingsTableCache) return true
-    try { return localStorage.getItem('hasDoublingsTable') === '1' } catch (_e) { return false }
+    try {
+      return localStorage.getItem('hasDoublingsTable') === '1'
+    } catch (_e) {
+      return false
+    }
   },
   get keyPool() {
     if (!_keyPoolCache) _keyPoolCache = readBinary('key_pool')
@@ -92,11 +96,11 @@ const store = {
     if (!_keyPoolCache) return null
     if (!_keyPoolOffset) {
       const n = parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
-      _keyPoolOffset = isNaN(n) ? 0 : n
+      _keyPoolOffset = Number.isNaN(n) ? 0 : n
     }
     if (_keyPoolOffset + 97 > _keyPoolCache.length) return null
     const privBytes = _keyPoolCache.slice(_keyPoolOffset, _keyPoolOffset + 32)
-    const pubBytes  = _keyPoolCache.slice(_keyPoolOffset + 32, _keyPoolOffset + 97)
+    const pubBytes = _keyPoolCache.slice(_keyPoolOffset + 32, _keyPoolOffset + 97)
     _keyPoolOffset += 97
     localStorage.setItem('keyPoolOffset', String(_keyPoolOffset))
     return { privateKeyBytes: privBytes, publicKeyBytes: pubBytes }
@@ -107,8 +111,10 @@ const store = {
     try {
       const total = parseInt(localStorage.getItem('keyPoolCount') || '0', 10)
       const offset = _keyPoolOffset || parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
-      return Math.max(0, total - (offset / 97 | 0))
-    } catch (_e) { return 0 }
+      return Math.max(0, total - ((offset / 97) | 0))
+    } catch (_e) {
+      return 0
+    }
   },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')

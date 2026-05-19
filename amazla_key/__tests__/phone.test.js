@@ -17,6 +17,37 @@ function fakeBinary(n, byte = 0x42) {
   return Array.from({ length: n }, () => String.fromCharCode(byte)).join('')
 }
 
+/** Bytes of a binary string. */
+function strBytes(s) {
+  const u = new Uint8Array(s.length)
+  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 0xff
+  return u
+}
+
+/**
+ * Build the binary response envelope the companion now sends for large
+ * payloads: [0x01][concatenated parts] on success, [0x00][utf-8 msg] on error.
+ * Mirrors okBin/errBin in app-side/index.js.
+ */
+function okEnv(...binStrs) {
+  const parts = binStrs.map(strBytes)
+  const u = new Uint8Array(1 + parts.reduce((a, p) => a + p.length, 0))
+  u[0] = 1
+  let o = 1
+  for (const p of parts) {
+    u.set(p, o)
+    o += p.length
+  }
+  return u
+}
+function errEnv(msg) {
+  const b = strBytes(msg)
+  const u = new Uint8Array(1 + b.length)
+  u[0] = 0
+  u.set(b, 1)
+  return u
+}
+
 /**
  * Create a mock page whose .request() resolves with pre-configured responses.
  * `responses` maps method name → value or fn(params) → value.
@@ -47,7 +78,7 @@ beforeEach(() => {
 describe('syncPool()', () => {
   test('writes store.keyPool when companion returns pool', async () => {
     const poolBinary = fakeBinary(97 * 3)
-    const page = makeMb({ BLE_SYNC_POOL: { success: true, pool: poolBinary } })
+    const page = makeMb({ BLE_SYNC_POOL: okEnv(poolBinary) })
     const phone = new Phone(page)
 
     await new Promise(resolve => phone.syncPool(resolve))
@@ -58,30 +89,32 @@ describe('syncPool()', () => {
 
   test('passes currentCount from store.keyPoolCount by default', async () => {
     store.keyPool = new Uint8Array(97 * 2) // 2 keys → keyPoolCount = 2
-    const page = makeMb({ BLE_SYNC_POOL: { success: true, pool: null } })
+    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
     const phone = new Phone(page)
 
     await new Promise(resolve => phone.syncPool(resolve))
 
     expect(page.request).toHaveBeenCalledWith(
       expect.objectContaining({ params: expect.objectContaining({ currentCount: 2 }) }),
+      { dataType: 'bin' },
     )
   })
 
   test('count=0 overrides store.keyPoolCount (force full regen)', async () => {
     store.keyPool = new Uint8Array(97 * 5) // has 5 keys
-    const page = makeMb({ BLE_SYNC_POOL: { success: true, pool: null } })
+    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
     const phone = new Phone(page)
 
     await new Promise(resolve => phone.syncPool(resolve, 0))
 
     expect(page.request).toHaveBeenCalledWith(
       expect.objectContaining({ params: expect.objectContaining({ currentCount: 0 }) }),
+      { dataType: 'bin' },
     )
   })
 
   test('does not write store.keyPool when companion returns no pool', async () => {
-    const page = makeMb({ BLE_SYNC_POOL: { success: true, pool: null } })
+    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
     const phone = new Phone(page)
 
     await new Promise(resolve => phone.syncPool(resolve))
@@ -216,7 +249,7 @@ describe('completePairing()', () => {
   test('writes store.vehicleEcPublicKey + store.vehicleDoublingsTable on success', async () => {
     const ecKey = fakeBinary(65, 0x04)
     const table = fakeBinary(16384)
-    const page = makeMb({ BLE_COMPLETE_PAIRING: { success: true, ecKey, table } })
+    const page = makeMb({ BLE_COMPLETE_PAIRING: okEnv(ecKey, table) })
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
@@ -229,26 +262,27 @@ describe('completePairing()', () => {
     expect(store.vehicleDoublingsTable.length).toBe(4096) // 16384 bytes / 4
   })
 
-  test('calls cb with success:false when ecKey missing', async () => {
-    const page = makeMb({ BLE_COMPLETE_PAIRING: { success: true, ecKey: null, table: fakeBinary(16384) } })
+  test('calls cb with success:false when companion reports an error', async () => {
+    const page = makeMb({ BLE_COMPLETE_PAIRING: errEnv('Could not extract vehicle EC key') })
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
       phone.completePairing(fakeBinary(100), resolve))
 
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/no ec key/i)
+    expect(result.error).toMatch(/ec key/i)
   })
 
-  test('calls cb with success:false when table missing', async () => {
-    const page = makeMb({ BLE_COMPLETE_PAIRING: { success: true, ecKey: fakeBinary(65), table: null } })
+  test('calls cb with success:false on a truncated (malformed) response', async () => {
+    // Success envelope but body shorter than ecKey(65)+table — no table bytes.
+    const page = makeMb({ BLE_COMPLETE_PAIRING: okEnv(fakeBinary(65)) })
     const phone = new Phone(page)
 
     const result = await new Promise(resolve =>
       phone.completePairing(fakeBinary(100), resolve))
 
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/no table/i)
+    expect(result.error).toMatch(/malformed/i)
   })
 
   test('calls cb with success:false on rejection', async () => {
@@ -273,8 +307,8 @@ describe('simulatePair()', () => {
         mac: 'AA:BB:CC:DD:EE:FF',
         vin: new Uint8Array(17).fill(0x56),
       },
-      BLE_PRECOMPUTE_TABLE: { success: true, table: fakeBinary(16384) },
-      BLE_SYNC_POOL: { success: true, pool: fakeBinary(97 * 5) },
+      BLE_PRECOMPUTE_TABLE: okEnv(fakeBinary(16384)),
+      BLE_SYNC_POOL: okEnv(fakeBinary(97 * 5)),
     })
   }
 
@@ -328,7 +362,7 @@ describe('simulatePair()', () => {
         mac: 'AA:BB:CC:DD:EE:FF',
         vin: new Uint8Array(17).fill(0x56),
       },
-      BLE_PRECOMPUTE_TABLE: { success: false, error: 'table error' },
+      BLE_PRECOMPUTE_TABLE: errEnv('table error'),
     })
     const phone = new Phone(page)
 

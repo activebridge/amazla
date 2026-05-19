@@ -10,7 +10,7 @@ export const BODY = {
   fontSize: '14px',
   fontWeight: '400',
   minHeight: '100vh',
-  backgroundImage: `linear-gradient(rgb(26 27 29) 5%, rgba(0,0,0,0.5)), url('${BG}')`,
+  backgroundImage: `linear-gradient(#14171d 5%, rgba(0,0,0,0.5)), url('${BG}')`,
   backgroundSize: 'cover',
   backgroundPosition: 'center',
   backgroundAttachment: 'fixed',

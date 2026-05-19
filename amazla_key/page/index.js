@@ -125,6 +125,24 @@ const render = () => {
       slide1,
     )
 
+    button(
+      {
+        centered: true,
+        x: 0,
+        y: 435,
+        w: 280,
+        h: 50,
+        text: 'Test Purchase',
+        text_size: 16,
+        color: 0xffcc66,
+        normal_color: 0x332200,
+        press_color: 0x443300,
+        radius: 6,
+        click_func: onTestPurchase,
+      },
+      slide1,
+    )
+
     return
   }
 
@@ -155,6 +173,35 @@ const render = () => {
     },
     slide1,
   )
+
+  button(
+    {
+      centered: false,
+      x: 188,
+      y: 217,
+      w: 84,
+      h: 36,
+      text: 'KPAY',
+      text_size: 13,
+      color: 0xffcc66,
+      normal_color: 0x332200,
+      press_color: 0x443300,
+      radius: 6,
+      click_func: onTestPurchase,
+    },
+    slide1,
+  )
+}
+
+const onTestPurchase = () => {
+  const app = getApp()
+  const kpay = app && app._options && app._options.globalData && app._options.globalData.kpay
+  if (!kpay) {
+    hmUI.showToast({ text: 'kpay not ready' })
+    return
+  }
+  hmUI.updateStatusBarTitle('Starting purchase…')
+  kpay.startPurchase()
 }
 
 const onLock = () => {

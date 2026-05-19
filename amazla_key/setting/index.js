@@ -101,11 +101,11 @@ AppSettingsPage({
                 Text({ style: CARD_EDIT_TEXT }, 'Edit'),
               ]),
               View({ style: VEHICLE_ROW }, [
-                Text({ style: VEHICLE_LABEL }, '🚗 Name:'),
+                Text({ style: VEHICLE_LABEL }, 'Name:'),
                 Text({ style: VEHICLE_VALUE }, settingsStorage.getItem('vehicleName') || 'Not set'),
               ]),
               View({ style: VEHICLE_ROW }, [
-                Text({ style: VEHICLE_LABEL }, '🔢 VIN:'),
+                Text({ style: VEHICLE_LABEL }, 'VIN:'),
                 Text({ style: VEHICLE_VALUE }, settingsStorage.getItem('vehicleVin') || 'Not set'),
               ]),
             ],
