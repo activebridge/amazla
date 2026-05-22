@@ -16,7 +16,11 @@ import { jest } from '@jest/globals'
 
 jest.setTimeout(30000)
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import teslaBLE from '../lib/tesla-ble/ble-native.js'
+// Tests must stub the SAME singleton session.js uses (easy-ble path) or the
+// stubs silently no-op. Pre-swap, this imported ble-native.js which is why
+// 72/489 tests were failing.
+import teslaBLE from '../lib/tesla-ble/ble.js'
+import { computeTeslaBLEName } from '../lib/tesla-ble/ble-name.js'
 import store from '../lib/store.js'
 import { bleHarness, _fsStore } from '../__mocks__/zos.js'
 import { CarSimulator } from './helpers/car-simulator.js'
@@ -79,6 +83,13 @@ function setupStore(sim) {
   store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65).fill(0x04))  // dummy enrolled key
   storeDoublingsTable(sim)
   buildPool(5)
+  // Production session.js scans by VIN-derived local name (Tesla rotates the
+  // BLE MAC every ~15 min). Tell the harness which beacon to surface so the
+  // scan resolves immediately instead of waiting the full duration.
+  bleHarness.setScanAutoEmit({
+    name: computeTeslaBLEName(store.vehicleVin),
+    mac: 'AA:BB:CC:DD:EE:FF',
+  })
 }
 
 // ─── test lifecycle ───────────────────────────────────────────────────────────
@@ -99,7 +110,7 @@ beforeEach(() => {
   bleHarness.reset()
   bleHarness.setSimulator(sim)
 
-  // Reset BLE native singleton (clear connected state, handlers, etc.)
+  // Reset BLE singleton (clear connected state, BLEMaster #devices cache, handlers).
   teslaBLE.reset()
 
   // Populate store
@@ -427,11 +438,23 @@ describe('connection error paths', () => {
     expect(result.error).toMatch(/BLE connection failed/i)
   })
 
-  test('vehicleMac missing when BLE disconnected → fails with MAC not found', async () => {
-    store.vehicleMac = null   // doublings table still present from setupStore
+  test('no Tesla beacon during scan → fails with not-in-range error', async () => {
+    // Tesla rotates the BLE MAC every ~15 min; session.js scans by VIN-derived
+    // local name on every connect rather than trusting the stored MAC. When
+    // the car never beacons, the scan completes empty and we should report it.
+    store.vehicleMac = null
+    bleHarness.setScanAutoEmit(null)
     const result = await p((cb) => session.requestSessionInfo(cb))
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/MAC not found/i)
+    expect(result.error).toMatch(/not in BLE range/i)
+  })
+
+  test('VIN missing → cannot derive BLE name, fails with VIN-not-set error', async () => {
+    store.vehicleVin = null
+    bleHarness.setScanAutoEmit(null)
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/VIN not set/i)
   })
 
   test('disconnect during GATT setup → retries once and succeeds', async () => {

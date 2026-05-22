@@ -1,5 +1,6 @@
 import store from '../store.js'
-import teslaBLE from './ble-native.js'
+import teslaBLE from './ble.js'
+import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
 import { ecdhFixed } from './crypto/p256.js'
 import { sha1 } from './crypto/sha256.js'
@@ -67,15 +68,52 @@ class TeslaSession {
       this._proceedWithSession(callback)
       return
     }
-    const mac = store.vehicleMac
-    if (!mac) {
-      callback({ success: false, error: 'Vehicle MAC not found. Complete pairing first.' })
+    const vinBytes = store.vehicleVin
+    if (!vinBytes || vinBytes.length === 0) {
+      callback({ success: false, error: 'VIN not set. Complete pairing first.' })
       return
     }
-    this._doConnect(mac, 1, callback)
+    // Tesla rotates the BLE MAC every ~15 min. The MAC in store.vehicleMac
+    // may already be stale. Mirror the Tesla Go SDK's VehicleLocalName flow:
+    // derive the BLE local name from VIN, scan for an exact-name advertisement,
+    // dial whatever MAC the current beacon reports. See README "Scan-by-name
+    // on every connect (Tesla MAC rotation)" for the full rationale.
+    const expectedName = computeTeslaBLEName(vinBytes)
+    if (!expectedName) {
+      callback({ success: false, error: 'Could not derive BLE name from VIN.' })
+      return
+    }
+    this._scanThenConnect(expectedName, callback)
+  }
+  _scanThenConnect(expectedName, callback) {
+    console.log(`[SESSION] Scanning for ${expectedName} (Tesla MAC rotates; saved MAC may be stale)...`)
+    let foundMAC = null
+    teslaBLE.scan((r) => {
+      if (r.type === 'found' && !foundMAC) {
+        foundMAC = r.device.mac
+        teslaBLE.stopScan()
+        const savedMAC = store.vehicleMac
+        if (savedMAC !== foundMAC) {
+          console.log(`[SESSION] BLE address rotated: ${savedMAC || '(none)'} → ${foundMAC}`)
+          store.vehicleMac = foundMAC
+        } else {
+          console.log(`[SESSION] BLE address unchanged: ${foundMAC}`)
+        }
+        // Give the scan a beat to fully tear down before dialing — observed
+        // races where mstConnect silently hangs when issued back-to-back.
+        setTimeout(() => this._doConnect(foundMAC, 1, callback), 200)
+      }
+      if (r.type === 'complete' && !foundMAC) {
+        console.log(`[SESSION] ✗ ${expectedName} not in BLE range`)
+        callback({
+          success: false,
+          error: 'Vehicle not in BLE range. Wake the car (touch a door handle) and retry.',
+        })
+      }
+    }, 8000, expectedName)
   }
   _doConnect(mac, attempt, callback) {
-    console.log(`[SESSION] Connecting to vehicle: ${mac} (attempt ${attempt})`)
+    console.log(`[SESSION] Dialing vehicle: ${mac} (attempt ${attempt})`)
     teslaBLE.connect(mac, (result) => {
       console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
       if (!result.success) {

@@ -72,23 +72,43 @@ class TeslaBLE {
     this._rxExpected = 0
     this._mtu = 20
   }
-  scan(callback, duration = 10000) {
+  scan(callback, duration = 10000, expectedName = null) {
     const devices = []
     let completed = false
+    const seen = new Set()
+    const expectedLc = expectedName ? expectedName.toLowerCase() : null
     const onComplete = () => {
       if (completed) return
       completed = true
       callback({ type: 'complete', devices })
     }
     const onDevice = (device) => {
-      if (!device.dev_name || !TESLA_NAME_PATTERN.test(device.dev_name)) return
+      if (!device.dev_name) return
+      // When expectedName is given, require exact (case-insensitive) match — the
+      // VIN-derived local name pins us to the right vehicle even with multiple
+      // Teslas nearby. Otherwise fall back to the broad family-pattern filter.
+      if (expectedLc) {
+        if (device.dev_name.toLowerCase() !== expectedLc) return
+      } else if (!TESLA_NAME_PATTERN.test(device.dev_name)) {
+        return
+      }
+      // Dedupe per-call (easy-ble runs with allow_duplicates: true below so a
+      // singleton BLEMaster doesn't carry a stale #device_set across scans).
+      if (seen.has(device.dev_addr)) return
+      seen.add(device.dev_addr)
       const found = { name: device.dev_name, mac: device.dev_addr, rssi: device.rssi, type: 'tesla' }
       devices.push(found)
       callback({ type: 'found', device: found, devices })
     }
+    // allow_duplicates: true so easy-ble's #device_set doesn't suppress
+    // re-advertisements (Tesla re-broadcasts; if we miss the first beacon for
+    // any reason — or if a singleton BLEMaster carries the MAC across calls —
+    // we still get the next one). Our onDevice early-returns after foundMAC is
+    // set so duplicates are harmless in production and unblock tests where the
+    // same MAC is emitted repeatedly across test cases.
     const started = this._ensureBLE().startScan(onDevice, {
       duration,
-      allow_duplicates: false,
+      allow_duplicates: true,
       on_duration: onComplete,
     })
     setTimeout(onComplete, duration + 500)
@@ -225,6 +245,11 @@ class TeslaBLE {
     this.connected = false
     this._cleanup()
     this.onDisconnect = null
+    // Clear cross-frame dedup state — otherwise a fake-timer test that resets
+    // jest's clock can be tricked into dropping the first response by matching
+    // a stale signature from a previous test.
+    this._lastResponseData = null
+    this._lastResponseTime = 0
   }
   send(data, callback) {
     if (!this.connected) {

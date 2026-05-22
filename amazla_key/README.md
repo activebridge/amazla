@@ -531,22 +531,76 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
 | SessionInfo tag verification | `subKey=HMAC(sessionKey,"session info")`, tag over TLV(sigType=HMAC, VIN, uuid) + encodedInfo | Same | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
-| GATT discovery | Skipped via `mstBuildProfile(pair:false)` | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
+| GATT discovery | `mstBuildProfile({ pair: true, ... })` — service/char/descriptor topology declared explicitly, mirrors `@silver-zepp/easy-ble` shape | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
 | Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (no MTU API in ZeppOS docs) |
 | MTU negotiation | Not implemented (`mstSetMTU` undocumented, removed) | `ExchangeMTU()` before first write | ❌ No equivalent API confirmed |
 | Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
 
 ### MTU Note
 
-`mstSetMTU` is not in the ZeppOS BLE documentation. It was removed from `ble-native.js`. BLE writes use fixed 20-byte chunks (`BLE_CHUNK_SIZE = 20`) with 20ms pacing — confirmed working on device. Larger chunks would require a documented MTU negotiation API.
+`mstSetMTU` is not in the ZeppOS BLE documentation. `ble.js` opportunistically calls it inside a try/catch (so a missing implementation is a silent no-op), but BLE writes still use fixed 20-byte chunks (`BLE_CHUNK_SIZE = 20`) with 20ms pacing — the only configuration confirmed working on device. Larger chunks would require a documented MTU negotiation API.
+
+### BLE transport: easy-ble wrapper (active)
+
+`session.js` and `pairing.js` both import from `lib/tesla-ble/ble.js`, the wrapper around `@silver-zepp/easy-ble`'s `BLEMaster`. This is the path validated on device.
+
+`lib/tesla-ble/ble-native.js` — a direct `@zos/ble` reimplementation — is **parked**, not active. It reaches `WhitelistOp` and `STATUS_WAIT` correctly, but the terminal 14-byte post-NFC pair indication was not delivered through either `mstOnCharaNotification` or `mstOnCharaValueArrived` on device, and we couldn't reproduce that firmware behavior in the test harness. The notes below remain documented because they capture the firmware contract `ble-native.js` was written against; if we ever revisit it, drift from these is what produced the GATT-prepare-fail and NFC-pending regressions we already debugged.
+
+- **Profile shape** — `pair: true`, outer `list[0]` with `uuid: true, size, len`, service with `len1` and `len2`, characteristic with `desc` and `len`, descriptor with `permission`. Any missing field makes `mstBuildProfile` return non-zero via `mstOnPrepare`.
+- **Callback arg shape** — all `mstOn*` callbacks receive a single response object `{profile, status, uuid, data, length, chara, desc}`. Positional destructuring silently breaks.
+- **Subscribe both** `mstOnCharaNotification` AND `mstOnCharaValueArrived`. Firmware routes some payloads through each; the post-NFC pair completion can land on `charaValueArrived` while ambient pushes arrive on `charaNotification`.
+- **No profile-id filter on the notification handler** — some firmware reports a different `profile` value on `mstOnCharaNotification` than the one returned from `mstOnPrepare`. UUID match alone is reliable.
+- **`mstOffAllCb()` on cleanup** before destroying the profile so handlers don't stack across reconnects (would corrupt multi-chunk reassembly).
+- **`CONNECTION_CONFIG.prepareDelayMs = 50`** — 50ms guard between registering `mstOnPrepare` and calling `mstBuildProfile`, mirroring easy-ble's `SHORT_DELAY`. Defensive against firmware that fires the prepare event synchronously inside the build call.
+- **First-chunk dedup window 200ms** — when both event streams deliver the same payload, drop the duplicate by signature.
+
+The test mock in `__mocks__/zos.js` reproduces these contract details (object-shape callbacks, separate notification/value streams, MAC-buffer arg). If you change `ble-native.js`, also stress the mock — past regressions slipped through because the harness modelled only the path the implementation happened to take.
+
+### Scan-by-name on every connect (Tesla MAC rotation)
+
+**Symptom observed on device (2026-05-20):** Pair flow worked first try (it scans). Subsequent app opens / unlock attempts kept timing out with `[BLE] Connection timeout (5000ms)` and zero `mstConnect` callbacks — the raw ZeppOS `mstConnect(savedMAC, cb)` never fired its callback, neither success nor failure.
+
+**Root cause:** Tesla vehicles advertise BLE under a **random resolvable address** that **rotates every ~15 minutes**. The MAC we persisted in `store.vehicleMac` during pairing was only valid in that window. Once the car rotated, `mstConnect` to the stale MAC silently hangs forever.
+
+**Tesla Go SDK does it correctly** — it caches **only the VIN** and re-derives the BLE local name on every connection, then scans and dials whatever current address matches:
+
+```go
+// pkg/connector/ble/ble.go
+func VehicleLocalName(vin string) string {
+    vinBytes := []byte(vin)
+    digest := sha1.Sum(vinBytes)
+    return fmt.Sprintf("S%02xC", digest[:8])   // S + 16-hex + C, lowercase
+}
+
+// Every connection: scan by exact local name → dial returned address
+scanVehicleBeacon(ctx, localName)   // filters: a.LocalName() == localName
+client, err := device.Dial(ctx, ble.NewAddr(target.Address))
+```
+
+**Implementation (applied):**
+
+1. `lib/tesla-ble/ble-name.js` exports `computeTeslaBLEName(vinBytes)` → `'S' + bytesToHex(sha1(vin).subarray(0,8)) + 'C'`, mirroring Tesla's algorithm (lowercase hex).
+2. `teslaBLE.scan(callback, duration, expectedName)` takes an optional `expectedName` — case-insensitive exact match on `dev_name` so we lock onto the right car even with multiple Teslas nearby. Implemented in `lib/tesla-ble/ble.js` (active path) and mirrored in `lib/tesla-ble/ble-native.js` (parked).
+3. `session.js#_ensureConnected` always scans first when not already connected: derives the local name from `store.vehicleVin`, scans for it, dials whatever fresh MAC the beacon reports, and refreshes `store.vehicleMac` opportunistically.
+4. `pairing.js#scanAndConnect` does the same — no MAC shortcut, always scan.
+5. `store.vehicleMac` is now a transient cache hint only; session never trusts it across the rotation window.
+
+**Why this fixes the symptom:** every connect attempts a fresh BLE scan filtered by the VIN-derived name, returning the current advertised address. `mstConnect` then dials a live address and either succeeds quickly or `mstStopScan`-then-`complete` reports the car is out of range / asleep — no more silent 5s timeout.
+
+**Still to confirm with device:**
+
+- Does ZeppOS `mstStartScan` reliably surface Tesla advertisements when the car is awake but our last connection was on a now-rotated MAC? (Tesla SDK assumes yes; ZeppOS may need explicit BLE adapter reset between connects.)
+- Should scan duration extend on first failure (8s → 15s) before surfacing "not in range"?
 
 ## Pending
 
 | Item | Status | Notes |
 |------|--------|-------|
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
-| MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented, removed. No known ZeppOS API for MTU negotiation. |
-| Field test with car | ⏳ | All optimizations implemented, needs on-vehicle validation |
+| MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented. `ble.js` calls it inside a try/catch but writes still use fixed 20-byte chunks. No known ZeppOS API for MTU negotiation. |
+| Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. |
+| Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
+| Field test with car post-rotation | ⏳ | Pair flow validated end-to-end 2026-05-20 via easy-ble path. Scan-by-name fix not yet re-tested on device after MAC rotation. |
 
 ## Future Work
 
@@ -587,8 +641,9 @@ amazla_key/
 │   └── tesla-ble/
 │       ├── README.md             # Module-level design notes
 │       ├── pairing.js            # createPairingController — headless pairing state machine
-│       ├── ble-native.js         # Low-level BLE — native @zos/ble only (active)
-│       ├── ble.js                # Low-level BLE — easy-ble wrapper (unused, dead code)
+│       ├── ble.js                # Low-level BLE — @silver-zepp/easy-ble wrapper (ACTIVE). Imported by session.js and pairing.js; validated end-to-end on device.
+│       ├── ble-native.js         # Low-level BLE — direct @zos/ble (PARKED). Reaches STATUS_WAIT but the post-NFC 14-byte indication isn't delivered through either subscribed stream on device; couldn't reproduce the firmware quirk in tests. Kept as reference: profile shape mirrors easy-ble, subscribes both mstOnCharaNotification AND mstOnCharaValueArrived, dedupes first-chunk within 200ms, mstOffAllCb on cleanup.
+│       ├── ble-name.js           # computeTeslaBLEName(vin) → 'S' + sha1(vin)[:8] hex + 'C'. Mirrors Tesla Go SDK VehicleLocalName. Used by scan-by-name on every connect (MAC rotates every ~15 min).
 │       ├── session.js            # Session management (ECDH, signing, commands)
 │       ├── index.js              # Tesla BLE API (high-level wrapper)
 │       ├── crypto/

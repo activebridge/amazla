@@ -1,5 +1,5 @@
 import store from '../store.js'
-import teslaBLE from './ble-native.js'
+import teslaBLE from './ble.js'
 
 const BLE = {
   get isConnected() {
@@ -8,8 +8,8 @@ const BLE = {
   set onDisconnect(fn) {
     teslaBLE.onDisconnect = fn
   },
-  scan(callback, duration = 10000) {
-    return teslaBLE.scan(callback, duration)
+  scan(callback, duration = 10000, expectedName = null) {
+    return teslaBLE.scan(callback, duration, expectedName)
   },
   stopScan() {
     return teslaBLE.stopScan()

@@ -1,5 +1,6 @@
 import BLE from './index.js'
 import store from '../store.js'
+import { computeTeslaBLEName } from './ble-name.js'
 import { parsePairingResponse } from './protocol/vcsec-pairing.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import { binaryStringToBytes, bytesToBinaryString } from './crypto/binary-utils.js'
@@ -46,13 +47,18 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
 
   function scanAndConnect() {
     if (cancelled) return
-    var savedMAC = store.vehicleMac
-    if (savedMAC) {
-      doConnect(savedMAC, 0)
+    // Always scan, never trust a cached MAC: Tesla rotates its BLE address
+    // every ~15 min. Mirrors Tesla Go SDK's VehicleLocalName → scan → dial
+    // flow. The exact-name filter pins us to the right car even if other
+    // Teslas are nearby. See README "Scan-by-name on every connect".
+    var vinBytes = store.vehicleVin
+    var expectedName = vinBytes ? computeTeslaBLEName(vinBytes) : null
+    if (!expectedName) {
+      onError('VIN not set. Open Settings and enter the vehicle VIN.')
       return
     }
     onState('scanning')
-    log('Scanning 15s...')
+    log('Scanning 15s for ' + expectedName + '...')
     var foundMAC = null
     BLE.scan((result) => {
       if (cancelled) return
@@ -60,12 +66,15 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         foundMAC = result.device.mac || null
         log('Found: ' + (result.device.name || '?'))
         BLE.stopScan()
+        // Refresh the cached MAC opportunistically — it's a hint for the UI
+        // only; session never trusts it across the rotation window.
+        if (foundMAC && foundMAC !== store.vehicleMac) store.vehicleMac = foundMAC
         setTimeout(() => { doConnect(foundMAC, 0) }, 500)
       }
       if (result.type === 'complete' && !foundMAC) {
         if (!cancelled) onError('No Tesla found. Make sure your car is awake.')
       }
-    }, 15000)
+    }, 15000, expectedName)
   }
 
   function doConnect(mac, attempt) {

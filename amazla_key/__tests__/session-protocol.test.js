@@ -24,7 +24,7 @@ import { decodeMessage, encodeBytes, encodeVarintField } from '../lib/tesla-ble/
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import { createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
-import teslaBLE from '../lib/tesla-ble/ble-native.js'
+import teslaBLE from '../lib/tesla-ble/ble.js'
 import { hexToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
 import store from '../lib/store.js'
 

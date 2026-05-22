@@ -15,11 +15,12 @@
 
 import { jest } from '@jest/globals'
 import { createPairingController } from '../lib/tesla-ble/pairing.js'
-import teslaBLE from '../lib/tesla-ble/ble-native.js'
+import teslaBLE from '../lib/tesla-ble/ble.js'
+import { computeTeslaBLEName } from '../lib/tesla-ble/ble-name.js'
 import store from '../lib/store.js'
 import { bleHarness, _fsStore } from '../__mocks__/zos.js'
 import { CarSimulator } from './helpers/car-simulator.js'
-import bleCrypto, { binaryStringToBytes } from '../app-side/ble-crypto.js'
+import bleCrypto, { binaryStringToBytes, bytesToBinaryString } from '../app-side/ble-crypto.js'
 import { encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
 
 jest.setTimeout(30000)
@@ -91,8 +92,15 @@ beforeEach(() => {
   bleHarness.setSimulator(sim)
   teslaBLE.reset()
 
-  // Store MAC so pairing.js skips BLE scan
+  // pairing.js always scans by VIN-derived local name (Tesla rotates MAC every
+  // ~15 min). Provide VIN + auto-emit a matching beacon so scan resolves
+  // immediately. store.vehicleMac is just a cache hint now; pairing ignores it.
   store.vehicleMac = 'AA:BB:CC:DD:EE:FF'
+  store.vehicleVin = bytesToBinaryString(sim.vin)
+  bleHarness.setScanAutoEmit({
+    name: computeTeslaBLEName(store.vehicleVin),
+    mac: 'AA:BB:CC:DD:EE:FF',
+  })
 })
 
 afterEach(() => {
@@ -187,9 +195,11 @@ describe('manual NFC tap flow (WAIT → tap → OK)', () => {
       ctrl.start()
     })
 
-    // Flush 20ms chunk pacing so pair message fully arrives at car and WAIT is delivered.
-    // 300ms is enough for any reasonable message size (< 60s NFC timeout, < 500ms doVerify timer).
-    await jest.advanceTimersByTimeAsync(300)
+    // Flush scan auto-emit (setTimeout 0), 500ms post-scan delay, 20ms chunk
+    // pacing, and message reassembly so the pair WAIT response is delivered
+    // before NFC tap fires. 800ms is safely below the 60s NFC timeout and
+    // the doVerify 500ms timer that only runs after OK.
+    await jest.advanceTimersByTimeAsync(800)
     expect(states).toContain('confirming')
     expect(sim._pairingPending).toBe(true)
 
@@ -217,8 +227,9 @@ describe('manual NFC tap flow (WAIT → tap → OK)', () => {
       ctrl.start()
     })
 
-    // Flush chunk pacing so pair message arrives and WAIT is delivered before NFC tap
-    await jest.advanceTimersByTimeAsync(300)
+    // Flush scan 500ms post-scan delay + chunk pacing so the pair WAIT response
+    // is delivered and pairing is in waitForNFC before the simulated tap.
+    await jest.advanceTimersByTimeAsync(800)
     sim.triggerNFCTap()
     await jest.runAllTimersAsync()
     const result = await promise
@@ -432,20 +443,16 @@ describe('cancel()', () => {
 
 // ─── BLE scan path ────────────────────────────────────────────────────────────
 
-describe('BLE scan path (no saved MAC)', () => {
+describe('BLE scan path', () => {
   beforeEach(() => {
-    store.vehicleMac = null  // force scan path
     sim.setPairingAutoTap(true)
   })
 
   test('finds vehicle, connects and completes pairing', async () => {
+    // Auto-emit from beforeEach surfaces a matching beacon → scan resolves,
+    // pairing dials the discovered MAC and completes.
     const promise = runPairing(makePhone())
 
-    // Emit device synchronously — scan callback fires before setTimeout
-    expect(bleHarness._scanCb).toBeDefined()
-    bleHarness.emitScanDevice('S0000000000000000C', 'AA:BB:CC:DD:EE:FF')
-
-    // Flush: 500ms connect delay + chunk pacing + doVerify timer
     await jest.runAllTimersAsync()
     const result = await promise
 
@@ -456,9 +463,12 @@ describe('BLE scan path (no saved MAC)', () => {
   })
 
   test('reports error when no vehicle found within scan timeout', async () => {
+    // Clear auto-emit so the scan callback never receives a device.
+    bleHarness.setScanAutoEmit(null)
+
     const promise = runPairing(makePhone())
 
-    // Don't emit any device — let scan time out (15s + 500ms in ble-native)
+    // 15s pairing scan + 500ms ble.js safety pad
     await jest.advanceTimersByTimeAsync(16000)
     const result = await promise
 

@@ -8,7 +8,7 @@
  */
 
 import { TeslaSession } from '../lib/tesla-ble/session.js'
-import teslaBLE from '../lib/tesla-ble/ble-native.js'
+import teslaBLE from '../lib/tesla-ble/ble.js'
 import store from '../lib/store.js'
 import { concat, encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
 import { bootSessionEnv, p } from './helpers/session-setup.js'

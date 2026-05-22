@@ -3,7 +3,9 @@ import {
   mstConnect,
   mstDestroyProfileInstance,
   mstDisconnect,
+  mstOffAllCb,
   mstOnCharaNotification,
+  mstOnCharaValueArrived,
   mstOnDescWriteComplete,
   mstOnPrepare,
   mstStartScan,
@@ -22,6 +24,11 @@ const BLE_CHUNK_SIZE = 20
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   timeouts: [5000, 8000, 10000],
+  // 50ms guard between mstOnPrepare registration and mstBuildProfile.
+  // Mirrors @silver-zepp/easy-ble's SHORT_DELAY — defensive against firmware
+  // that fires the prepare event synchronously inside mstBuildProfile before
+  // the handler is fully wired. Tests override to 0 to keep flow synchronous.
+  prepareDelayMs: 50,
 }
 
 // MAC string "AA:BB:CC:DD:EE:FF" → 6-byte ArrayBuffer (no split/array allocation)
@@ -31,24 +38,38 @@ const _macToBuffer = (mac) => {
   return buf.buffer
 }
 
-// Build the verbose nested profile object required by mstBuildProfile
+// Profile object shape mirrors @silver-zepp/easy-ble generateProfileObject —
+// required keys: pair:true, outer list[0] {uuid:true,size,len}, service {len1,len2},
+// characteristic {desc,len}, descriptor {permission}. Missing any of these causes
+// mstBuildProfile to return non-zero status via mstOnPrepare ("GATT profile failed").
 const _buildProfileObj = (connectId, macBuffer) => ({
-  pair: false,
+  pair: true,
   id: connectId,
   profile: 'tesla',
   dev: macBuffer,
   len: 1,
   list: [
     {
+      uuid: true,
+      size: 1,
       len: 1,
       list: [
         {
           uuid: TESLA_SERVICE_UUID,
           permission: 0,
           len1: 2,
+          len2: 2,
           list: [
-            { uuid: TESLA_WRITE_UUID, permission: 0x04, len: 0, list: [] }, // WRITE_WITHOUT_RESPONSE
-            { uuid: TESLA_READ_UUID, permission: 0, len: 1, list: [{ uuid: '2902' }] },
+            // WRITE_WITHOUT_RESPONSE
+            { uuid: TESLA_WRITE_UUID, permission: 0x04, desc: 0, len: 0, list: [] },
+            // NOTIFY/INDICATE with CCCD (2902)
+            {
+              uuid: TESLA_READ_UUID,
+              permission: 0x20,
+              desc: 1,
+              len: 1,
+              list: [{ uuid: '2902', permission: 0x20 }],
+            },
           ],
         },
       ],
@@ -76,9 +97,15 @@ class TeslaBLENative {
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
+    this._lastFirstChunkSig = null
+    this._lastFirstChunkTime = 0
   }
 
   _cleanup() {
+    // Drop all native BLE callbacks before destroying the profile so the next
+    // connect() doesn't stack duplicate notification/desc-write handlers (which
+    // would corrupt multi-chunk reassembly across pair retries). Mirrors easy-ble.
+    try { mstOffAllCb() } catch (_e) {}
     if (this._profile !== null) {
       try {
         mstDestroyProfileInstance(this._profile)
@@ -97,11 +124,14 @@ class TeslaBLENative {
     this.responseCallback = null
     this._rxBuf = null
     this._rxExpected = 0
+    this._lastFirstChunkSig = null
+    this._lastFirstChunkTime = 0
   }
 
-  scan(callback, duration = 10000) {
+  scan(callback, duration = 10000, expectedName = null) {
     const devices = []
     let completed = false
+    const expectedLc = expectedName ? expectedName.toLowerCase() : null
     const onComplete = () => {
       if (completed) return
       completed = true
@@ -110,7 +140,11 @@ class TeslaBLENative {
     mstStartScan(
       (result) => {
         if (!result || !result.dev_name) return
-        if (!TESLA_NAME_PATTERN.test(result.dev_name)) return
+        if (expectedLc) {
+          if (result.dev_name.toLowerCase() !== expectedLc) return
+        } else if (!TESLA_NAME_PATTERN.test(result.dev_name)) {
+          return
+        }
         // dev_addr is ArrayBuffer — convert to "AA:BB:CC:DD:EE:FF" string
         const bytes = new Uint8Array(result.dev_addr)
         let mac = ''
@@ -199,8 +233,10 @@ class TeslaBLENative {
 
       console.log(`[BLE] Connected (id=${this._connectId}), building GATT profile...`)
 
-      // Register prepare callback before building profile
-      mstOnPrepare((profile, status) => {
+      // Register prepare callback before building profile.
+      // All mstOn* callbacks receive a single response object — destructure, do not use positional args.
+      mstOnPrepare((response) => {
+        const { profile, status } = response || {}
         console.log(`[BLE] mstOnPrepare: profile=${profile} status=${status}`)
         if (done) return
         if (status !== 0) {
@@ -211,14 +247,23 @@ class TeslaBLENative {
         }
         this._profile = profile
 
-        // Subscribe to indications (matches Tesla Go SDK: single handler, indication-only)
-        mstOnCharaNotification((_prof, uuid, data, _len) => {
-          if (uuid.toUpperCase() === TESLA_READ_UUID_UC) this._handleResponse(data)
-        })
+        // Subscribe to BOTH event streams. ZeppOS firmware routes some payloads through
+        // mstOnCharaNotification (notifications) and others through mstOnCharaValueArrived
+        // (indications/read responses). Old ble.js did this via easy-ble; native must too.
+        // _handleResponse dedupes on first-chunk signature so double-delivery is harmless.
+        // No profile-id filter — single connection, and some firmware passes a different
+        // profile value here than in mstOnPrepare. UUID match alone is reliable.
+        const onChara = (resp) => {
+          const { uuid, data } = resp || {}
+          if (uuid && uuid.toUpperCase() === TESLA_READ_UUID_UC) this._handleResponse(data)
+        }
+        mstOnCharaNotification(onChara)
+        mstOnCharaValueArrived(onChara)
 
         // Register CCCD write-complete handler then write CCCD — no QueueManager, direct call
-        mstOnDescWriteComplete((_prof, uuid, descUUID, status) => {
-          console.log(`[BLE] descWriteComplete uuid=${uuid} desc=${descUUID} status=${status}`)
+        mstOnDescWriteComplete((resp) => {
+          const { chara, desc, status: wstatus } = resp || {}
+          console.log(`[BLE] descWriteComplete chara=${chara} desc=${desc} status=${wstatus}`)
           if (done) return
           console.log('[BLE] CCCD confirmed, ready')
           settle({ success: true, mac })
@@ -238,7 +283,11 @@ class TeslaBLENative {
       })
 
       const profileObj = _buildProfileObj(this._connectId, macBuffer)
-      mstBuildProfile(profileObj)
+      if (CONNECTION_CONFIG.prepareDelayMs > 0) {
+        setTimeout(() => mstBuildProfile(profileObj), CONNECTION_CONFIG.prepareDelayMs)
+      } else {
+        mstBuildProfile(profileObj)
+      }
     })
   }
 
@@ -338,6 +387,15 @@ class TeslaBLENative {
         cb({ success: false, error: 'Response too short' })
         return
       }
+      // Dedup: same first-chunk signature within 200ms means both charaNotification
+      // and charaValueArrived fired for the same payload (firmware-dependent).
+      const sig = `${chunk.length}_${chunk[0]}_${chunk[1]}_${chunk[2] || 0}`
+      if (sig === this._lastFirstChunkSig && now - this._lastFirstChunkTime < 200) {
+        console.log('[BLE] Duplicate first chunk ignored')
+        return
+      }
+      this._lastFirstChunkSig = sig
+      this._lastFirstChunkTime = now
       this._rxExpected = (chunk[0] << 8) | chunk[1]
       this._rxBuf = chunk.slice(2)
       this._rxLastChunkTime = now

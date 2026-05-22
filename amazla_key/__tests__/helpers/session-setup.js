@@ -9,7 +9,8 @@
 
 import { createECDH } from 'crypto'
 import store from '../../lib/store.js'
-import teslaBLE from '../../lib/tesla-ble/ble-native.js'
+import teslaBLE from '../../lib/tesla-ble/ble.js'
+import { computeTeslaBLEName } from '../../lib/tesla-ble/ble-name.js'
 import { bleHarness, _fsStore } from '../../__mocks__/zos.js'
 import { CarSimulator } from './car-simulator.js'
 import bleCrypto, { bytesToBinaryString } from '../../app-side/ble-crypto.js'
@@ -49,6 +50,13 @@ export const setupStore = (sim) => {
   store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65).fill(0x04))
   storeDoublingsTable(sim)
   buildPool(5)
+  // Production session.js scans by VIN-derived local name (Tesla rotates the
+  // BLE MAC every ~15 min). Make the harness surface a matching beacon so the
+  // scan resolves immediately instead of waiting out the scan duration.
+  bleHarness.setScanAutoEmit({
+    name: computeTeslaBLEName(store.vehicleVin),
+    mac: 'AA:BB:CC:DD:EE:FF',
+  })
 }
 
 /** Clear persisted FS-backed state (doublings table, key pool) */

@@ -3,12 +3,16 @@ jest.useFakeTimers()
 
 // Use harness mock directly (project provides __mocks__/zos.js helpers)
 import { bleHarness } from '../__mocks__/zos.js'
-import teslaBLENative from '../lib/tesla-ble/ble-native.js'
+import teslaBLENative, { CONNECTION_CONFIG } from '../lib/tesla-ble/ble-native.js'
 
 describe('TeslaBLENative unit tests', () => {
   beforeEach(() => {
     jest.clearAllTimers()
     bleHarness.reset()
+    // Production code wraps mstBuildProfile in a 50ms setTimeout (mirrors easy-ble
+    // SHORT_DELAY); tests with jest.useFakeTimers() would have to advance manually.
+    // Force synchronous build to keep the existing test flow.
+    CONNECTION_CONFIG.prepareDelayMs = 0
   })
 
   test('scan emits found and complete events with proper MAC formatting', () => {
@@ -279,6 +283,73 @@ describe('TeslaBLENative unit tests', () => {
         expect(teslaBLENative.getMAC()).toBe('AA:BB:CC:DD:EE:FF')
         done()
       } catch (e) { done(e) }
+    })
+  })
+
+  test('mstBuildProfile is wrapped in prepareDelayMs setTimeout', (done) => {
+    // Regression: easy-ble inserts a SHORT_DELAY between mstOnPrepare registration
+    // and mstBuildProfile because some firmware fires the prepare event before the
+    // handler is fully wired. If that delay is removed, real-device pair can lose
+    // the prepare callback. Verify the timer-deferred path runs.
+    teslaBLENative.reset()
+    CONNECTION_CONFIG.prepareDelayMs = 50
+    let connectResolved = false
+    teslaBLENative.connect('AA:BB:CC:DD:EE:FF', (res) => {
+      connectResolved = true
+      try { expect(res.success).toBe(true); done() } catch (e) { done(e) }
+    })
+    // Before the 50ms timer fires, prepare must not have been called yet.
+    expect(connectResolved).toBe(false)
+    jest.advanceTimersByTime(60)
+    CONNECTION_CONFIG.prepareDelayMs = 0
+  })
+
+  test('payload delivered via mstOnCharaValueArrived still reaches _handleResponse', (done) => {
+    // Regression: ble-native must subscribe BOTH mstOnCharaNotification AND
+    // mstOnCharaValueArrived. ZeppOS firmware can route the terminal post-NFC
+    // pair response through value-arrived rather than notification. If only one
+    // stream is subscribed the pair flow loops on ambient pending pushes forever.
+    teslaBLENative.reset()
+    teslaBLENative.connect('AA:BB:CC:DD:EE:FF', (connRes) => {
+      if (!connRes.success) { done(new Error('connect failed')); return }
+      teslaBLENative.responseCallback = (r) => {
+        try { expect(r.success).toBe(true); expect(Array.from(r.data)).toEqual([42]); done() } catch (e) { done(e) }
+      }
+      const payload = new Uint8Array([0, 1, 42])
+      bleHarness.notify(payload, 'value')  // ONLY via value-arrived, not notification
+    })
+  })
+
+  test('duplicate first chunk arriving via both streams within 200ms is deduped', (done) => {
+    teslaBLENative.reset()
+    teslaBLENative.connect('AA:BB:CC:DD:EE:FF', (connRes) => {
+      if (!connRes.success) { done(new Error('connect failed')); return }
+      let calls = 0
+      teslaBLENative.responseCallback = () => { calls++ }
+      const payload = new Uint8Array([0, 1, 42])
+      bleHarness.notify(payload, 'notify')
+      bleHarness.notify(payload, 'value')  // same payload, second delivery — must be ignored
+      setTimeout(() => {
+        try { expect(calls).toBe(1); done() } catch (e) { done(e) }
+      }, 10)
+      jest.advanceTimersByTime(10)
+    })
+  })
+
+  test('notification with mismatched profile id still routed to _handleResponse', (done) => {
+    // Regression: ble-native must filter notifications by UUID alone, not by profile id.
+    // Some ZeppOS firmware reports a different `profile` value in mstOnCharaNotification
+    // than the one passed to mstOnPrepare — filtering by id silently drops all responses.
+    teslaBLENative.reset()
+    teslaBLENative.connect('AA:BB:CC:DD:EE:FF', (connRes) => {
+      if (!connRes.success) { done(new Error('connect failed')); return }
+      const cb = jest.fn()
+      teslaBLENative.responseCallback = (r) => { cb(r); try { expect(r.success).toBe(true); done() } catch (e) { done(e) } }
+
+      // Notification arrives with profile=999 even though prepare reported profile=1.
+      const TESLA_READ_UUID = '00000213-b2d1-43f0-9b88-960cebf8b91e'
+      const payload = new Uint8Array([0, 1, 42]) // length=1, byte=42
+      bleHarness._notifyCb({ profile: 999, uuid: TESLA_READ_UUID, data: payload.buffer, length: payload.length })
     })
   })
 
