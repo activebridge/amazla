@@ -291,6 +291,7 @@ describe('lib/store.js', () => {
 
   function setupFullyPaired() {
     store.watchPublicKey        = bytesToBinaryString(new Uint8Array(65).fill(0x04))
+    store.watchPrivateKey       = bytesToBinaryString(new Uint8Array(32).fill(0x05))
     store.vehicleEcPublicKey    = new Uint8Array(65).fill(0x04)
     store.vehicleDoublingsTable = new Uint32Array(256 * 16)
     store.keyPool               = new Uint8Array(1 * 97)

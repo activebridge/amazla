@@ -47,6 +47,18 @@ const store = {
     set('watchPublicKey', value)
   },
 
+  // Long-term enrolled private key. Tesla protocol uses ONE keypair for both
+  // SessionInfoRequest identity AND ECDH (mirrors vehicle-command Go SDK
+  // `Session.localKey`). Persisted on the watch so we can derive the shared
+  // secret locally without depending on the phone at session time.
+  get watchPrivateKey() {
+    return get('watchPrivateKey')
+  },
+
+  set watchPrivateKey(value) {
+    set('watchPrivateKey', value)
+  },
+
   get vehicleEcPublicKey() {
     return get('vehicleEcPublicKey')
   },
@@ -134,6 +146,7 @@ const store = {
   get isPaired() {
     return !!(
       this.watchPublicKey &&
+      this.watchPrivateKey &&
       this.vehicleEcPublicKey &&
       this.hasDoublingsTable &&
       this.keyPoolCount > 0 &&
@@ -179,6 +192,7 @@ const store = {
     localStorage.removeItem('vehicleMac')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
+    localStorage.removeItem('watchPrivateKey')
     localStorage.removeItem('hasDoublingsTable')
     localStorage.removeItem('keyPoolCount')
     localStorage.removeItem('keyPoolOffset')

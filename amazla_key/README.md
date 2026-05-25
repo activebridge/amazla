@@ -6,7 +6,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Vehicle Status** - Door/closure states, lock state, sleep status
-- **Key Pool** - Pre-generated ephemeral keypairs allow offline session establishment
+- **Offline session** - Long-term enrolled keypair persisted on watch enables session establishment + ECDH without the phone
 
 ## Architecture Overview
 
@@ -229,14 +229,14 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │      Watch                                              Tesla                │
 │        │                                                  │                  │
 │   ┌────┴────┐                                             │                  │
-│   │ Pop     │                                             │                  │
+│   │ Load    │                                             │                  │
+│   │ long-   │                                             │                  │
+│   │ term    │                                             │                  │
 │   │ keypair │                                             │                  │
-│   │ from    │                                             │                  │
-│   │ pool    │                                             │                  │
 │   └────┬────┘                                             │                  │
 │        │                                                  │                  │
 │        │  ─── SessionInfoRequest ──────────────────────►  │                  │
-│        │      { ephemeral_public_key }                    │                  │
+│        │      { watch_public_key } ← enrolled long-term   │                  │
 │        │                                                  │                  │
 │        │  ◄── Intermediate Ack ─────────────────────────  │                  │
 │        │      (routing info only, no SessionInfo yet)     │                  │
@@ -249,7 +249,7 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   │ ECDH Key Derivation (on watch)  │                     │                  │
 │   │                                 │                     │                  │
 │   │ shared_secret = ECDH(           │                     │                  │
-│   │   ephemeral_private_key,        │                     │                  │
+│   │   watch_private_key,            │                     │                  │
 │   │   vehicle_public_key            │                     │                  │
 │   │ )                               │                     │                  │
 │   │                                 │                     │                  │
@@ -524,7 +524,8 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | Read/Indicate char UUID (`0x0213`) | ✅ Match | — | ✅ |
 | Message framing | 2-byte big-endian length header | 2-byte big-endian length header | ✅ Match |
 | Max message size | 1024 bytes (validated on receive) | 1024 bytes | ✅ Match |
-| SessionInfoRequest | ephemeral pubkey only, no challenge | ephemeral pubkey only | ✅ Match |
+| SessionInfoRequest identity key | long-term enrolled `watchPublicKey` (`store.watchPublicKey`) | `Session.localKey.PublicBytes()` (long-term) | ✅ Match (fixed 2026-05-25 — see [Session identity key](#session-identity-key-tesla-go-sdk-parity)) |
+| ECDH key material | long-term `watchPrivateKey` × `vehicleEcPublicKey` (precomputed doublings table) | `localKey.ExchangeKey(vehiclePub)` | ✅ Match |
 | Session key derivation | `SHA1(shared_x)[:16]` | `SHA1(shared_x)[:16]` | ✅ Match |
 | RX reassembly timeout | 1000ms per chunk | 1 second per chunk | ✅ Match |
 | HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
@@ -592,15 +593,53 @@ client, err := device.Dial(ctx, ble.NewAddr(target.Address))
 - Does ZeppOS `mstStartScan` reliably surface Tesla advertisements when the car is awake but our last connection was on a now-rotated MAC? (Tesla SDK assumes yes; ZeppOS may need explicit BLE adapter reset between connects.)
 - Should scan duration extend on first failure (8s → 15s) before surfacing "not in range"?
 
+### Session identity key (Tesla Go SDK parity)
+
+**Symptom observed on device (2026-05-25):** After pair completed successfully and the BLE connection itself worked (~350 ms), every `requestSessionInfo` got back a 28-byte `RoutableMessage` containing only `SessionInfo { status: 1 }` — Tesla's `SessionInfoStatus.KEY_NOT_ON_WHITELIST`. The vehicle was refusing to derive a session because it didn't recognize the public key we presented in `SessionInfoRequest.publicKey`.
+
+**Root cause:** `session.js` was popping a per-call ephemeral keypair from `store.keyPool` and sending the *ephemeral* pubkey in `SessionInfoRequest`. Tesla's vehicle-command Go SDK uses **one long-term enrolled keypair** for both identity (whitelist lookup) and ECDH — `Session.localKey`. Ephemeral pool keys were never on the vehicle's whitelist, so the vehicle rejected every session. (Our own `__tests__/helpers/car-simulator.js` didn't model whitelist enforcement at the time, which is why this slipped past the test suite for so long.)
+
+**Fix (applied):**
+
+1. `store.js` — added `watchPrivateKey` getter/setter alongside the existing `watchPublicKey`. Added to `isPaired` check and `reset()`.
+2. `app-side/index.js` — `BLE_SYNC_KEYS`, `BLE_PAIR_SETUP`, and `SIMULATE_PAIR` now return both halves of the keypair (`publicKeyBinary` + `privateKeyBinary`).
+3. `lib/phone.js` — `syncKeys`, `pairSetup`, `simulatePair` persist `store.watchPrivateKey`.
+4. `lib/tesla-ble/session.js` — `_doSessionInfoRequest` now uses `store.watchPrivateKey` / `store.watchPublicKey` (long-term enrolled keypair) for both the `SessionInfoRequest.publicKey` field and the ECDH input. The variable names `ephemeralPrivateKey` / `ephemeralPublicKey` are kept for compatibility with the crypto path but now hold the long-term key.
+5. `lib/tesla-ble/protocol/vcsec.js` — `parseRoutableMessage` now surfaces `sessionInfoStatus` separately so callers can distinguish `OK` from `KEY_NOT_ON_WHITELIST`.
+6. `lib/tesla-ble/session.js` `_handleSessionInfoResponse` — explicit branch for `sessionInfoStatus === 1` that disconnects BLE immediately and surfaces "re-pair required". Without disconnecting, the vehicle's slot stayed occupied until its own supervision timeout (>6 min observed).
+7. `__tests__/helpers/car-simulator.js` `_handleSessionInfo` — enforces a whitelist check against `_enrolledPublicKey`. If the requestor's key doesn't match, the simulator responds with `SessionInfo { status: 1 }` exactly like the real vehicle. The test setup helpers now generate a real P-256 keypair, persist both halves to the store, and register the pubkey with the simulator's whitelist.
+
+The watch must hold the long-term private key locally because ECDH requires it at session time and the phone may not be reachable. Re-pair is required after upgrading from a build that pre-dates this change — existing installs only have `watchPublicKey` persisted.
+
+### Native BLE crash recovery (avoiding the reboot loop)
+
+**Symptom:** When a previous app run died without a clean `mstDisconnect` (forced quit, OS-killed page, or a session that hung after a half-success), every subsequent `mstConnect` to the same MAC returns `{ connected: false, status: "failed" }` after a few seconds. The only known recovery used to be a full watch reboot.
+
+**Root cause:** The native `@zos/ble` stack on ZeppOS is a process-singleton that retains its "I own this connection" state across JS app lifetimes. `BLEMaster.quit()` in `@silver-zepp/easy-ble` only issues `mstDisconnect` when `#last_connected_mac` is set — a fresh `BLEMaster` instance after a JS restart has no idea what connect_id the prior run held, so `quit()` becomes a no-op even though the native socket is still half-open.
+
+**Fix (applied in `lib/tesla-ble/ble.js`):**
+
+1. After every successful connect, capture the connect_id from `BLEMaster.get.connectionID()` and persist it to `LocalStorage` under `lastBleConnectId`. This happens *immediately* upon connect, before any later step (CCCD, MTU, etc.) can fail.
+2. On clean cleanup (`_cleanup()` after a successful `ble.quit()`), clear the persisted id.
+3. `_clearStaleNativeState(reason)` reads the saved id and calls `hmBle.mstDisconnect(savedId)` defensively, then `mstStopScan()` + `mstOffAllCb()` to drop any lingering callbacks/scan. Invoked from:
+   - The `TeslaBLE` constructor (= app start) — recovers from a prior-run crash.
+   - The start of every `connect()` call — recovers from a same-run prior failure.
+4. Connection timeout reduced 20 s → 8 s. Successful Tesla GATT connects observed at 350 ms typical, 2.5 s worst case. A longer wait doesn't help and makes debug cycles painful.
+5. The session-establish error paths (`KEY_NOT_ON_WHITELIST`, "Response missing sessionInfo") now call `teslaBLE.disconnect()` so the vehicle slot frees up instead of waiting for its supervision timeout (>6 min).
+
+Watch the logs for `[BLE] Clearing stale native state (app-start): mstDisconnect(N)` on launch — this means a prior run left an id and we just recovered. If you don't see it, the prior run cleaned up properly (or there was no prior connection to track).
+
 ## Pending
 
 | Item | Status | Notes |
 |------|--------|-------|
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
 | MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented. `ble.js` calls it inside a try/catch but writes still use fixed 20-byte chunks. No known ZeppOS API for MTU negotiation. |
-| Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. |
+| Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. Note: scan-by-name was originally hypothesized as the fix for connect-time-out-after-pair, but the actual cause turned out to be native BLE state poisoning across app sessions — see "Native BLE crash recovery". |
+| Session uses long-term enrolled key | ✅ Applied | `session.js` sends `watchPublicKey` in `SessionInfoRequest` and uses `watchPrivateKey` for ECDH. See "Session identity key (Tesla Go SDK parity)". |
+| Native BLE crash recovery | ✅ Applied | `lib/tesla-ble/ble.js` persists `connect_id` and runs `mstDisconnect` on next launch. See "Native BLE crash recovery". |
 | Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
-| Field test with car post-rotation | ⏳ | Pair flow validated end-to-end 2026-05-20 via easy-ble path. Scan-by-name fix not yet re-tested on device after MAC rotation. |
+| Key pool removal | ⏳ Vestigial | After the long-term key refactor, the pool is no longer used for session establishment. Still synced from phone and still required by `store.isPaired`. Safe to remove in a follow-up. |
 
 ## Future Work
 
@@ -615,7 +654,7 @@ Current scope covers the VCSEC domain only (lock, trunk, frunk, status) — HMAC
 - Encrypt/decrypt path parallel to existing HMAC path
 
 **Reusable:**
-- Existing P-256 keypool serves both domains (same ephemeral keys, two handshakes)
+- Existing P-256 long-term `watchPrivateKey` serves both domains (one identity key, two handshakes — same as Tesla Go SDK's `Session.localKey`)
 - Same BLE transport, same `RoutableMessage` envelope, same framing
 - Simulator scaffolding extends cleanly
 
@@ -721,10 +760,12 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 
 ### 2. Session Keys (auto-synced)
 
-Session keys sync automatically — no manual step needed:
+The session crypto path now uses the long-term `watchPrivateKey` / `watchPublicKey` enrolled during pair (matches Tesla Go SDK's `Session.localKey`) — no per-session key needed. The pool below is vestigial and still synced for legacy reasons; nothing in `session.js` consumes it. Safe to remove in a follow-up — see Pending table.
+
+Legacy pool sync (still runs):
 - App open → watch asks phone for pool if `keyPoolCount < 10`
 - Phone generates 33 P-256 keypairs and returns them as raw binary
-- Watch stores to `key_pool.dat` — ready for offline use
+- Watch stores to `key_pool.dat`
 
 The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`.
 

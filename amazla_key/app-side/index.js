@@ -33,10 +33,14 @@ const dispatch = async (method, response, params = {}) => {
 const actions = {
   BLE_SYNC_KEYS: async () => {
     console.log('[App] Syncing BLE keys to watch')
-    const stored = settings.settingsStorage.getItem('tesla_public_key')
-    if (stored) {
-      console.log('[App] Sending existing watch public key to watch')
-      return { success: true, publicKeyBinary: stored }
+    // Return BOTH priv+pub: Tesla protocol uses one long-term keypair for both
+    // SessionInfoRequest identity AND ECDH (vehicle-command Go SDK pattern).
+    // Watch must hold the private key to derive the session secret locally.
+    const storedPub = settings.settingsStorage.getItem('tesla_public_key')
+    const storedPriv = settings.settingsStorage.getItem('tesla_private_key')
+    if (storedPub && storedPriv) {
+      console.log('[App] Sending existing watch keypair to watch')
+      return { success: true, publicKeyBinary: storedPub, privateKeyBinary: storedPriv }
     }
     console.log('[App] No keys found, generating new pair')
     const result = bleCrypto.generateEnrolledKeyPair()
@@ -45,7 +49,11 @@ const actions = {
       settings.settingsStorage.setItem('tesla_private_key', result.privateKeyBinary)
       settings.settingsStorage.setItem('tesla_public_key', result.publicKeyBinary)
       console.log('[App] ✓ Stored enrolled key pair')
-      return { success: true, publicKeyBinary: result.publicKeyBinary }
+      return {
+        success: true,
+        publicKeyBinary: result.publicKeyBinary,
+        privateKeyBinary: result.privateKeyBinary,
+      }
     } catch (storeError) {
       console.log(`[App] Failed to store keys: ${storeError.message}`)
       return { success: false, message: 'Failed to store keys' }
@@ -62,7 +70,10 @@ const actions = {
       settings.settingsStorage.setItem('tesla_public_key', keypair.publicKeyBinary)
     }
     const publicKeyBinary = settings.settingsStorage.getItem('tesla_public_key')
-    return bleCrypto.pairSetup(publicKeyBinary)
+    const privateKeyBinary = settings.settingsStorage.getItem('tesla_private_key')
+    const r = bleCrypto.pairSetup(publicKeyBinary)
+    if (!r.success) return r
+    return { ...r, watchPrivateKey: privateKeyBinary }
   },
 
   // Binary response: [0x01][65-byte ecKey][16384-byte table]
@@ -124,6 +135,7 @@ const actions = {
     return {
       success: true,
       watchPublicKeyBinary: watchKeypair.publicKeyBinary,
+      watchPrivateKeyBinary: watchKeypair.privateKeyBinary,
       vehicleEcKeyBinary: vehicleKeypair.publicKeyBinary,
       mac: 'AA:BB:CC:DD:EE:FF',
       vin: '5YJ3E1EA6JF020598',

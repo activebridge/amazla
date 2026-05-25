@@ -11,6 +11,8 @@ import { keepScreenOn } from '../../zeppify/index.js'
 import Phone from '../lib/phone.js'
 import store from '../lib/store.js'
 import tesla from '../lib/tesla.js'
+import BLE from '../lib/tesla-ble/index.js'
+import teslaSession from '../lib/tesla-ble/session.js'
 
 const { height } = getDeviceInfo()
 
@@ -283,5 +285,10 @@ Page({
   onDestroy() {
     tesla.offChange(render)
     keepScreenOn(false)
+    // Free BLE so next launch doesn't inherit poisoned native state.
+    // Without this, mstConnect on the next session-info attempt returns
+    // status:"failed" after ~30s until the watch is rebooted.
+    try { teslaSession.reset() } catch (_e) {}
+    try { BLE.reset() } catch (_e) {}
   },
 })

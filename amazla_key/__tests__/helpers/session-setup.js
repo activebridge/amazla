@@ -47,7 +47,16 @@ export const setupStore = (sim) => {
   store.vehicleMac         = 'AA:BB:CC:DD:EE:FF'
   store.vehicleEcPublicKey = sim.vehiclePubKey
   store.vehicleVin         = bytesToBinaryString(sim.vin)
-  store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65).fill(0x04))
+  // Tesla protocol: one long-term keypair for both SessionInfoRequest identity
+  // and ECDH. Generate a real P-256 keypair, store both halves, and register
+  // the pubkey with the simulator's whitelist.
+  const watchEcdh = createECDH('prime256v1')
+  watchEcdh.generateKeys()
+  const watchPriv = new Uint8Array(watchEcdh.getPrivateKey())
+  const watchPub = new Uint8Array(watchEcdh.getPublicKey())
+  store.watchPublicKey = bytesToBinaryString(watchPub)
+  store.watchPrivateKey = bytesToBinaryString(watchPriv)
+  sim._enrolledPublicKey = watchPub
   storeDoublingsTable(sim)
   buildPool(5)
   // Production session.js scans by VIN-derived local name (Tesla rotates the

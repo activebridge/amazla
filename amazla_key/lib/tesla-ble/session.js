@@ -73,6 +73,13 @@ class TeslaSession {
       callback({ success: false, error: 'VIN not set. Complete pairing first.' })
       return
     }
+    let vinStr = ''
+    try { for (let i = 0; i < vinBytes.length; i++) vinStr += String.fromCharCode(vinBytes[i]) } catch (_e) {}
+    console.log(`[SESSION] VIN bytes (${vinBytes.length}B): "${vinStr}"`)
+    console.log(`[SESSION] Saved MAC (cached hint): ${store.vehicleMac || '<none>'}`)
+    console.log(`[SESSION] EC pubkey: ${store.vehicleEcPublicKey ? store.vehicleEcPublicKey.length + 'B present' : '<absent>'}`)
+    console.log(`[SESSION] Doublings table: ${store.vehicleDoublingsTable ? 'present' : '<absent>'}`)
+    console.log(`[SESSION] Key pool count: ${store.keyPoolCount}`)
     // Tesla rotates the BLE MAC every ~15 min. The MAC in store.vehicleMac
     // may already be stale. Mirror the Tesla Go SDK's VehicleLocalName flow:
     // derive the BLE local name from VIN, scan for an exact-name advertisement,
@@ -83,6 +90,7 @@ class TeslaSession {
       callback({ success: false, error: 'Could not derive BLE name from VIN.' })
       return
     }
+    console.log(`[SESSION] Derived Tesla BLE name from VIN: ${expectedName}`)
     this._scanThenConnect(expectedName, callback)
   }
   _scanThenConnect(expectedName, callback) {
@@ -112,17 +120,11 @@ class TeslaSession {
       }
     }, 8000, expectedName)
   }
-  _doConnect(mac, attempt, callback) {
-    console.log(`[SESSION] Dialing vehicle: ${mac} (attempt ${attempt})`)
+  _doConnect(mac, _attempt, callback) {
+    console.log(`[SESSION] Dialing vehicle: ${mac}`)
     teslaBLE.connect(mac, (result) => {
       console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
       if (!result.success) {
-        // Retry once on "disconnected during setup" — vehicle needs a moment
-        if (attempt === 1 && result.error && result.error.indexOf('disconnected during setup') !== -1) {
-          console.log('[SESSION] Vehicle dropped connection during setup, retrying in 2s...')
-          setTimeout(() => this._doConnect(mac, 2, callback), 2000)
-          return
-        }
         console.log(`[SESSION] ✗ Connection failed: ${result.error || 'unknown'}`)
         callback({ success: false, error: `BLE connection failed: ${result.error || 'unknown'}` })
         return
@@ -142,21 +144,27 @@ class TeslaSession {
     this._doSessionInfoRequest(callback)
   }
   _doSessionInfoRequest(callback) {
-    const keypair = store.popKey()
-    if (!keypair) {
-      callback({ success: false, error: 'Key pool empty — sync from phone (GEN POOL)' })
+    // Tesla protocol (mirrors vehicle-command Go SDK `Session.localKey`): the
+    // *same* long-term enrolled keypair is used for both SessionInfoRequest
+    // identity and ECDH. Sending an ephemeral key here makes the vehicle
+    // respond with SessionInfo{status:KEY_NOT_ON_WHITELIST=1} because only
+    // the enrolled key is in its whitelist.
+    const watchPriv = store.watchPrivateKey
+    const watchPub = store.watchPublicKey
+    if (!watchPriv || watchPriv.length !== 32 || !watchPub || watchPub.length !== 65) {
+      callback({ success: false, error: 'Watch keypair missing — re-pair from phone' })
       return
     }
-    console.log(`[SESSION] Popped ephemeral key, pool remaining: ${store.keyPoolCount}`)
-    this.ephemeralPrivateKey = keypair.privateKeyBytes // Uint8Array[32]
-    this.ephemeralPublicKey = keypair.publicKeyBytes // Uint8Array[65]
+    this.ephemeralPrivateKey = watchPriv // long-term, name kept for crypto-path compat
+    this.ephemeralPublicKey = watchPub
     this.routingAddress = generateRoutingAddress()
     this._lastRequestUuid = generateUUID()
 
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
-      // SessionInfoRequest contains ONLY publicKey; challenge comes from request UUID (field 50).
+      // SessionInfoRequest.publicKey = enrolled long-term key (vehicle looks
+      // up its whitelist by this). Challenge comes from request UUID (field 50).
       sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
       uuid: this._lastRequestUuid,
     })
@@ -183,6 +191,18 @@ class TeslaSession {
         .join(',')
       const response = parseRoutableMessage(result.data)
 
+      // Distinct, actionable error before the generic "intermediate ack" check.
+      // SessionInfoStatus=1 (KEY_NOT_ON_WHITELIST) means the vehicle doesn't
+      // recognize our identity key — re-pairing is the only recovery. Disconnect
+      // BLE immediately so the vehicle's slot frees up instead of waiting for
+      // its supervision timeout (observed >6 min on Model 3).
+      if (response.sessionInfoStatus === 1) {
+        console.log('[SESSION] ❌ Vehicle rejected key: KEY_NOT_ON_WHITELIST — re-pair required')
+        try { teslaBLE.disconnect() } catch (_e) {}
+        callback({ success: false, error: 'Key not on vehicle whitelist — re-pair from phone' })
+        return
+      }
+
       // Intermediate ack from vehicle: no sessionInfo, payload, or status. Re-register for the real response.
       if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
         console.log(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
@@ -194,6 +214,7 @@ class TeslaSession {
       if (!response.sessionInfo) {
         console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
         console.log(`[SESSION] Fields present: [${fieldKeys}]`)
+        try { teslaBLE.disconnect() } catch (_e) {}
         callback({ success: false, error: `No session info in response. Fields: [${fieldKeys}]` })
         return
       }

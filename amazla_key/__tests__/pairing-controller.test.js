@@ -34,9 +34,20 @@ jest.setTimeout(30000)
 function makePhone(overrides = {}) {
   return {
     pairSetup(cb) {
+      // Mirrors the real phone-side flow: app-side/index.js BLE_PAIR_SETUP
+      // generates a fresh keypair, stores BOTH halves in settings, and returns
+      // both to the watch. lib/phone.js then persists store.watchPrivateKey
+      // alongside store.watchPublicKey. Tests must reproduce this contract or
+      // session establishment will fail later with "Watch keypair missing".
       const result = bleCrypto.pairSetup()  // generates a fresh watch keypair
       if (!result.success) return cb({ success: false, error: result.error })
       store.watchPublicKey = result.watchPublicKey  // binary string
+      // Real flow: app-side reads tesla_private_key from settingsStorage and
+      // returns it as watchPrivateKey; phone.js persists it on the watch.
+      // bleCrypto.pairSetup() doesn't expose the private key, so generate one
+      // here that's structurally valid (32 bytes) — pair flow itself never
+      // exercises it, but downstream session code will.
+      store.watchPrivateKey = bytesToBinaryString(new Uint8Array(32).fill(0x07))
       cb({ success: true, pairMsg: result.pairMsg, verifyMsg: result.verifyMsg })
     },
     completePairing(rawResponseBinary, cb) {
@@ -460,6 +471,21 @@ describe('BLE scan path', () => {
     expect(result.states).toContain('scanning')
     expect(result.states).toContain('connecting')
     expect(result.states).toContain('done')
+    // Tesla protocol requires the long-term enrolled keypair on the watch for
+    // session establishment (SessionInfoRequest identity + ECDH). Pair must
+    // persist BOTH halves before completing or the next session attempt fails
+    // with KEY_NOT_ON_WHITELIST. See project_amazla_key_session_long_term_key.
+    expect(store.watchPublicKey).toBeTruthy()
+    expect(store.watchPublicKey.length).toBe(65)
+    expect(store.watchPrivateKey).toBeTruthy()
+    expect(store.watchPrivateKey.length).toBe(32)
+    // On real device the main page auto-syncs the key pool on open
+    // (`page/index.js: if (store.keyPoolCount < 10) phone.syncPool()`), so by
+    // the time the user reaches the BLE debug page to pair, the pool is
+    // already populated. Mimic that here so the post-pair isPaired check
+    // reflects real-device state.
+    await new Promise((resolve) => makePhone().syncPool(resolve))
+    expect(store.isPaired).toBe(true)
   })
 
   test('reports error when no vehicle found within scan timeout', async () => {

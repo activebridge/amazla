@@ -1,5 +1,6 @@
 import { BLEMaster } from '@silver-zepp/easy-ble'
 import * as hmBle from '@zos/ble'
+import { LocalStorage } from '@zos/storage'
 
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
@@ -7,10 +8,66 @@ const TESLA_READ_UUID = '00000213-b2d1-43f0-9b88-960cebf8b91e'
 const BLE_CHUNK_SIZE = 20
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
-  timeouts: [5000, 8000, 10000],
-  maxAttempts: 3,
+  // 8 s is enough for any successful Tesla GATT connect we've observed (350 ms
+  // typical, 2.5 s worst case). Longer waits don't help and make debug cycles
+  // painful — if 8 s elapses the native stack is either stuck or vehicle is
+  // refusing us; reboots/disconnect-on-startup handle those cases.
+  timeoutMs: 8000,
   stackStabilizeWait: 100, // Reduced from 2000ms - Tesla SDK has no delay
-  retryDelayMs: 2000,
+}
+// LocalStorage key for the last successful native connect_id. Persisting it
+// lets us call hmBle.mstDisconnect(savedId) on the NEXT app launch even if the
+// previous run crashed without an onDestroy — clears the "native BLE poisoned"
+// state that otherwise requires a watch reboot to recover from.
+const LAST_CONNECT_ID_KEY = 'lastBleConnectId'
+let _localStorage = null
+const _ls = () => {
+  if (!_localStorage) {
+    try { _localStorage = new LocalStorage() } catch (_e) {}
+  }
+  return _localStorage
+}
+const _readSavedConnectId = () => {
+  try {
+    const ls = _ls()
+    if (!ls) return null
+    const raw = ls.getItem(LAST_CONNECT_ID_KEY)
+    if (!raw) return null
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) ? n : null
+  } catch (_e) {
+    return null
+  }
+}
+const _writeSavedConnectId = (id) => {
+  try {
+    const ls = _ls()
+    if (!ls) return
+    if (id === null || id === undefined) ls.removeItem(LAST_CONNECT_ID_KEY)
+    else ls.setItem(LAST_CONNECT_ID_KEY, String(id))
+  } catch (_e) {}
+}
+try {
+  if (BLEMaster.SetDebugLevel) BLEMaster.SetDebugLevel(3)
+} catch (_e) {}
+const _hex = (buf) => {
+  if (!buf) return '<null>'
+  const arr = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+  let s = ''
+  const max = Math.min(arr.length, 128)
+  for (let i = 0; i < max; i++) s += (arr[i] < 16 ? '0' : '') + arr[i].toString(16)
+  return arr.length > max ? `${s}…(+${arr.length - max}B)` : s
+}
+const _dumpDevice = (d) => {
+  if (!d) return '<null>'
+  const parts = [`mac=${d.dev_addr}`, `name=${d.dev_name || '?'}`, `rssi=${d.rssi}`]
+  if (d.uuid) parts.push(`uuid=${d.uuid}`)
+  if (d.vendor_id !== undefined) parts.push(`vendorId=${d.vendor_id}`)
+  if (d.vendor_data) parts.push(`vendorData=${d.vendor_data}`)
+  if (d.service_uuid_array && d.service_uuid_array.length) parts.push(`services=[${d.service_uuid_array.join(',')}]`)
+  if (d.service_data_array && d.service_data_array.length)
+    parts.push(`svcData=${JSON.stringify(d.service_data_array)}`)
+  return parts.join(' ')
 }
 const _frame = (data) => {
   const msg = new Uint8Array(2 + data.length)
@@ -42,6 +99,23 @@ class TeslaBLE {
         [TESLA_READ_UUID]: ['2902'],
       },
     }
+    // Defensive: if the previous app run died without a clean disconnect, the
+    // native hmBle stack still thinks it owns a connection. New mstConnect
+    // calls then return status:"failed" indefinitely until the watch reboots.
+    // Calling mstDisconnect on the persisted connect_id reliably frees it.
+    this._clearStaleNativeState('app-start')
+  }
+  _clearStaleNativeState(reason) {
+    const saved = _readSavedConnectId()
+    if (saved !== null) {
+      console.log(`[BLE] Clearing stale native state (${reason}): mstDisconnect(${saved})`)
+      try { hmBle.mstDisconnect(saved) } catch (e) { console.log('[BLE]   mstDisconnect threw (ignored):', e && e.message) }
+      _writeSavedConnectId(null)
+    }
+    // Best-effort: stop any in-flight scan and drop any stale callbacks the
+    // previous run left registered on the native singleton.
+    try { hmBle.mstStopScan() } catch (_e) {}
+    try { if (hmBle.mstOffAllCb) hmBle.mstOffAllCb() } catch (_e) {}
   }
   _ensureBLE() {
     if (!this.ble) this.ble = new BLEMaster()
@@ -65,6 +139,10 @@ class TeslaBLE {
       }
       this.ble = null
     }
+    // ble.quit() already issued mstDisconnect against the live connect_id; the
+    // persisted copy is now stale, so clear it. (If quit() was a no-op because
+    // we never connected, there's nothing to clear anyway.)
+    _writeSavedConnectId(null)
     this.profile = null
     this.responseCallback = null
     this.mac = null
@@ -73,16 +151,25 @@ class TeslaBLE {
     this._mtu = 20
   }
   scan(callback, duration = 10000, expectedName = null) {
+    console.log(`[BLE] scan() start: duration=${duration}ms expectedName=${expectedName || '<none>'}`)
     const devices = []
     let completed = false
     const seen = new Set()
+    const seenAll = new Set()
     const expectedLc = expectedName ? expectedName.toLowerCase() : null
     const onComplete = () => {
       if (completed) return
       completed = true
+      console.log(`[BLE] scan() complete: ${seenAll.size} unique devices seen, ${devices.length} matched`)
       callback({ type: 'complete', devices })
     }
     const onDevice = (device) => {
+      // Log EVERY advertisement once per address (so we can see exactly what's
+      // on the air, including non-Tesla devices and Teslas not matching VIN).
+      if (!seenAll.has(device.dev_addr)) {
+        seenAll.add(device.dev_addr)
+        console.log(`[BLE] adv: ${_dumpDevice(device)}`)
+      }
       if (!device.dev_name) return
       // When expectedName is given, require exact (case-insensitive) match — the
       // VIN-derived local name pins us to the right vehicle even with multiple
@@ -96,6 +183,7 @@ class TeslaBLE {
       // singleton BLEMaster doesn't carry a stale #device_set across scans).
       if (seen.has(device.dev_addr)) return
       seen.add(device.dev_addr)
+      console.log(`[BLE] ✓ matched Tesla: ${_dumpDevice(device)}`)
       const found = { name: device.dev_name, mac: device.dev_addr, rssi: device.rssi, type: 'tesla' }
       devices.push(found)
       callback({ type: 'found', device: found, devices })
@@ -117,21 +205,29 @@ class TeslaBLE {
   stopScan() {
     return this._ensureBLE().stopScan()
   }
-  connect(mac, callback, attemptNumber = 0) {
+  connect(mac, callback) {
+    // Each new connect attempt re-runs the defensive native cleanup. Costs
+    // nothing if state is already clean; saves a reboot if the prior session
+    // left something stuck.
+    this._clearStaleNativeState('pre-connect')
     let done = false
     let setupStarted = false
-    const timeoutMs =
-      CONNECTION_CONFIG.timeouts[attemptNumber] || CONNECTION_CONFIG.timeouts[CONNECTION_CONFIG.timeouts.length - 1]
-    const attemptLabel = `${attemptNumber + 1}/${CONNECTION_CONFIG.maxAttempts}`
+    const timeoutMs = CONNECTION_CONFIG.timeoutMs
+    const dialStart = Date.now()
 
-    console.log(`[BLE] Connecting to: ${mac} (attempt ${attemptLabel}, ${timeoutMs}ms timeout)`)
+    console.log(`[BLE] connect() params:`)
+    console.log(`[BLE]   target MAC = ${mac}`)
+    console.log(`[BLE]   timeout    = ${timeoutMs}ms`)
+    console.log(`[BLE]   service    = ${TESLA_SERVICE_UUID}`)
+    console.log(`[BLE]   write char = ${TESLA_WRITE_UUID} (WRITE_WITHOUT_RESPONSE, perm=0x04)`)
+    console.log(`[BLE]   read char  = ${TESLA_READ_UUID} (CCCD=2902)`)
     const timeout = setTimeout(() => {
       if (done) return
       done = true
       this.connected = false
       console.log(`[BLE] Connection timeout (${timeoutMs}ms)`)
       this._cleanup()
-      callback({ success: false, error: 'Connection timeout', attemptNumber })
+      callback({ success: false, error: 'Connection timeout' })
     }, timeoutMs)
     const settle = (result) => {
       if (done) return
@@ -140,8 +236,10 @@ class TeslaBLE {
       callback(result)
     }
     this._ensureBLE().connect(mac, (result) => {
-      console.log('[BLE] Connect callback fired:', JSON.stringify(result))
+      const elapsed = Date.now() - dialStart
+      console.log(`[BLE] Native connect callback (after ${elapsed}ms): ${JSON.stringify(result)}`)
       if (done) {
+        console.log('[BLE] (callback arrived AFTER JS timeout — native still works, JS gave up)')
         if (!result.connected) {
           this.connected = false
           if (this.onDisconnect) this.onDisconnect()
@@ -154,12 +252,12 @@ class TeslaBLE {
         if (setupStarted) {
           console.log('[BLE] Disconnect during setup, settling immediately')
           this._cleanup()
-          settle({ success: false, error: 'Vehicle disconnected during setup', attemptNumber })
+          settle({ success: false, error: 'Vehicle disconnected during setup' })
           return
         }
         console.log('[BLE] Connect failed:', result.status)
         this._cleanup()
-        settle({ success: false, error: result.status || 'Connection failed', attemptNumber })
+        settle({ success: false, error: result.status || 'Connection failed' })
         return
       }
       if (setupStarted) {
@@ -169,17 +267,32 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
+      // Persist connect_id NOW so that even if the app dies before any clean
+      // disconnect, the next launch's _clearStaleNativeState can free it.
+      try {
+        const ble = this._ensureBLE()
+        const connId = ble && ble.get && ble.get.connectionID && ble.get.connectionID()
+        if (typeof connId === 'number') {
+          _writeSavedConnectId(connId)
+          console.log(`[BLE] Persisted connect_id=${connId} for crash-recovery cleanup`)
+        }
+      } catch (_e) {}
       console.log('[BLE] Connected, setting up profile immediately...')
 
       if (!this.connected) {
         this._cleanup()
-        settle({ success: false, error: 'Connection lost during setup', attemptNumber })
+        settle({ success: false, error: 'Connection lost during setup' })
         return
       }
       console.log('[BLE] Generating profile...')
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 }, // WRITE_WITHOUT_RESPONSE
       })
+      try {
+        console.log(`[BLE] Profile object: ${JSON.stringify(this.profile)}`)
+      } catch (_e) {
+        console.log('[BLE] Profile object (non-serializable):', this.profile)
+      }
 
       console.log('[BLE] Starting listener...')
       this._ensureBLE().startListener(this.profile, (response) => {
@@ -189,7 +302,7 @@ class TeslaBLE {
           this.connected = false
           console.log('[BLE] Listener failed:', response.message)
           this._cleanup()
-          settle({ success: false, error: response.message || 'Listener failed', attemptNumber })
+          settle({ success: false, error: response.message || 'Listener failed' })
           return
         }
         // Defensive deregistration before re-registering callbacks (prevents duplicates on reconnect).
@@ -200,24 +313,25 @@ class TeslaBLE {
           if (ble.off.descWriteComplete) ble.off.descWriteComplete()
         }
         this.charaValueHandler = (uuid, data, len) => {
-          console.log('[BLE] charaValueArrived:', uuid, len)
+          console.log(`[BLE] charaValueArrived: uuid=${uuid} len=${len} hex=${_hex(data)}`)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
         ble.on.charaValueArrived(this.charaValueHandler)
         this.charaNotificationHandler = (uuid, data, len) => {
-          console.log('[BLE] charaNotification:', uuid, len)
+          console.log(`[BLE] charaNotification: uuid=${uuid} len=${len} hex=${_hex(data)}`)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
         ble.on.charaNotification(this.charaNotificationHandler)
         this.writeCompleteHandler = (chara, desc, status) => {
-          console.log('[BLE] descWriteComplete:', chara, desc, 'status:', status)
+          console.log(`[BLE] descWriteComplete: chara=${chara} desc=${desc} status=${status}`)
           if (done) return
           console.log('[BLE] Requesting MTU 247...')
           try {
             hmBle.mstSetMTU(247, (mtuResult) => {
+              console.log(`[BLE] MTU callback raw: ${JSON.stringify(mtuResult)}`)
               const negotiated = mtuResult && mtuResult.mtu ? mtuResult.mtu - 3 : 20
               this._mtu = Math.max(20, negotiated)
-              console.log('[BLE] MTU negotiated:', mtuResult && mtuResult.mtu, '→ payload', this._mtu)
+              console.log(`[BLE] MTU negotiated: raw=${mtuResult && mtuResult.mtu} → payload=${this._mtu}`)
             })
           } catch (e) {
             console.log('[BLE] mstSetMTU not available:', e.message || e)
@@ -226,7 +340,7 @@ class TeslaBLE {
           settle({ success: true, mac })
         }
         ble.on.descWriteComplete(this.writeCompleteHandler)
-        console.log('[BLE] Enabling indications (CCCD=0x0002)...')
+        console.log(`[BLE] Enabling indications: CCCD write → chara=${TESLA_READ_UUID} desc=2902 data=0200 (indications)`)
         ble.write.descriptor(TESLA_READ_UUID, '2902', '0200')
         setTimeout(() => {
           if (!done) {
@@ -300,18 +414,20 @@ class TeslaBLE {
     this._sendMessage(_frame(data))
   }
   _sendMessage(message) {
+    console.log(`[BLE] TX framed (${message.length}B) hex=${_hex(message)}`)
     if (message.length <= this._mtu) {
-      console.log('[BLE] TX', message.length, 'bytes (single write)')
+      console.log(`[BLE]   → single write (mtu=${this._mtu})`)
       this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer, true)
     } else {
       const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-      console.log('[BLE] TX', message.length, 'bytes in', total, 'chunks (20ms paced)')
+      console.log(`[BLE]   → ${total} chunks of ${BLE_CHUNK_SIZE}B (20ms paced)`)
       this._sendChunk(message, 0)
     }
   }
   _sendChunk(message, offset) {
     const end = Math.min(offset + BLE_CHUNK_SIZE, message.length)
     const chunk = message.slice(offset, end)
+    console.log(`[BLE]   TX chunk [${offset}..${end}]: hex=${_hex(chunk)}`)
     this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
     if (end < message.length) setTimeout(() => this._sendChunk(message, end), 20)
   }

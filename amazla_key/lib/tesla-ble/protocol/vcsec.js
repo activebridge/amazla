@@ -209,11 +209,18 @@ const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
   // SessionInfo lives in RoutableMessage field 15 (bytes session_info) per spec.
   let sessionInfo = null
+  let sessionInfoStatus = 0 // SessionInfoStatus enum: OK=0, KEY_NOT_ON_WHITELIST=1
   const sessionInfoBytes = fields[15] instanceof Uint8Array ? fields[15] : null
   if (sessionInfoBytes) {
     try {
       const candidate = parseSessionInfo(sessionInfoBytes)
-      if (candidate && (candidate.epoch || candidate.publicKey)) sessionInfo = candidate
+      if (candidate) {
+        if (candidate.epoch || candidate.publicKey) sessionInfo = candidate
+        // Surface status separately so callers can distinguish OK from
+        // KEY_NOT_ON_WHITELIST (vehicle's response to an unknown identity
+        // key — no session material returned).
+        if (candidate.status) sessionInfoStatus = candidate.status
+      }
     } catch (_e) {}
   }
   // SignatureData in field 13. For SessionInfo responses, the tag lives at
@@ -247,6 +254,7 @@ const parseRoutableMessage = (data) => {
     sessionInfo:         sessionInfo,
     sessionInfoBytes:    sessionInfoBytes,
     sessionInfoTag:      sessionInfoTag,
+    sessionInfoStatus:   sessionInfoStatus,
     payload:             payload,
     vehicleStatus:       vehicleStatus,
     commandStatus:       commandStatus,

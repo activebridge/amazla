@@ -80,7 +80,16 @@ function setupStore(sim) {
   store.vehicleMac        = 'AA:BB:CC:DD:EE:FF'
   store.vehicleEcPublicKey = sim.vehiclePubKey
   store.vehicleVin         = bytesToBinaryString(sim.vin)
-  store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65).fill(0x04))  // dummy enrolled key
+  // Tesla protocol: ONE long-term keypair for both SessionInfoRequest identity
+  // AND ECDH. Generate a real P-256 keypair, store both halves on watch, and
+  // tell the simulator which pubkey is "enrolled" so its whitelist check passes.
+  const watchEcdh = createECDH('prime256v1')
+  watchEcdh.generateKeys()
+  const watchPriv = new Uint8Array(watchEcdh.getPrivateKey())
+  const watchPub = new Uint8Array(watchEcdh.getPublicKey())
+  store.watchPublicKey = bytesToBinaryString(watchPub)
+  store.watchPrivateKey = bytesToBinaryString(watchPriv)
+  sim._enrolledPublicKey = watchPub
   storeDoublingsTable(sim)
   buildPool(5)
   // Production session.js scans by VIN-derived local name (Tesla rotates the
@@ -149,16 +158,19 @@ describe('BLE connection and session establishment', () => {
     expect(session.counter).toBeGreaterThan(0)
   })
 
-  test('session.established stays false if key pool is empty', async () => {
+  test('session.established stays false if watch keypair missing', async () => {
+    // Per Tesla protocol, session establishment requires the long-term
+    // enrolled keypair (priv32 + pub65) on the watch. Without it we cannot
+    // sign SessionInfoRequest as a whitelisted identity nor derive ECDH.
     store.reset()
     store.vehicleMac         = 'AA:BB:CC:DD:EE:FF'
     store.vehicleVin         = bytesToBinaryString(sim.vin)
     store.vehicleEcPublicKey = sim.vehiclePubKey
     storeDoublingsTable(sim)
-    // no key pool
+    // no watchPublicKey / watchPrivateKey
     const result = await p((cb) => session.requestSessionInfo(cb))
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/pool empty/i)
+    expect(result.error).toMatch(/keypair missing|re-pair/i)
   })
 })
 
@@ -457,23 +469,12 @@ describe('connection error paths', () => {
     expect(result.error).toMatch(/VIN not set/i)
   })
 
-  test('disconnect during GATT setup → retries once and succeeds', async () => {
-    jest.useFakeTimers()
-    try {
-      bleHarness._disconnectDuringPrepare = true
-
-      // Promise.all drives the async chain while advancing timers to flush:
-      //   2000ms retry delay + BLE chunk pacing (several 20ms timers)
-      const [result] = await Promise.all([
-        p((cb) => session.requestSessionInfo(cb)),
-        jest.advanceTimersByTimeAsync(5000),
-      ])
-
-      expect(result.success).toBe(true)
-      expect(session.established).toBe(true)
-    } finally {
-      jest.useRealTimers()
-    }
+  test('disconnect during GATT setup → fails (single-attempt connect, no retry)', async () => {
+    bleHarness._disconnectDuringPrepare = true
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/disconnected during setup/i)
+    expect(session.established).toBe(false)
   })
 })
 

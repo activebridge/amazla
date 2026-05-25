@@ -80,19 +80,23 @@ class Phone {
     })
   }
 
-  // Generate or fetch enrolled watch keypair. Writes store.watchPublicKey.
-  // cb: { success, publicKeyBinary }
+  // Generate or fetch enrolled watch keypair. Writes store.watchPublicKey + watchPrivateKey.
+  // Tesla protocol uses the same long-term keypair for SessionInfoRequest identity AND ECDH,
+  // so the watch must hold both halves locally (mirrors vehicle-command Go SDK).
+  // cb: { success, publicKeyBinary, privateKeyBinary }
   syncKeys(cb) {
     this._call('BLE_SYNC_KEYS', {}, cb, (r) => {
       store.watchPublicKey = r.publicKeyBinary
+      if (r.privateKeyBinary) store.watchPrivateKey = r.privateKeyBinary
     })
   }
 
   // Sync/generate watch keypair and pre-build both BLE messages in one IPC call.
-  // Writes store.watchPublicKey. cb: { success, pairMsg, verifyMsg }
+  // Writes store.watchPublicKey + watchPrivateKey. cb: { success, pairMsg, verifyMsg }
   pairSetup(cb) {
     this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
       store.watchPublicKey = r.watchPublicKey
+      if (r.watchPrivateKey) store.watchPrivateKey = r.watchPrivateKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })
   }
@@ -126,6 +130,7 @@ class Phone {
     this._request('SIMULATE_PAIR')
       .then((r) => {
         store.watchPublicKey = r.watchPublicKeyBinary
+        if (r.watchPrivateKeyBinary) store.watchPrivateKey = r.watchPrivateKeyBinary
         store.vehicleEcPublicKey = binaryStringToBytes(r.vehicleEcKeyBinary)
         store.vehicleMac = r.mac
         store.vehicleVin = r.vin

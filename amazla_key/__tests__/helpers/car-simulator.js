@@ -109,12 +109,32 @@ export class CarSimulator {
 
   _handleSessionInfo(sessionInfoRequestBytes, requestUuid, harness) {
     const siReqFields = decodeMessage(sessionInfoRequestBytes)
-    const ephemeralPubKey = siReqFields[1]  // Uint8Array, 65 bytes
+    const requestorPubKey = siReqFields[1]  // Uint8Array, 65 bytes — long-term enrolled key per Tesla SDK
 
-    // ECDH from vehicle side: vehiclePrivKey × ephemeralPubKey
-    // This equals ephemeralPrivKey × vehiclePubKey (ECDH symmetry)
+    // Whitelist enforcement: the real Tesla VCSEC checks SessionInfoRequest.publicKey
+    // against its whitelist (built from enrolled pair messages). If the key isn't
+    // recognized, vehicle responds with SessionInfo{status: KEY_NOT_ON_WHITELIST=1}
+    // and no session material. Modeling this is what would have caught
+    // session.js's old bug where it sent a per-call ephemeral pool key instead
+    // of the long-term enrolled key.
+    if (this._enrolledPublicKey) {
+      const enrolled = this._enrolledPublicKey
+      const match =
+        requestorPubKey &&
+        requestorPubKey.length === enrolled.length &&
+        requestorPubKey.every((b, i) => b === enrolled[i])
+      if (!match) {
+        const si = encodeVarintField(5, 1) // SessionInfo.status = KEY_NOT_ON_WHITELIST
+        const response = encodeBytes(15, si)
+        harness.notify(this._frame(response))
+        return
+      }
+    }
+
+    // ECDH from vehicle side: vehiclePrivKey × requestorPubKey
+    // This equals requestorPrivKey × vehiclePubKey (ECDH symmetry)
     this._ecdh.setPrivateKey(this.vehiclePrivKey)
-    const shared    = this._ecdh.computeSecret(Buffer.from(ephemeralPubKey))
+    const shared    = this._ecdh.computeSecret(Buffer.from(requestorPubKey))
     const keyMat    = createHash('sha1').update(shared).digest()
     const sessionKey = keyMat.subarray(0, 16)
     const cmdKey    = createHmac('sha256', sessionKey).update(CMD_LABEL).digest()
