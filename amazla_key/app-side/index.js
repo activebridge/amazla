@@ -1,7 +1,7 @@
 import kpayAppSide from 'kpay-amazfit/app-side'
 import { kpayConfig } from '../shared/kpay-config'
 import { MessageBuilder } from '../shared/message-side'
-import bleCrypto, { binaryStringToBytes, bytesToBinaryString } from './ble-crypto.js'
+import bleCrypto, { binaryStringToBytes, bytesToBinaryString, bytesToHex } from './ble-crypto.js'
 
 const messageBuilder = new MessageBuilder()
 const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
@@ -13,6 +13,34 @@ const BINARY_METHODS = { BLE_PRECOMPUTE_TABLE: 1, BLE_SYNC_POOL: 1, BLE_COMPLETE
 
 const okBin = (...parts) => Buffer.concat([Buffer.from([1]), ...parts.map((p) => Buffer.from(p))])
 const errBin = (msg) => Buffer.concat([Buffer.from([0]), Buffer.from(String(msg || 'error'), 'utf-8')])
+
+// Validate stored keypair: pub must be 65 chars (uncompressed EC), priv 32 chars.
+// settingsStorage has historically corrupted binary strings with control bytes
+// (saw a 32-byte priv come back as 200+ chars with literal `` sequences);
+// when either side is the wrong length the pair is unusable for ECDH and we
+// MUST regenerate both — otherwise SessionInfo HMAC verification fails.
+const _binStrHex = (s) => {
+  if (s == null) return '<null>'
+  let h = ''
+  for (let i = 0; i < s.length; i++) h += (s.charCodeAt(i) & 0xff).toString(16).padStart(2, '0')
+  return h
+}
+
+const ensureValidKeypair = () => {
+  const pub = settings.settingsStorage.getItem('tesla_public_key')
+  const priv = settings.settingsStorage.getItem('tesla_private_key')
+  console.log(`[App.diag] tesla_public_key:  len=${pub == null ? 'null' : pub.length} hex=${_binStrHex(pub)}`)
+  console.log(`[App.diag] tesla_private_key: len=${priv == null ? 'null' : priv.length} hex=${_binStrHex(priv)}`)
+  if (pub && priv && pub.length === 65 && priv.length === 32) {
+    return { publicKeyBinary: pub, privateKeyBinary: priv, regenerated: false }
+  }
+  console.log(`[App] Keypair invalid (pub=${pub ? pub.length : 'null'}, priv=${priv ? priv.length : 'null'}) — regenerating`)
+  const fresh = bleCrypto.generateEnrolledKeyPair()
+  if (!fresh.success) throw new Error('Keypair regen failed')
+  settings.settingsStorage.setItem('tesla_private_key', fresh.privateKeyBinary)
+  settings.settingsStorage.setItem('tesla_public_key', fresh.publicKeyBinary)
+  return { publicKeyBinary: fresh.publicKeyBinary, privateKeyBinary: fresh.privateKeyBinary, regenerated: true }
+}
 
 const dispatch = async (method, response, params = {}) => {
   const isBin = !!BINARY_METHODS[method]
@@ -36,52 +64,31 @@ const actions = {
     // Return BOTH priv+pub: Tesla protocol uses one long-term keypair for both
     // SessionInfoRequest identity AND ECDH (vehicle-command Go SDK pattern).
     // Watch must hold the private key to derive the session secret locally.
-    const storedPub = settings.settingsStorage.getItem('tesla_public_key')
-    const storedPriv = settings.settingsStorage.getItem('tesla_private_key')
-    if (storedPub && storedPriv) {
-      console.log('[App] Sending existing watch keypair to watch')
-      return { success: true, publicKeyBinary: storedPub, privateKeyBinary: storedPriv }
-    }
-    console.log('[App] No keys found, generating new pair')
-    const result = bleCrypto.generateEnrolledKeyPair()
-    if (!result.success) return result
     try {
-      settings.settingsStorage.setItem('tesla_private_key', result.privateKeyBinary)
-      settings.settingsStorage.setItem('tesla_public_key', result.publicKeyBinary)
-      console.log('[App] ✓ Stored enrolled key pair')
-      return {
-        success: true,
-        publicKeyBinary: result.publicKeyBinary,
-        privateKeyBinary: result.privateKeyBinary,
-      }
-    } catch (storeError) {
-      console.log(`[App] Failed to store keys: ${storeError.message}`)
-      return { success: false, message: 'Failed to store keys' }
+      const { publicKeyBinary, privateKeyBinary, regenerated } = ensureValidKeypair()
+      console.log(regenerated ? '[App] ✓ Regenerated and stored enrolled key pair' : '[App] Sending existing watch keypair to watch')
+      return { success: true, publicKeyBinary, privateKeyBinary }
+    } catch (e) {
+      return { success: false, message: e.message || 'Failed to store keys' }
     }
   },
 
   BLE_PAIR_SETUP: async () => {
     console.log('[App] BLE_PAIR_SETUP: syncing keys and building pair/verify messages')
-    const stored = settings.settingsStorage.getItem('tesla_public_key')
-    if (!stored) {
-      const keypair = bleCrypto.generateEnrolledKeyPair()
-      if (!keypair.success) return keypair
-      settings.settingsStorage.setItem('tesla_private_key', keypair.privateKeyBinary)
-      settings.settingsStorage.setItem('tesla_public_key', keypair.publicKeyBinary)
-    }
-    const publicKeyBinary = settings.settingsStorage.getItem('tesla_public_key')
-    const privateKeyBinary = settings.settingsStorage.getItem('tesla_private_key')
+    const { publicKeyBinary, privateKeyBinary } = ensureValidKeypair()
     const r = bleCrypto.pairSetup(publicKeyBinary)
     if (!r.success) return r
     return { ...r, watchPrivateKey: privateKeyBinary }
   },
 
-  // Binary response: [0x01][65-byte ecKey][16384-byte table]
-  BLE_COMPLETE_PAIRING: async ({ rawResponse }) => {
-    console.log('[App] BLE_COMPLETE_PAIRING: parsing verify response and computing table')
-    const r = bleCrypto.completePairing(binaryStringToBytes(rawResponse))
-    if (!r.success) return errBin(r.error)
-    return okBin(binaryStringToBytes(r.ecKey), binaryStringToBytes(r.table))
+  // No-op success. The pair response's field 17 holds a signer/admin key,
+  // not the vehicle's runtime EC pubkey; we used to extract it here and build
+  // the doublings table, which silently produced wrong ECDH. The vehicle's
+  // real pubkey now comes from SessionInfo on first connect — watch then calls
+  // BLE_PRECOMPUTE_TABLE with that key. Matches Tesla Go SDK.
+  BLE_COMPLETE_PAIRING: async () => {
+    console.log('[App] BLE_COMPLETE_PAIRING: no-op (vehicle pub is fetched from SessionInfo on connect)')
+    return okBin()
   },
 
   // Binary response: [0x01][pool bytes]. Empty payload = already have enough keys.
@@ -92,6 +99,35 @@ const actions = {
     const r = bleCrypto.generateKeyPool(TARGET)
     if (!r.success) return errBin(r.error)
     return okBin(binaryStringToBytes(r.pool))
+  },
+
+  // Diagnostic: read stored phone-side priv/pub, derive pub from priv on phone,
+  // and return all three as hex strings (ASCII-safe over JSON). Watch compares
+  // to its locally-stored values + logs the result. No vehicle needed.
+  VERIFY_KEYPAIR: async () => {
+    const pubBinStr = settings.settingsStorage.getItem('tesla_public_key')
+    const privBinStr = settings.settingsStorage.getItem('tesla_private_key')
+    const phonePubHex = pubBinStr ? bytesToHex(binaryStringToBytes(pubBinStr)) : null
+    const phonePrivHex = privBinStr ? bytesToHex(binaryStringToBytes(privBinStr)) : null
+    let derivedPubHex = null
+    let deriveError = null
+    if (privBinStr && privBinStr.length === 32) {
+      const r = bleCrypto.derivePublicKey(binaryStringToBytes(privBinStr))
+      if (r.success) derivedPubHex = bytesToHex(r.pubBytes)
+      else deriveError = r.error
+    } else {
+      deriveError = `priv length wrong: ${privBinStr ? privBinStr.length : 'null'}`
+    }
+    return {
+      success: true,
+      phonePubLen: pubBinStr ? pubBinStr.length : null,
+      phonePrivLen: privBinStr ? privBinStr.length : null,
+      phonePubHex,
+      phonePrivHex,
+      derivedPubHex,
+      deriveError,
+      pubMatchesDerived: derivedPubHex && phonePubHex && derivedPubHex === phonePubHex,
+    }
   },
 
   SAVE_VEHICLE_MAC: async ({ mac }) => {

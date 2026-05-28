@@ -266,7 +266,6 @@ Page({
     phone.syncSettings()
 
     tesla.onChange(render)
-    tesla.connect()
 
     onKey({
       callback: (key, keyEvent) => {

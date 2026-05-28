@@ -23,6 +23,7 @@ var __pageBuilt = false // Prevent duplicate builds
 var statusDotWidget = null
 var statusTextWidget = null
 var chkKeyWidget = null
+var chkPrivWidget = null
 var chkECWidget = null
 var chkTableWidget = null
 var chkPoolWidget = null
@@ -59,6 +60,7 @@ function clearAllTimers() {
 }
 function updateChecklist() {
   var watchKey = store.watchPublicKey
+  var watchPriv = store.watchPrivateKey
   var ecKey = store.vehicleEcPublicKey
   var hasTable = store.hasDoublingsTable
   var mac = store.vehicleMac
@@ -68,6 +70,8 @@ function updateChecklist() {
   var vehicleVin = vehicleVinBytes ? String.fromCharCode.apply(null, vehicleVinBytes) : null
   if (chkKeyWidget)
     chkKeyWidget.setProperty(hmUI.prop.TEXT, `${watchKey ? '✓' : '✗'} KEY:${watchKey ? watchKey.length : '---'}b`)
+  if (chkPrivWidget)
+    chkPrivWidget.setProperty(hmUI.prop.TEXT, `${watchPriv ? '✓' : '✗'} PRIV:${watchPriv ? watchPriv.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasTable ? '✓' : '✗'} TABLE`)
   if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.TEXT, `POOL:${poolSize}`)
@@ -82,6 +86,7 @@ function updateChecklist() {
     chkMacWidget.setProperty(hmUI.prop.COLOR, hasVehicle ? 0x44cc66 : 0xff5555)
   }
   if (chkKeyWidget) chkKeyWidget.setProperty(hmUI.prop.COLOR, watchKey ? 0x44cc66 : 0xff5555)
+  if (chkPrivWidget) chkPrivWidget.setProperty(hmUI.prop.COLOR, watchPriv ? 0x44cc66 : 0xff5555)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.COLOR, ecKey ? 0x44cc66 : 0xff5555)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasTable ? 0x44cc66 : 0xff5555)
   if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.COLOR, poolSize > 0 ? 0x44cc66 : 0xff8833)
@@ -188,6 +193,58 @@ function onUnlock() {
     }
   })
 }
+function onTestKeys() {
+  addLog('Verifying keypair...', 0xffcc00)
+  updateStatus('VERIFY KEYS', 0xffcc00)
+  function bytesToHex(b) {
+    if (!b) return '<null>'
+    var s = ''
+    for (var i = 0; i < b.length; i++) {
+      var h = (b[i] & 0xff).toString(16)
+      s += h.length < 2 ? '0' + h : h
+    }
+    return s
+  }
+  phone.verifyKeypair(function (r) {
+    if (!r || !r.success) {
+      addLog('Verify err: ' + ((r && r.error) || '?'), 0xff4444)
+      updateStatus('VERIFY FAIL', 0xff4444)
+      return
+    }
+    var wPub = store.watchPublicKey
+    var wPriv = store.watchPrivateKey
+    var wPubHex = bytesToHex(wPub)
+    var wPrivHex = bytesToHex(wPriv)
+    console.log('[Keys.diag] phone.pubLen        = ' + r.phonePubLen)
+    console.log('[Keys.diag] phone.privLen       = ' + r.phonePrivLen)
+    console.log('[Keys.diag] phone.pubHex        = ' + r.phonePubHex)
+    console.log('[Keys.diag] phone.privHex       = ' + r.phonePrivHex)
+    console.log('[Keys.diag] phone.derivedPubHex = ' + r.derivedPubHex)
+    console.log('[Keys.diag] phone.deriveError   = ' + r.deriveError)
+    console.log('[Keys.diag] phone.pub==derived  = ' + r.pubMatchesDerived)
+    console.log('[Keys.diag] watch.pubLen        = ' + (wPub ? wPub.length : 'null'))
+    console.log('[Keys.diag] watch.privLen       = ' + (wPriv ? wPriv.length : 'null'))
+    console.log('[Keys.diag] watch.pubHex        = ' + wPubHex)
+    console.log('[Keys.diag] watch.privHex       = ' + wPrivHex)
+    console.log('[Keys.diag] phone.pub==watch.pub  = ' + (r.phonePubHex === wPubHex))
+    console.log('[Keys.diag] phone.priv==watch.priv= ' + (r.phonePrivHex === wPrivHex))
+    var vehEc = store.vehicleEcPublicKey
+    var vehEcHex = bytesToHex(vehEc)
+    console.log('[Keys.diag] watch.vehicleEcLen  = ' + (vehEc ? vehEc.length : 'null'))
+    console.log('[Keys.diag] watch.vehicleEcHex  = ' + vehEcHex)
+    console.log('[Keys.diag] vehicleEc==watchPub = ' + (vehEcHex === wPubHex) + '  (if TRUE: phone extracted wrong key from pairing response)')
+    var ok = r.pubMatchesDerived && r.phonePubHex === wPubHex && r.phonePrivHex === wPrivHex
+    if (ok) {
+      updateStatus('KEYS OK', 0x00cc44)
+      addLog('✓ Keypair valid', 0x44ff44)
+    } else {
+      updateStatus('KEYS BAD', 0xff4444)
+      if (!r.pubMatchesDerived) addLog('✗ pub != priv·G', 0xff4444)
+      if (r.phonePubHex !== wPubHex) addLog('✗ pub phone≠watch', 0xff4444)
+      if (r.phonePrivHex !== wPrivHex) addLog('✗ priv phone≠watch', 0xff4444)
+    }
+  })
+}
 function onTestBLE() {
   addLog('BLE self-test...', 0xffcc00)
   updateStatus('TESTING...', 0xffcc00)
@@ -288,6 +345,9 @@ Page({
       }
       __pageBuilt = true
 
+      console.log('[STORE.diag] === on BLE page build (second-run state) ===')
+      try { store.diag() } catch (e) { console.log('[STORE.diag] err', e && e.message) }
+
       logWidgets = []
       UI.reset()
       phone = new Phone()
@@ -342,7 +402,7 @@ Page({
       chkKeyWidget = uiText({
         x: 20,
         y: 80,
-        w: 210,
+        w: 140,
         h: 22,
         text: '? KEY',
         text_size: 18,
@@ -350,10 +410,21 @@ Page({
         align_h: hmUI.align.LEFT,
         centered: false,
       })
-      chkECWidget = uiText({
-        x: 250,
+      chkPrivWidget = uiText({
+        x: 170,
         y: 80,
-        w: 210,
+        w: 140,
+        h: 22,
+        text: '? PRIV',
+        text_size: 18,
+        color: 0x888888,
+        align_h: hmUI.align.LEFT,
+        centered: false,
+      })
+      chkECWidget = uiText({
+        x: 320,
+        y: 80,
+        w: 140,
         h: 22,
         text: '? EC',
         text_size: 18,
@@ -496,7 +567,7 @@ Page({
       uiButton({
         x: 20,
         y: 418,
-        w: 440,
+        w: 215,
         h: 42,
         text: 'TEST BLE',
         text_size: 16,
@@ -505,6 +576,20 @@ Page({
         press_color: 0x15153a,
         radius: 8,
         click_func: onTestBLE,
+        centered: false,
+      })
+      uiButton({
+        x: 245,
+        y: 418,
+        w: 215,
+        h: 42,
+        text: 'TEST KEYS',
+        text_size: 16,
+        color: 0xffffff,
+        normal_color: 0x663a1a,
+        press_color: 0x331d0d,
+        radius: 8,
+        click_func: onTestKeys,
         centered: false,
       })
       BLE.onDisconnect = () => {
@@ -537,6 +622,7 @@ Page({
       statusDotWidget = null
       statusTextWidget = null
       chkKeyWidget = null
+      chkPrivWidget = null
       chkECWidget = null
       chkTableWidget = null
       chkPoolWidget = null

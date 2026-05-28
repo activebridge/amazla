@@ -246,52 +246,43 @@ describe('pairSetup()', () => {
 // ─── completePairing ──────────────────────────────────────────────────────────
 
 describe('completePairing()', () => {
-  test('writes store.vehicleEcPublicKey + store.vehicleDoublingsTable on success', async () => {
-    const ecKey = fakeBinary(65, 0x04)
-    const table = fakeBinary(16384)
-    const page = makeMb({ BLE_COMPLETE_PAIRING: okEnv(ecKey, table) })
-    const phone = new Phone(page)
-
+  // After the field-17 EC-extraction bug was found (2026-05-28),
+  // BLE_COMPLETE_PAIRING became a no-op and the vehicle pubkey is fetched
+  // from SessionInfo on first connect instead. phone.completePairing now
+  // short-circuits to success without any RPC or store writes.
+  test('always calls cb with success:true (no RPC, no store writes)', async () => {
+    const before = store.vehicleEcPublicKey
+    const phone = new Phone({ request: jest.fn() })
     const result = await new Promise(resolve =>
       phone.completePairing(fakeBinary(100), resolve))
-
     expect(result.success).toBe(true)
-    expect(store.vehicleEcPublicKey).toBeInstanceOf(Uint8Array)
-    expect(store.vehicleEcPublicKey.length).toBe(65)
-    expect(store.vehicleDoublingsTable).toBeDefined()
-    expect(store.vehicleDoublingsTable.length).toBe(4096) // 16384 bytes / 4
+    expect(store.vehicleEcPublicKey).toBe(before)  // untouched
   })
 
-  test('calls cb with success:false when companion reports an error', async () => {
-    const page = makeMb({ BLE_COMPLETE_PAIRING: errEnv('Could not extract vehicle EC key') })
-    const phone = new Phone(page)
-
+  test('still succeeds even when no messageBuilder is available', async () => {
+    const phone = new Phone(null)
     const result = await new Promise(resolve =>
       phone.completePairing(fakeBinary(100), resolve))
+    expect(result.success).toBe(true)
+  })
+})
 
-    expect(result.success).toBe(false)
-    expect(result.error).toMatch(/ec key/i)
+// ─── precomputeTable ──────────────────────────────────────────────────────────
+
+describe('precomputeTable()', () => {
+  test('returns 16384-byte Uint8Array from BLE_PRECOMPUTE_TABLE binary response', async () => {
+    const table = fakeBinary(16384)
+    const page = makeMb({ BLE_PRECOMPUTE_TABLE: okEnv(table) })
+    const phone = new Phone(page)
+    const result = await phone.precomputeTable(strBytes(fakeBinary(65, 0x04)))
+    expect(result).toBeInstanceOf(Uint8Array)
+    expect(result.length).toBe(16384)
   })
 
-  test('calls cb with success:false on a truncated (malformed) response', async () => {
-    // Success envelope but body shorter than ecKey(65)+table — no table bytes.
-    const page = makeMb({ BLE_COMPLETE_PAIRING: okEnv(fakeBinary(65)) })
+  test('rejects when companion returns an error envelope', async () => {
+    const page = makeMb({ BLE_PRECOMPUTE_TABLE: errEnv('Bad point') })
     const phone = new Phone(page)
-
-    const result = await new Promise(resolve =>
-      phone.completePairing(fakeBinary(100), resolve))
-
-    expect(result.success).toBe(false)
-    expect(result.error).toMatch(/malformed/i)
-  })
-
-  test('calls cb with success:false on rejection', async () => {
-    const page = { request: jest.fn(() => Promise.reject(new Error('OOM'))) }
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve =>
-      phone.completePairing(fakeBinary(100), resolve))
-    expect(result.success).toBe(false)
+    await expect(phone.precomputeTable(strBytes(fakeBinary(65, 0x04)))).rejects.toThrow(/bad point/i)
   })
 })
 

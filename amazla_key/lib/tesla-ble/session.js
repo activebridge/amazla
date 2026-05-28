@@ -1,3 +1,4 @@
+import Phone from '../phone.js'
 import store from '../store.js'
 import teslaBLE from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
@@ -54,12 +55,8 @@ class TeslaSession {
     return this._cmdHmacFn(buildHMACTagInput(store.vehicleVin || new Uint8Array(0), epoch, counter, expiresAt, payloadBytes))
   }
   requestSessionInfo(callback) {
-    // Early exit if table not available - don't proceed with session at all
-    if (!store.vehicleDoublingsTable) {
-      console.log('[SESSION] ❌ Doublings table not found - cannot establish session')
-      callback({ success: false, error: 'Doublings table not found. Please complete pairing first.' })
-      return
-    }
+    // No table check here anymore — _ensureTableForVehiclePub will build it
+    // on the fly from the SessionInfo response if missing or stale.
     this._ensureConnected(callback)
   }
   _ensureConnected(callback) {
@@ -134,12 +131,12 @@ class TeslaSession {
     })
   }
   _proceedWithSession(callback) {
-    if (!this.vehiclePublicKey) {
-      this.vehiclePublicKey = store.vehicleEcPublicKey || null
-      if (!this.vehiclePublicKey) {
-        callback({ success: false, error: 'Vehicle EC key missing — re-pair via phone' })
-        return
-      }
+    // Stored vehicle pubkey isn't required at this point — SessionInfo will
+    // include the real one, and _ensureTableForVehiclePub builds the table
+    // from it (rebuilding if the stored key has changed). On first connect
+    // after pair, both stored pubkey and table will be absent; that's OK.
+    if (!this.vehiclePublicKey && store.vehicleEcPublicKey) {
+      this.vehiclePublicKey = store.vehicleEcPublicKey
     }
     this._doSessionInfoRequest(callback)
   }
@@ -226,14 +223,9 @@ class TeslaSession {
     }
   }
   _processSessionInfo(response, callback) {
-    // Whether we should persist the response's pubkey as a fallback — defer the
-    // actual write until AFTER HMAC verification so an unauthenticated response
-    // cannot seed store.vehicleEcPublicKey.
-    let persistResponsePubKey = false
     if (response.sessionInfo.publicKey && response.sessionInfo.publicKey.length === 65) {
       this.vehiclePublicKey = response.sessionInfo.publicKey
       console.log('[SESSION] Got vehicle public key from SessionInfo response')
-      if (!store.vehicleEcPublicKey) persistResponsePubKey = true
     } else {
       console.log('[SESSION] SessionInfo response has no valid public key')
       if (!this.vehiclePublicKey) this.vehiclePublicKey = store.vehicleEcPublicKey || null
@@ -253,9 +245,6 @@ class TeslaSession {
     } else {
       console.log('[SESSION] Epoch: <null or empty>')
     }
-    // After the if/else above, this.vehiclePublicKey is guaranteed non-null
-    // (else-branch returns early on null). The length guard remains because a
-    // corrupted stored pubkey could be the wrong size.
     console.log(`[SESSION] Vehicle public key: ${this.vehiclePublicKey.length} bytes`)
     if (this.vehiclePublicKey.length !== 65) {
       console.log(`[SESSION] ❌ INVALID PUBLIC KEY: ${this.vehiclePublicKey.length} bytes, need 65`)
@@ -263,23 +252,51 @@ class TeslaSession {
       return
     }
 
-    if (!this._deriveSessionKey(callback)) return
-    if (!this._verifySessionInfoTag(response, callback)) return
-
-    if (persistResponsePubKey) {
-      store.vehicleEcPublicKey = response.sessionInfo.publicKey
-      console.log('[SESSION] ✓ Saved vehicle public key from SessionInfo as fallback (no pairing key found)')
-    }
-
-    const { cmdHmac } = createSessionHmacs(this.sessionKey)
-    this._cmdHmacFn = cmdHmac
-    this.established = true
-    console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
-    callback({
-      success: true,
-      counter: this.counter,
-      epoch: this.epoch ? this.epoch.length : 0,
+    this._ensureTableForVehiclePub((err) => {
+      if (err) { callback({ success: false, error: err }); return }
+      if (!this._deriveSessionKey(callback)) return
+      if (!this._verifySessionInfoTag(response, callback)) return
+      const { cmdHmac } = createSessionHmacs(this.sessionKey)
+      this._cmdHmacFn = cmdHmac
+      this.established = true
+      console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
+      callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
     })
+  }
+  // Build/refresh the doublings table on phone when the vehicle's SessionInfo
+  // pubkey differs from what's stored (or nothing is stored). The pair
+  // response's field 17 does NOT contain the vehicle's runtime EC key (it's a
+  // signer/admin key from WhitelistInfo), so the table must come from a live
+  // SessionInfo pubkey. Matches Tesla Go SDK.
+  // Calls done(err|null).
+  _ensureTableForVehiclePub(done) {
+    const hx = (b) => { if (!b) return '<null>'; let s=''; for (let i=0;i<b.length;i++){ const h=(b[i]&0xff).toString(16); s += h.length<2?'0'+h:h } return s }
+    const sessionPub = this.vehiclePublicKey
+    const stored = store.vehicleEcPublicKey
+    const sameKey = stored && stored.length === 65 && hx(stored) === hx(sessionPub)
+    if (sameKey && store.hasDoublingsTable) {
+      done(null)
+      return
+    }
+    console.log('[SESSION] vehicle pub changed (or no table) — rebuilding doublings table on phone')
+    console.log('[SESSION.diag] sessionInfo.publicKey hex=' + hx(sessionPub))
+    console.log('[SESSION.diag] store.vehicleEcPublicKey hex=' + hx(stored))
+    const phone = new Phone()
+    phone.precomputeTable(sessionPub)
+      .then((tableBytes) => {
+        if (!tableBytes || tableBytes.length !== 16384) {
+          done('Bad doublings table size: ' + (tableBytes ? tableBytes.length : 'null'))
+          return
+        }
+        store.vehicleEcPublicKey = sessionPub
+        store.vehicleDoublingsTable = tableBytes
+        console.log('[SESSION] ✓ Doublings table rebuilt and saved (' + tableBytes.length + ' bytes)')
+        done(null)
+      })
+      .catch((e) => {
+        console.log('[SESSION] ❌ precomputeTable failed: ' + (e && e.message))
+        done('precomputeTable failed: ' + (e && e.message))
+      })
   }
   _deriveSessionKey(callback) {
     const ecdhTable = store.vehicleDoublingsTable

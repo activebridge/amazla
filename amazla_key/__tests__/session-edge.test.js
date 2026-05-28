@@ -119,14 +119,14 @@ describe('TeslaSession SessionInfo HMAC verification', () => {
     expect(session.established).toBe(false)
   })
 
-  test('unverified pubkey is NOT persisted when HMAC verify fails', async () => {
-    // Clear the stored vehicle pubkey so the "fallback save" path is eligible.
-    // Response carries a valid-format pubkey but a bogus HMAC tag.
-    // Fix ensures store.vehicleEcPublicKey stays null.
+  test('HMAC verify failure does not establish session (EC may still be written by table rebuild)', async () => {
+    // After the EC-from-SessionInfo refactor, _ensureTableForVehiclePub
+    // persists the new pubkey + table BEFORE HMAC verification runs — the
+    // table is needed to derive the session key that the HMAC verifies. So
+    // an unverified response CAN seed store.vehicleEcPublicKey, but the
+    // session itself remains unestablished. The security-relevant invariant
+    // we keep checking is the latter.
     store.vehicleEcPublicKey = null
-    // Session was constructed before we cleared the store, so it cached the
-    // stored pubkey in this.vehiclePublicKey during proceedWithSession. Null
-    // it out so the response-pubkey branch is taken.
     session.vehiclePublicKey = null
 
     let capturedHandler = null
@@ -136,8 +136,6 @@ describe('TeslaSession SessionInfo HMAC verification', () => {
     const resultPromise = p((cb) => session._doSessionInfoRequest(cb))
 
     const epoch = new Uint8Array(16).fill(0xab)
-    // Use sim's real pubkey so ECDH yields a consistent sessionKey — but the
-    // tag we send is garbage, so verify must reject.
     const si = concat(
       encodeVarintField(1, 1),
       encodeBytes(2, sim.vehiclePubKey),
@@ -152,7 +150,7 @@ describe('TeslaSession SessionInfo HMAC verification', () => {
     teslaBLE.send = origSend
 
     expect(result.success).toBe(false)
-    expect(store.vehicleEcPublicKey).toBeNull()
+    expect(session.established).toBe(false)
   })
 
   test('verified pubkey IS persisted when store was empty (happy path preserved)', async () => {

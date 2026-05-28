@@ -1,6 +1,6 @@
 
 import { encodeBytes, encodeEnum, concat, decodeMessage } from './protobuf.js'
-import { parseVehicleStatus, parseWhitelistEntryInfo } from './vcsec.js'
+import { parseVehicleStatus } from './vcsec.js'
 
 const SIGNATURE_TYPE_PRESENT_KEY = 2  // Used for pairing (no HMAC needed)
 const KEY_ROLE_OWNER = 2  // ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3
@@ -81,22 +81,6 @@ const parsePairingResponse = (data) => {
       dbg.innerKeys = Object.keys(fields).join(',')
       console.log('[VCSEC] ✓ Unwrapped field 16 (UnsignedMessage), inner fields: ' + dbg.innerKeys)
     }
-    let vehiclePublicKey = null
-    if (fields[17] instanceof Uint8Array) {
-      const wlEntryInfo = parseWhitelistEntryInfo(fields[17])
-      if (wlEntryInfo.publicKey && wlEntryInfo.publicKey.length === 65) {
-        vehiclePublicKey = wlEntryInfo.publicKey
-        dbg.vehiclePublicKeyFound = true
-        console.log('[VCSEC] ✓ Extracted vehicle EC key from field 17 (65 bytes)')
-      } else {
-        dbg.vehiclePublicKeyFound = false
-        if (fields[17]) {
-          console.log('[VCSEC] Field 17 present but invalid: length=' + (wlEntryInfo.publicKey ? wlEntryInfo.publicKey.length : 'undefined'))
-        }
-      }
-    } else {
-      dbg.field17Present = false
-    }
     if (fields[1] !== undefined) {
       dbg.f1type = (typeof fields[1] === 'number') ? `V=${fields[1]}` : `B(${fields[1].length})`
     }
@@ -112,14 +96,14 @@ const parsePairingResponse = (data) => {
       dbg.f12fault = statusFields[2] ?? 0
       if (dbg.f12fault && dbg.f12fault !== 0) {
         dbg.path = 'f12err'
-        return { success: false, status: 'error', error: `Proto fault:${dbg.f12fault}`, vehiclePublicKey, dbg }
+        return { success: false, status: 'error', error: `Proto fault:${dbg.f12fault}`, dbg }
       }
     }
     if (fields[1] instanceof Uint8Array) {
       dbg.path = 'f1B'
       dbg.f1len = fields[1].length
       const vehicleStatus = parseVehicleStatus(fields[1])
-      return { success: true, status: 'pending', type: 'vehicleStatus', vehicleStatus, vehiclePublicKey, dbg }
+      return { success: true, status: 'pending', type: 'vehicleStatus', vehicleStatus, dbg }
     }
     if (!fields[4] && fields[3] instanceof Uint8Array) {
       dbg.path = 'f3B'
@@ -128,7 +112,7 @@ const parsePairingResponse = (data) => {
       const wlInfo = wlStatus[1] !== undefined ? wlStatus[1] : -1
       dbg.wlFault = wlInfo < 0 ? 0 : wlInfo
       if (wlStatus[2] instanceof Uint8Array) dbg.signer = wlStatus[2]
-      return { success: true, status: 'pending', message: 'Outer field 3 (not terminal)', vehiclePublicKey, dbg }
+      return { success: true, status: 'pending', message: 'Outer field 3 (not terminal)', dbg }
     }
     if (!fields[4] && typeof fields[1] === 'number') {
       dbg.path = 'f1N'
@@ -137,24 +121,24 @@ const parsePairingResponse = (data) => {
       console.log('[VCSEC] ✓ Got operationStatus: ' + statusName)
 
       if (fields[1] === OPERATIONSTATUS_WAIT) {
-        return { success: true, status: 'wait', message: 'Tap key card on car', vehiclePublicKey, dbg }
+        return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       }
       if (fields[1] === OPERATIONSTATUS_UNKNOWN_KEY) {
         console.log('[VCSEC] ✓ Vehicle returned UNKNOWN_KEY status during pairing - this means key was added!')
         dbg.hasSigner = true  // Signal that pairing is complete and key was enrolled
-        return { success: true, status: 'ok', message: 'Key enrolled (UNKNOWN_KEY transition)', vehiclePublicKey, dbg }
+        return { success: true, status: 'ok', message: 'Key enrolled (UNKNOWN_KEY transition)', dbg }
       }
       if (fields[1] >= 3 && fields[1] !== OPERATIONSTATUS_UNKNOWN_KEY) {
-        return { success: false, status: 'error', error: statusName, vehiclePublicKey, dbg }
+        return { success: false, status: 'error', error: statusName, dbg }
       }
-      return { success: true, status: 'pending', message: statusName, vehiclePublicKey, dbg }
+      return { success: true, status: 'pending', message: statusName, dbg }
     }
     const commandStatusBytes = fields[4]
     if (!commandStatusBytes) {
       dbg.path = 'noF4'
       const availableFields = Object.keys(fields).join(',')
-      console.log('[VCSEC] ⚠ No field 4 (CommandStatus). Available fields: ' + availableFields + '. Vehicle EC key found: ' + (vehiclePublicKey ? 'YES' : 'NO'))
-      return { success: false, status: 'error', error: 'No command status (field 4)', availableFields, vehiclePublicKey, dbg }
+      console.log('[VCSEC] ⚠ No field 4 (CommandStatus). Available fields: ' + availableFields)
+      return { success: false, status: 'error', error: 'No command status (field 4)', availableFields, dbg }
     }
     dbg.path = 'f4'
     const csFields = decodeMessage(commandStatusBytes)
@@ -171,14 +155,14 @@ const parsePairingResponse = (data) => {
         if (dbg.signer) {
           dbg.wlFault = 0
           dbg.hasSigner = true
-          console.log('[VCSEC] Pairing completed (auto-approved), vehiclePublicKey=' + (vehiclePublicKey ? 'yes' : 'NO'))
-          return { success: true, status: 'ok', message: 'Key added (auto-approved)', vehiclePublicKey, dbg }
+          console.log('[VCSEC] Pairing completed (auto-approved)')
+          return { success: true, status: 'ok', message: 'Key added (auto-approved)', dbg }
         }
         return { success: true, status: 'pending', message: 'Ambient push (not pairing result)', dbg }
       }
       if (wlInfo === 0) {
-        console.log('[VCSEC] Pairing completed (manual), vehiclePublicKey=' + (vehiclePublicKey ? 'yes' : 'NO'))
-        return { success: true, status: 'ok', message: 'Key added successfully', vehiclePublicKey, dbg }
+        console.log('[VCSEC] Pairing completed (manual)')
+        return { success: true, status: 'ok', message: 'Key added successfully', dbg }
       }
       if (wlInfo === 14) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }
@@ -191,13 +175,13 @@ const parsePairingResponse = (data) => {
       case OPERATIONSTATUS_ERROR:
         const faultCode = typeof field3 === 'number' ? field3 : 0
         dbg.wlFault = faultCode
-        return { success: false, status: 'error', error: `WL fault:${faultCode}`, vehiclePublicKey, dbg }
+        return { success: false, status: 'error', error: `WL fault:${faultCode}`, dbg }
     }
     dbg.path = 'unk'
-    return { success: false, error: 'Unknown fmt', vehiclePublicKey, dbg }
+    return { success: false, error: 'Unknown fmt', dbg }
   } catch (e) {
     dbg.exception = e.message
-    return { success: false, error: e.message, vehiclePublicKey: null, dbg }
+    return { success: false, error: e.message, dbg }
   }
 }
 export {

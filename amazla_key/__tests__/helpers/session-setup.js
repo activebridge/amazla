@@ -14,6 +14,18 @@ import { computeTeslaBLEName } from '../../lib/tesla-ble/ble-name.js'
 import { bleHarness, _fsStore } from '../../__mocks__/zos.js'
 import { CarSimulator } from './car-simulator.js'
 import bleCrypto, { bytesToBinaryString } from '../../app-side/ble-crypto.js'
+import Phone from '../../lib/phone.js'
+
+// Stub Phone.precomputeTable: rebuild path now needs phone-side BigInt
+// scalar-mul. In tests we run the same bleCrypto.buildDoublingsTable that the
+// companion would, so session.js gets a real 16384-byte table without
+// requiring a working messageBuilder. Tests that want to simulate phone
+// unavailability override this per-case.
+Phone.prototype.precomputeTable = function (vehiclePubBytes) {
+  const r = bleCrypto.buildDoublingsTable(bytesToBinaryString(vehiclePubBytes))
+  if (!r.success) return Promise.reject(new Error(r.error))
+  return Promise.resolve(new Uint8Array(r.buffer))
+}
 
 /** Wrap a callback-style function as a Promise */
 export const p = (fn) => new Promise((resolve) => fn(resolve))

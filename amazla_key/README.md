@@ -28,8 +28,8 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │   Phone needed ONLY for:          Watch handles:                             │
 │   • Initial key generation        • BLE communication                        │
 │   • Session key pool sync         • Session establishment (ECDH)             │
-│                                   • Commands (HMAC signing)                  │
-│                                   • Passive entry                            │
+│   • BigInt scalar-mul (table)     • Commands (HMAC signing)                  │
+│     once per vehicle pubkey       • Passive entry                            │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -176,27 +176,37 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │      │                  │ ◄── STATUS_OK ──── │                    │          │
 │      │                  │   "Key added"      │                    │          │
 │      │                  │ ─── verifyMsg ───► │                    │          │
-│      │                  │   (GetWhitelist    │                    │          │
-│      │                  │    EntryInfo)      │                    │          │
-│      │                  │ ◄── EntryInfo ──── │                    │          │
-│      │                  │  {vehicleECKey,    │                    │          │
-│      │                  │   slot, role}      │                    │          │
+│      │                  │   (whitelist query)│                    │          │
+│      │                  │ ◄── WhitelistInfo ─│                    │          │
+│      │                  │  (acks pairing —   │                    │          │
+│      │                  │   does NOT carry   │                    │          │
+│      │                  │   vehicle EC key)  │                    │          │
 │      │ ◄ completePair ─ │                    │                    │          │
-│      │   (rawBytes)     │                    │                    │          │
+│      │   (no-op)        │                    │                    │          │
+│      │ ── {success} ──► │                    │                    │          │
+│      │                  │                    │                    │          │
+│      │       ─── First SessionInfoRequest (fires automatically) ───          │
+│      │                  │ ── SessionInfoReq ►│                    │          │
+│      │                  │   (watch pubkey)   │                    │          │
+│      │                  │ ◄── SessionInfo ── │                    │          │
+│      │                  │  {VEHICLE EC KEY,  │                    │          │
+│      │                  │   epoch, counter,  │                    │          │
+│      │                  │   HMAC tag}        │                    │          │
+│      │ ◄ precomputeT ── │                    │                    │          │
+│      │   (vehicle pub)  │                    │                    │          │
 │   ┌──┴──────┐           │                    │                    │          │
-│   │Parse EC │           │                    │                    │          │
-│   │key      │           │                    │                    │          │
-│   │Compute  │           │                    │                    │          │
-│   │doublings│           │                    │                    │          │
+│   │BigInt   │           │                    │                    │          │
+│   │scalar-  │           │                    │                    │          │
+│   │mul →    │           │                    │                    │          │
+│   │16KB     │           │                    │                    │          │
 │   │table    │           │                    │                    │          │
 │   └──┬──────┘           │                    │                    │          │
-│      │ ── {ecKey,   ──► │                    │                    │          │
-│      │    doublings}    │                    │                    │          │
+│      │ ── doublings ──► │                    │                    │          │
 │      │               ┌──┴───┐                │                    │          │
 │      │               │Save  │                │                    │          │
-│      │               │ECkey,│                │                    │          │
+│      │               │EC,   │                │                    │          │
 │      │               │MAC,  │                │                    │          │
-│      │               │dblngs│                │                    │          │
+│      │               │table │                │                    │          │
 │      │               └──┬───┘                │                    │          │
 │      │ ◄── syncPool ─── │                    │                    │          │
 │   ┌──┴──────┐           │                    │                    │          │
@@ -213,7 +223,8 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │      │               └──┬───┘                │                    │          │
 │      │                  │                    │                    │          │
 │      ▼                  ▼                    ▼                    ▼          │
-│   Paired! Watch is authorized key with session pool ready.                   │
+│   Paired + table built. Watch is now standalone — no phone needed.           │
+│   (If post-pair table build fails, it'll rebuild on the user's next CONNECT) │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -423,7 +434,7 @@ Read-only queries sent as `UnsignedMessage.informationRequest` (field 1). Sent a
 |----------|-------|-------------|
 | `INFO_REQUEST_GET_STATUS` | 0 | Vehicle status: door/closure states, lock state, sleep, user presence |
 | `INFO_REQUEST_GET_WHITELIST_INFO` | 5 | Full whitelist: all enrolled keys and their metadata |
-| `INFO_REQUEST_GET_WHITELIST_ENTRY_INFO` | 6 | Single key entry: slot, role, public key (used to fetch vehicle EC key after pairing) |
+| `INFO_REQUEST_GET_WHITELIST_ENTRY_INFO` | 6 | Single key entry: slot, role, public key |
 
 **Usage:**
 ```javascript
@@ -435,7 +446,7 @@ import { buildInformationRequest, buildUnsignedMessage, buildRoutableMessage,
 const req = buildInformationRequest(INFO_REQUEST_GET_STATUS)
 const msg = buildRoutableMessage({ toDomain: DOMAIN_VEHICLE_SECURITY, payload: buildUnsignedMessage({ informationRequest: req }) })
 
-// Whitelist entry info for slot 0 (fetch vehicle EC key after pairing):
+// Whitelist entry info for slot 0:
 const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null, null, 0)
 ```
 
@@ -640,6 +651,57 @@ Watch the logs for `[BLE] Clearing stale native state (app-start): mstDisconnect
 | Native BLE crash recovery | ✅ Applied | `lib/tesla-ble/ble.js` persists `connect_id` and runs `mstDisconnect` on next launch. See "Native BLE crash recovery". |
 | Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
 | Key pool removal | ⏳ Vestigial | After the long-term key refactor, the pool is no longer used for session establishment. Still synced from phone and still required by `store.isPaired`. Safe to remove in a follow-up. |
+| Vehicle pub from SessionInfo (not pair response) | ✅ Applied 2026-05-28 | See "Doublings table built from SessionInfo (Go SDK parity)" below. |
+
+## Doublings table built from SessionInfo (Go SDK parity)
+
+**The bug we fixed.** Until 2026-05-28 the phone tried to extract the vehicle's EC pubkey from field 17 (`WhitelistInfo`) of the BLE pair response. That field actually carries a signer/admin key — not the vehicle's runtime EC pubkey — so the ECDH doublings table was built for the wrong point and **every** CONNECT after PAIR died with `Invalid SessionInfo HMAC`.
+
+Confirmed empirically with TEST KEYS + `[SESSION.diag]` (three distinct EC pubkeys observed in one session):
+
+| Hex | Source |
+|---|---|
+| `0489a8…d8408e` | Watch's own pubkey |
+| `04dba3…d2ada4` | Field 17 of pair response — used to build wrong table |
+| `049fa7…78735d50` | `sessionInfo.publicKey` from live SessionInfo response (vehicle's actual key) |
+
+### How it works now (matches Tesla Go SDK)
+
+1. **PAIR** just enrolls the watch's pubkey with the vehicle. Phone-side `BLE_COMPLETE_PAIRING` is a no-op success. No EC key extraction, no table build.
+2. **Immediately after pair** (still BLE-connected to vehicle, phone still in range): pairing.js fires a `SessionInfoRequest` via `teslaSession.requestSessionInfo`. The vehicle's response carries its real EC pubkey. `_ensureTableForVehiclePub` calls `phone.precomputeTable(sessionPub)` over the existing `BLE_PRECOMPUTE_TABLE` RPC. Phone returns the 16384-byte doublings table. Watch stores both `vehicleEcPublicKey` and `vehicleDoublingsTable`.
+3. **Every subsequent CONNECT/command** is fully standalone: ECDH uses the stored table (no phone, no scalar-mul of arbitrary points).
+4. **Vehicle pub mismatch** (rare — Tesla may rotate identity key, or user re-pairs against a different car with same VIN): `_ensureTableForVehiclePub` detects the hex change, rebuilds the table on phone, replaces the stored copy. Self-healing.
+5. **Post-pair table build failure** (phone moved out of range, vehicle dozed off, etc.) is non-fatal: pairing.js logs `Table build skipped (will retry on CONNECT)` and the table will be built on the user's next CONNECT.
+
+### Code changes
+
+| File | Change |
+|---|---|
+| `app-side/index.js` `BLE_COMPLETE_PAIRING` | No-op success (`return okBin()`). No more EC extraction. |
+| `lib/phone.js` `completePairing()` | Short-circuits to `cb({ success: true })`. |
+| `lib/phone.js` `precomputeTable(pubBytes)` | New helper — wraps the existing `BLE_PRECOMPUTE_TABLE` RPC, returns 16384-byte Uint8Array. |
+| `lib/tesla-ble/session.js` `_processSessionInfo` | Now calls `_ensureTableForVehiclePub(done)` before ECDH. |
+| `lib/tesla-ble/session.js` `_ensureTableForVehiclePub` | Compares stored EC hex to SessionInfo hex; on mismatch or missing table, builds via `phone.precomputeTable` and persists. |
+| `lib/tesla-ble/session.js` `requestSessionInfo` | Dropped the "no table → error" early-exit; build happens on the fly. |
+| `lib/tesla-ble/session.js` `_proceedWithSession` | Stored vehicle pub no longer required upfront. |
+| `lib/tesla-ble/pairing.js` | After `phone.completePairing` succeeds, fires `teslaSession.requestSessionInfo` to build the table while still connected. |
+| `lib/store.js` `isPaired` | No longer requires `vehicleEcPublicKey` / `hasDoublingsTable` — those land on first connect, not at pair. |
+| `lib/tesla-ble/protocol/vcsec.js` `parseWhitelistEntryInfo` | Removed (2026-05-28). It misread `KeyIdentifier.publicKeySHA1` (20 B hash) as the 65-byte EC point. The 65-byte length gate in `parsePairingResponse` always rejected it so nothing real depended on it, but keeping the path risked a future "fix" silently building the doublings table from a hash. Tesla Go SDK never extracts vehicle EC from a pair response — only from `SessionInfo.publicKey`. |
+| `lib/tesla-ble/protocol/vcsec-pairing.js` `parsePairingResponse` | Dropped the field-17 extraction block and the `vehiclePublicKey` field from every return value. Consumers (`pairing.js`) only ever read `status` / `error` / `dbg`. |
+
+### Diagnostics kept in place
+
+- **TEST KEYS** button on the BLE debug page (`onTestKeys` in `page/ble/index.js`): prints `[Keys.diag]` hex for watch pub/priv, phone pub/priv, derived pub (priv·G), and stored `vehicleEcPublicKey` for visual comparison. Includes `vehicleEc==watchPub` sanity flag.
+- **`[SESSION.diag]`** lines in `session.js._ensureTableForVehiclePub` print `sessionInfo.publicKey` and `store.vehicleEcPublicKey` hex whenever a rebuild is needed.
+- **`VERIFY_KEYPAIR`** action on phone (`app-side/index.js`) returns phone-derived pubkey from priv to confirm priv·G == pub.
+
+### Migration notes
+
+Existing installs have a stale (wrong) doublings table on disk. After deploying this change:
+
+- The first CONNECT will detect the mismatch and rebuild automatically. No user action required.
+- The post-pair table build means a fresh PAIR is also self-healing — no need to manually re-pair to clear stale state.
+- `vehicleEcPublicKey` LocalStorage entry no longer matters for correctness; it's just an optimization marker to skip table rebuilds.
 
 ## Future Work
 
@@ -753,10 +815,10 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 2. Tap **SCAN** → finds Tesla vehicle by BLE MAC
 3. Tap **PAIR** → initiates enrollment
 4. **Tap your NFC keycard** on car's center console when prompted
-5. Watch logs show: **"Saved vehicle EC key"** (in green) ✅
+5. Watch logs show: **"✓ ECDH table built — standalone"** ✅
 6. Pairing complete!
 
-**What happens**: Vehicle's 65-byte EC public key is automatically extracted from the pairing response and saved to persistent storage. This key is reused for all future session establishments.
+**What happens**: After the whitelist enrollment succeeds, the watch immediately fires a `SessionInfoRequest`. The vehicle's response carries its 65-byte EC public key. The phone (still in range) precomputes the doublings table; the watch persists both. This key/table is reused for every future session — the watch is then fully standalone.
 
 ### 2. Session Keys (auto-synced)
 
@@ -782,9 +844,9 @@ The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`
 ### Troubleshooting
 
 **"Invalid public key" error during pairing?**
-- Vehicle didn't send EC key in response
-- Check that pairing response includes field 17 (WhitelistEntryInfo)
-- Try pairing again with fresh enrollment
+- Post-pair `SessionInfoRequest` did not return a valid 65-byte vehicle EC key
+- Make sure the car is awake and the phone is in BLE range when pairing finishes
+- Try pairing again — the next CONNECT will retry the table build
 
 **Need to re-pair?**
 1. Tap **BLE** button on main page → BLE debug page
@@ -793,55 +855,30 @@ The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`
 
 ## Tesla SDK Protocol - Vehicle EC Key Acquisition
 
-### Overview
+The vehicle's 65-byte P-256 EC pubkey is needed for the ECDH that derives the session key. It comes from the **SessionInfo response** to the very first `SessionInfoRequest`, NOT from the pair response.
 
-The vehicle's 65-byte P-256 EC public key is critical for:
-- **ECDH key exchange** - Session establishment
-- **Precomputed table generation** - 2× ECDH speedup (8s → 3.5-4s)
+(Earlier versions of this app tried to extract the vehicle pubkey from field 17 of the pair response — that field is `WhitelistInfo` and carries a signer/admin key, not the runtime EC key. See "Doublings table built from SessionInfo (Go SDK parity)" above for the history.)
 
-### Corrected Protocol (Per Tesla vehicle-command SDK)
+### Current Flow
 
-**Key Finding**: The vehicle's public key is **NOT sent automatically during pairing**.
+| Phase | Message | Direction | Content |
+|---|---|---|---|
+| 1. Pair | `WhitelistOperation` | → Vehicle | Add watch's pubkey to whitelist (user taps NFC card) |
+| 1. Response | `CommandStatus` / `WhitelistOperationStatus` | ← Vehicle | Pair OK |
+| 2. SessionInfoRequest | `RoutableMessage` with `session_info_request` | → Vehicle | Watch's pubkey as identity |
+| 2. SessionInfoResponse | `RoutableMessage.session_info` | ← Vehicle | **`publicKey` = vehicle's 65-byte EC key**, epoch, counter, HMAC tag |
+| 3. Table build | `BLE_PRECOMPUTE_TABLE` | Watch → Phone | Send vehicle pub; phone returns 16384-byte doublings table |
+| 4. Storage | — | Watch | Save `vehicleEcPublicKey` + `vehicleDoublingsTable.dat` |
 
-Instead, it must be explicitly requested using the `GetWhitelistEntryInfo` information request:
+Step 2 fires immediately after pair completes (in `pairing.js`, via `teslaSession.requestSessionInfo`) so the table is built while the phone is still in range and the BLE connection is still up. After that, the watch is standalone for every subsequent CONNECT.
 
-```proto
-// From vcsec.proto (Tesla SDK)
-message WhitelistEntryInfo {
-    KeyIdentifier     keyId = 1;
-    PublicKey         publicKey = 2;      // ← 65-byte P-256 EC key
-    KeyMetadata       metadataForKey = 4;
-    uint32            slot = 6;
-    Keys.Role         keyRole = 7;
-}
-
-enum InformationRequestType {
-    GET_STATUS = 0;
-    GET_WHITELIST_INFO = 5;
-    GET_WHITELIST_ENTRY_INFO = 6;  // ← Type used to fetch key
-}
-```
-
-### Proper Pairing & Key Acquisition Flow
-
-| Phase | Message Type | Direction | Content | Notes |
-|-------|------------|-----------|---------|-------|
-| **1. Pairing** | WhitelistOperation | → Vehicle | Add our key to whitelist | User confirms on car |
-| **1. Response** | CommandStatus | ← Vehicle | Success/error | Vehicle whitelist updated |
-| **2. Request** | InformationRequest | → Vehicle | Type=6, publicKey=ourKey | Request our entry info |
-| **2. Response** | WhitelistEntryInfo | ← Vehicle | publicKey (65 bytes) | **Vehicle's EC key obtained** |
-| **3. Storage** | — | Watch | Save EC key | Used for ECDH & precomputation |
-
-### Implementation in This App
-
-EC key extraction is handled by the phone during pairing via `BLE_COMPLETE_PAIRING` (`app-side/ble-crypto.js` → `completePairing`). The phone parses the raw verify response, extracts field 17 (`WhitelistEntryInfo`), and returns the 65-byte EC key + precomputed doublings table. The watch stores them via `Phone.completePairing()` in `lib/phone.js`.
-
-If the EC key is missing from storage when the watch tries to establish a session, it returns an error: `"Vehicle EC key missing — re-pair via phone"`. There is no watch-side recovery path.
+If a CONNECT later finds the vehicle's pubkey has changed (`store.vehicleEcPublicKey` hex ≠ `sessionInfo.publicKey` hex), `_ensureTableForVehiclePub` rebuilds the table on the fly — phone needs to be in range that one time.
 
 ### References
 
 - **Tesla SDK Proto**: https://github.com/teslamotors/vehicle-command/blob/main/pkg/protocol/protobuf/vcsec.proto
-- **Protocol Constants**: `lib/tesla-ble/protocol/vcsec.js` → `buildInformationRequest()`
+- **Watch implementation**: `lib/tesla-ble/session.js` (`_processSessionInfo`, `_ensureTableForVehiclePub`)
+- **Phone implementation**: `app-side/index.js` (`BLE_PRECOMPUTE_TABLE` action), `lib/phone.js` (`precomputeTable`)
 
 ## Development
 

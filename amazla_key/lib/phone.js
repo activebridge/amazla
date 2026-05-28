@@ -1,5 +1,5 @@
 import store from './store.js'
-import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
+import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/binary-utils.js'
 
 // Copy a buffer view into a fresh Uint8Array so the large underlying BLE
 // message buffer can be GC'd once the bytes we need are extracted.
@@ -95,10 +95,20 @@ class Phone {
   // Writes store.watchPublicKey + watchPrivateKey. cb: { success, pairMsg, verifyMsg }
   pairSetup(cb) {
     this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
+      const _hex = (s) => { if (s == null) return '<null>'; let h=''; for (let i=0;i<s.length;i++) h += (s.charCodeAt(i)&0xff).toString(16).padStart(2,'0'); return h }
+      console.log(`[Watch.diag] r.watchPublicKey:  len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length} hex=${_hex(r.watchPublicKey)}`)
+      console.log(`[Watch.diag] r.watchPrivateKey: len=${r.watchPrivateKey == null ? 'null' : r.watchPrivateKey.length} hex=${_hex(r.watchPrivateKey)}`)
       store.watchPublicKey = r.watchPublicKey
       if (r.watchPrivateKey) store.watchPrivateKey = r.watchPrivateKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })
+  }
+
+  // Diagnostic: phone reads its stored priv/pub, derives pub from priv, returns
+  // all three as hex. Watch caller compares to local store + logs everything.
+  // No vehicle needed; tells us if phone↔watch keys agree AND if priv·G == pub.
+  verifyKeypair(cb) {
+    return this._call('VERIFY_KEYPAIR', {}, cb, (r) => r)
   }
 
   // Persist Tesla MAC to companion settingsStorage so the settings page can show paired state.
@@ -106,20 +116,22 @@ class Phone {
     this._call('SAVE_VEHICLE_MAC', { mac }, cb, () => {})
   }
 
-  // Parse raw Tesla verify response, extract vehicle EC key, compute doublings table.
-  // Writes store.vehicleEcPublicKey + store.vehicleDoublingsTable. cb: { success }
-  completePairing(rawResponseBinary, cb) {
-    this._requestBin('BLE_COMPLETE_PAIRING', { rawResponse: rawResponseBinary })
-      .then((body) => {
-        // [65-byte ecKey][16384-byte table]
-        if (body.length < 66) throw new Error('Malformed pairing response')
-        store.vehicleEcPublicKey = toU8(body.subarray(0, 65))
-        store.vehicleDoublingsTable = toU8(body.subarray(65))
-        if (cb) cb({ success: true })
-      })
-      .catch((e) => {
-        if (cb) cb({ success: false, error: e.message })
-      })
+  // No-op: pair just enrolls the watch key with the vehicle. The vehicle's
+  // actual session EC pubkey is NOT in the pair response (field 17 holds a
+  // signer/admin key from WhitelistInfo, not the runtime key). We get the
+  // real vehicle pubkey from SessionInfo on first connect and build the
+  // doublings table then — matches Tesla Go SDK. Kept as a hook so the
+  // pairing flow can still log completion.
+  completePairing(_rawResponseBinary, cb) {
+    if (cb) cb({ success: true })
+  }
+
+  // Build the ECDH doublings table on phone for a vehicle EC pubkey learned
+  // from a SessionInfo response. Returns 16384-byte Uint8Array.
+  precomputeTable(vehiclePubBytes) {
+    const binStr = bytesToBinaryString(vehiclePubBytes)
+    return this._requestBin('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary: binStr })
+      .then((body) => toU8(body))
   }
 
   // Dev-mode: simulate full pairing flow without a real vehicle.

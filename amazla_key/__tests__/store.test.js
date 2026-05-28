@@ -313,16 +313,20 @@ describe('lib/store.js', () => {
     expect(store.isPaired).toBe(false)
   })
 
-  test('isPaired: false when vehicleEcPublicKey missing', () => {
+  test('isPaired: stays true when vehicleEcPublicKey missing (lands on first CONNECT, not pair)', () => {
     setupFullyPaired()
     store.removeItem('vehicleEcPublicKey')
-    expect(store.isPaired).toBe(false)
+    // After refactor: vehicle EC pubkey is fetched from SessionInfo on first
+    // CONNECT, not extracted at pair time. isPaired no longer depends on it.
+    expect(store.isPaired).toBe(true)
   })
 
-  test('isPaired: false when doublingsTable missing', () => {
+  test('isPaired: stays true when doublingsTable missing (built on first CONNECT, not pair)', () => {
     setupFullyPaired()
     store.vehicleDoublingsTable = null
-    expect(store.isPaired).toBe(false)
+    // After refactor: doublings table is built from SessionInfo response, not
+    // at pair time. isPaired no longer depends on it.
+    expect(store.isPaired).toBe(true)
   })
 
   test('isPaired: false when keyPool empty', () => {

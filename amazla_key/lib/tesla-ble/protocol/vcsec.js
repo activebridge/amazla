@@ -266,12 +266,6 @@ const generateUUID = () => {
   for (let i = 0; i < 16; i++) uuid[i] = Math.floor(Math.random() * 256)
   return uuid
 }
-const parseWhitelistEntryInfo = (data) => {
-  const fields = decodeMessage(data)
-  return {
-    publicKey: fields[1] ?? null,  // 65-byte P-256 EC public key
-  }
-}
 export {
   DOMAIN_VEHICLE_SECURITY,
   SIGNATURE_TYPE_HMAC_PERSONALIZED,
@@ -299,7 +293,6 @@ export {
   parseFromVCSECMessage,
   parseCommandStatus,
   parseMessageStatus,
-  parseWhitelistEntryInfo,
   generateUUID,
   generateRoutingAddress,
 }

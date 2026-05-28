@@ -1,4 +1,5 @@
 import BLE from './index.js'
+import teslaSession from './session.js'
 import store from '../store.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { parsePairingResponse } from './protocol/vcsec-pairing.js'
@@ -170,9 +171,21 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
       phone.completePairing(bytesToBinaryString(r.data), (result) => {
         if (cancelled) return
         if (!result.success) { onError(result.error || 'Parse failed'); return }
-        log('EC key + table saved')
-        onState('done')
-        onSuccess()
+        log('Pair OK, building ECDH table now')
+        // Reuse the live BLE connection + in-range phone: do one SessionInfo
+        // exchange right away so phone.precomputeTable runs while we have both.
+        // After this the watch is fully standalone for subsequent CONNECTs.
+        // Failure here is non-fatal: the table will rebuild on next CONNECT.
+        teslaSession.requestSessionInfo((sr) => {
+          if (cancelled) return
+          if (sr && sr.success) {
+            log('✓ ECDH table built — standalone')
+          } else {
+            log('Table build skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
+          }
+          onState('done')
+          onSuccess()
+        })
       })
     }
 
