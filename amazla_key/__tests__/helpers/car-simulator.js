@@ -83,8 +83,10 @@ export class CarSimulator {
 
   onReceive(payload, harness) {
     const fields = decodeMessage(payload)
-    // request_uuid at RoutableMessage field 50 — echoed in response, used as challenge
-    const requestUuid = fields[50] instanceof Uint8Array ? fields[50] : new Uint8Array(0)
+    // RoutableMessage.uuid lives at field 51 (current Tesla proto). Vehicle uses
+    // this as the SessionInfo HMAC challenge. Field 50 (request_uuid) is set by
+    // the vehicle on its response, not the requestor.
+    const requestUuid = fields[51] instanceof Uint8Array ? fields[51] : new Uint8Array(0)
 
     // SessionInfoRequest lives at RoutableMessage field 14
     if (fields[14] instanceof Uint8Array) {

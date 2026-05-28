@@ -148,6 +148,9 @@ class TeslaSession {
     // the enrolled key is in its whitelist.
     const watchPriv = store.watchPrivateKey
     const watchPub = store.watchPublicKey
+    const hx = (b) => { if (!b) return '<null>'; let s=''; for (let i=0;i<b.length;i++){ const h=(b[i]&0xff).toString(16); s += h.length<2?'0'+h:h } return s }
+    console.log(`[SESSION.diag] watchPriv hex=${hx(watchPriv)}`)
+    console.log(`[SESSION.diag] watchPub  hex=${hx(watchPub)}`)
     if (!watchPriv || watchPriv.length !== 32 || !watchPub || watchPub.length !== 65) {
       callback({ success: false, error: 'Watch keypair missing — re-pair from phone' })
       return
@@ -312,19 +315,25 @@ class TeslaSession {
     return true
   }
   _verifySessionInfoTag(response, callback) {
+    const hx = (b, n) => {
+      if (!b) return '<null>'
+      const len = n === undefined ? b.length : Math.min(n, b.length)
+      let s = ''
+      for (let i = 0; i < len; i++) { const h = (b[i] & 0xff).toString(16); s += h.length < 2 ? '0' + h : h }
+      return s
+    }
     if (!response.sessionInfoTag) {
       console.log('[SESSION] ❌ Unauthenticated SessionInfo (no tag)')
       callback({ success: false, error: 'Unauthenticated SessionInfo response' })
       return false
     }
+    const vin = store.vehicleVin || new Uint8Array(0)
+    const challenge = this._lastRequestUuid || new Uint8Array(0)
+    const infoBytes = response.sessionInfoBytes
     const infoHmac = createSessionInfoHmac(this.sessionKey)
-    const expectedTag = infoHmac(
-      buildSessionInfoHmacInput(
-        store.vehicleVin || new Uint8Array(0),
-        this._lastRequestUuid || new Uint8Array(0),
-        response.sessionInfoBytes,
-      ),
-    )
+    const expectedTag = infoHmac(buildSessionInfoHmacInput(vin, challenge, infoBytes))
+    console.log(`[SESSION.diag] sessionKey[0..4]=${hx(this.sessionKey, 4)} vinLen=${vin.length} challengeLen=${challenge.length} infoLen=${infoBytes ? infoBytes.length : 0}`)
+    console.log(`[SESSION.diag] expectedTag[0..4]=${hx(expectedTag, 4)} got=${hx(response.sessionInfoTag, 4)} lens exp=${expectedTag.length} got=${response.sessionInfoTag.length}`)
     if (expectedTag.length !== response.sessionInfoTag.length) {
       console.log('[SESSION] ❌ SessionInfo HMAC length mismatch')
       callback({ success: false, error: 'Invalid SessionInfo HMAC' })
@@ -334,6 +343,11 @@ class TeslaSession {
     for (let i = 0; i < expectedTag.length; i++) diff |= expectedTag[i] ^ response.sessionInfoTag[i]
     if (diff !== 0) {
       console.log('[SESSION] ❌ SessionInfo HMAC mismatch')
+      console.log(`[SESSION.diag] challenge=${hx(challenge)}`)
+      console.log(`[SESSION.diag] vin=${hx(vin)}`)
+      console.log(`[SESSION.diag] infoBytes=${hx(infoBytes)}`)
+      console.log(`[SESSION.diag] expectedTag=${hx(expectedTag)}`)
+      console.log(`[SESSION.diag] gotTag=${hx(response.sessionInfoTag)}`)
       callback({ success: false, error: 'Invalid SessionInfo HMAC' })
       return false
     }

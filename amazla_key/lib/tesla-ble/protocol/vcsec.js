@@ -143,7 +143,11 @@ const buildRoutableMessage = ({ toDomain, routingAddress, payload, sessionInfoRe
   if (payload) parts.push(encodeBytes(10, payload))
   if (sessionInfoRequest) parts.push(encodeBytes(14, sessionInfoRequest))
   if (signatureData) parts.push(encodeBytes(13, signatureData))
-  if (uuid) parts.push(encodeBytes(50, uuid))
+  // RoutableMessage.uuid is field 51 (current proto: request_uuid=50, uuid=51).
+  // Vehicle uses incoming `uuid` (51) as the SessionInfo HMAC challenge — putting
+  // the value in field 50 made vehicle see challenge=empty and our tag verification
+  // failed with HMAC mismatch despite correct ECDH/sessionKey.
+  if (uuid) parts.push(encodeBytes(51, uuid))
   return concat(...parts)
 }
 const buildSessionInfoRequest = (publicKey, challenge) => {

@@ -542,6 +542,7 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
 | SessionInfo tag verification | `subKey=HMAC(sessionKey,"session info")`, tag over TLV(sigType=HMAC, VIN, uuid) + encodedInfo | Same | ✅ Match |
+| Outgoing uuid → RoutableMessage field | 51 (`uuid`) — vehicle uses this as SessionInfo HMAC challenge | 51 (`message.Uuid`) per `dispatcher.go` | ✅ Match (fixed 2026-05-28 — see [SessionInfo HMAC mismatch](#sessioninfo-hmac-mismatch--outgoing-uuid-was-in-wrong-field-2026-05-28)) |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
 | GATT discovery | `mstBuildProfile({ pair: true, ... })` — service/char/descriptor topology declared explicitly, mirrors `@silver-zepp/easy-ble` shape | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
 | Chunk write size | Fixed 20 bytes | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (no MTU API in ZeppOS docs) |
@@ -640,6 +641,38 @@ The watch must hold the long-term private key locally because ECDH requires it a
 
 Watch the logs for `[BLE] Clearing stale native state (app-start): mstDisconnect(N)` on launch — this means a prior run left an id and we just recovered. If you don't see it, the prior run cleaned up properly (or there was no prior connection to track).
 
+### SessionInfo HMAC mismatch — outgoing UUID was in wrong field (2026-05-28)
+
+**Symptom on device:** Every CONNECT after PAIR got back a valid-looking 156-byte `SessionInfo` (epoch, vehicle pubkey, valid 32-byte tag), ECDH ran successfully, then `_verifySessionInfoTag` failed with `❌ SessionInfo HMAC mismatch`. No re-pair, fresh keys, fresh table — same result every time.
+
+**Diagnostic process (no extra device round-trips):**
+
+1. Added `[SESSION.diag]` hex of `sessionKey[0..4]`, VIN, challenge, `sessionInfoBytes`, `expectedTag`, `gotTag` inside `_verifySessionInfoTag` (commit also kept as a permanent log line — cheap and pinpoints input bugs in one read).
+2. On `BLE → VERIFY KEYS` (no car needed): confirmed `phone.priv == watch.priv`, `priv·G == enrolled pub`, no key corruption.
+3. Reproduced the math offline with Node `crypto`: derived `watchPub` from `watchPriv` ✓, ran ECDH against captured `vehiclePub` → identical `sessionKey` (`1e89a7fc…`) to what the watch reported ✓, HMAC over our TLV(VIN, challenge, infoBytes) → identical `expectedTag` to what the watch computed ✓. So watch math was correct given those inputs — meaning **the vehicle was hashing different inputs**.
+4. Brute-tried variants of (VIN, challenge, infoBytes) and labels against the vehicle's actual tag. Exactly one matched: **challenge = empty bytes (length 0)**. Vehicle was signing with `challenge=""`.
+
+**Root cause:** Current Tesla `universal_message.proto` (cross-checked against the live SDK) has
+
+```proto
+bytes request_uuid = 50;
+bytes uuid         = 51;
+```
+
+`buildRoutableMessage` was emitting the per-message uuid into **field 50**. The vehicle reads the uuid for the SessionInfo HMAC challenge from **field 51** (`RoutableMessage.Uuid` in Tesla Go SDK — `dispatcher.go` sets `message.Uuid = uuid` for outgoing, never `RequestUuid`). Field 51 was absent in our TX, so the vehicle's challenge was empty, but our verification used the random uuid we'd generated — mismatch every time.
+
+The reason `vehicle-command` works in the wild: it puts the uuid in field 51 on send, and reads the response's `request_uuid` (field 50) on receive — vehicle echoes the incoming field-51 value into the response's field 50 for request/response correlation. We never sent field 51, so vehicle echoed empty back, and signed with empty challenge. Our local `_lastRequestUuid` (the value we put in field 50) was never the challenge.
+
+**Fix (2026-05-28):**
+
+1. `lib/tesla-ble/protocol/vcsec.js` `buildRoutableMessage` — uuid now goes in field 51, with a comment pointing at the proto field numbers and the failure mode.
+2. `__tests__/helpers/car-simulator.js` `onReceive` — simulator reads the challenge from field 51 to mirror real vehicle behaviour. (Earlier the simulator and the watch were aligned on the wrong field, so the test suite couldn't catch this — single-mock blind spot.)
+3. Protocol tests in `__tests__/session-protocol.test.js` updated to assert uuid presence at field 51.
+
+`_verifySessionInfoTag` still uses our locally stored `_lastRequestUuid` (the value we sent), which is now placed in field 51 and used by the vehicle as challenge. No protocol-level need to read field 50 from the response (we own the value).
+
+**Test simulator lesson:** The simulator was decoded the same wrong-field as the code under test, so they "agreed" and 490 tests passed while the real vehicle never could. Mocks have to model the platform's contract, not just the implementation's idiosyncrasies — already in `feedback_mocks_model_os_contract` but worth restating: when a single field number flip silently maps both sides, that's a sign the mock was written from the code instead of from the spec.
+
 ## Pending
 
 | Item | Status | Notes |
@@ -652,6 +685,7 @@ Watch the logs for `[BLE] Clearing stale native state (app-start): mstDisconnect
 | Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
 | Key pool removal | ⏳ Vestigial | After the long-term key refactor, the pool is no longer used for session establishment. Still synced from phone and still required by `store.isPaired`. Safe to remove in a follow-up. |
 | Vehicle pub from SessionInfo (not pair response) | ✅ Applied 2026-05-28 | See "Doublings table built from SessionInfo (Go SDK parity)" below. |
+| RoutableMessage uuid in field 51 (not 50) | ✅ Applied 2026-05-28 | See "SessionInfo HMAC mismatch — outgoing UUID was in wrong field". Field 50 = `request_uuid` (response-side), field 51 = `uuid` (request-side challenge source). |
 
 ## Doublings table built from SessionInfo (Go SDK parity)
 

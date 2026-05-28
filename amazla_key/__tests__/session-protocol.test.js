@@ -214,7 +214,7 @@ describe('buildSessionInfoRequest', () => {
 })
 
 describe('buildRoutableMessage', () => {
-  test('to_destination domain at field 6, routing_address at field 7, payload at 10, uuid at 50', () => {
+  test('to_destination domain at field 6, routing_address at field 7, payload at 10, uuid at 51', () => {
     const routing = generateRoutingAddress()
     const uuid    = generateUUID()
     const payload = new Uint8Array([0x01, 0x02])
@@ -235,8 +235,8 @@ describe('buildRoutableMessage', () => {
     expect(fromDest[2].length).toBe(16)
     // field 10 = payload
     expect(Array.from(fields[10])).toEqual([0x01, 0x02])
-    // field 50 = uuid
-    expect(fields[50].length).toBe(16)
+    // field 51 = uuid (vehicle uses this as SessionInfo HMAC challenge)
+    expect(fields[51].length).toBe(16)
   })
 
   test('sessionInfoRequest goes at field 14', () => {
@@ -902,9 +902,9 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     expect(infoReq[1]).toBe(0)  // GET_STATUS = 0
   })
 
-  test('includes 16-byte UUID at field 50', () => {
+  test('includes 16-byte UUID at field 51', () => {
     makeSession().getVehicleStatus(() => {})
-    expect(decodeMessage(capturedMsg)[50].length).toBe(16)
+    expect(decodeMessage(capturedMsg)[51].length).toBe(16)
   })
 })
 
