@@ -17,6 +17,12 @@ class Account {
   get digits() {
     return this.data.digits || 6
   }
+  get period() {
+    return this.data.period || 30
+  }
+  get algorithm() {
+    return (this.data.algorithm || 'SHA1').toUpperCase()
+  }
 
   get displayName() {
     return this.issuer ? `${this.issuer} (${this.name})` : this.name

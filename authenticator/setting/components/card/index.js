@@ -45,7 +45,7 @@ const BODY_CONTENT = {
 }
 
 export const Card = (account) => {
-  const code = generateTOTP(account.secret, account.digits, account.period || 30)
+  const code = generateTOTP(account.secret, account.digits, account.period || 30, account.algorithm || 'SHA1')
   const remaining = getTimeRemaining()
   const isLow = remaining <= 5
   const degrees = (remaining / 30) * 360
