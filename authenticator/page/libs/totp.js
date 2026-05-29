@@ -205,4 +205,4 @@ export function formatCode(code) {
 /**
  * Get formatted TOTP code for account
  */
-export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))
+export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6, acc.period || 30))

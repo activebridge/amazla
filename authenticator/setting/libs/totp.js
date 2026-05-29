@@ -178,4 +178,4 @@ export function formatCode(code) {
  * @param {object} acc - Account object with secret and optional digits
  * @returns {string} - Formatted TOTP code
  */
-export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6))
+export const getCode = (acc) => formatCode(generateTOTP(acc.secret, acc.digits || 6, acc.period || 30))
