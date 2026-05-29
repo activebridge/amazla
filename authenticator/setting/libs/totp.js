@@ -50,8 +50,11 @@ function sha1(message) {
     message.push(0)
   }
 
-  // Append length
-  for (let i = 56; i >= 0; i -= 8) {
+  // Append 64-bit big-endian length. High 4 bytes are always 0 for our
+  // message sizes; computing them via (ml >>> i) is wrong because JS bitwise
+  // shifts are mod 32 (ml >>> 56 === ml >>> 24), which corrupts the digest.
+  message.push(0, 0, 0, 0)
+  for (let i = 24; i >= 0; i -= 8) {
     message.push((ml >>> i) & 0xff)
   }
 
