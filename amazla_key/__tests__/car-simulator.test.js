@@ -836,13 +836,18 @@ describe('sendCommand error paths', () => {
 
     expect(capturedHandler).not.toBeNull()
 
+    // Real vehicle responses are addressed to the command's routing address via
+    // to_destination (field 6 → routing_address field 2); otherwise session.js
+    // treats them as unsolicited pushes and keeps listening.
+    const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
+
     // First: bare field-5 → no commandStatus, no signedMessageStatus → waiting
-    capturedHandler({ success: true, data: encodeVarintField(5, 0) })
+    capturedHandler({ success: true, data: concat(toDest, encodeVarintField(5, 0)) })
     expect(session._waitingForSecondResponse).toBe(true)
     expect(session._secondResponseTimer).not.toBeNull()
 
     // Second: FromVCSECMessage.commandStatus.operationStatus = OK(0)
-    const okResponse = encodeBytes(10, encodeBytes(4, encodeVarintField(1, 0)))
+    const okResponse = concat(toDest, encodeBytes(10, encodeBytes(4, encodeVarintField(1, 0))))
     capturedHandler({ success: true, data: okResponse })
     expect(session._secondResponseTimer).toBeNull()
     expect(session._waitingForSecondResponse).toBe(false)

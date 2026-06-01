@@ -401,6 +401,23 @@ class TeslaSession {
           try {
             const response = parseRoutableMessage(result.data)
 
+            // Tesla streams unsolicited pushes (periodic VehicleStatus etc.) on the
+            // same characteristic. They're addressed to a domain, not our routing
+            // address, so they'd otherwise be consumed as the command's response and
+            // steal a response slot. Drop them and keep listening.
+            const ra = this.routingAddress
+            const dst = response.toRoutingAddress
+            const addressedToUs = ra && dst && dst.length === ra.length && (() => {
+              for (let i = 0; i < ra.length; i++) if (ra[i] !== dst[i]) return false
+              return true
+            })()
+            if (!addressedToUs) {
+              console.log('[SESSION] Ignoring unsolicited push (not addressed to this command)')
+              result._requeue = true
+              callback(result)
+              return
+            }
+
             // Vehicle sends up to two responses per authenticated command:
             //   1. SessionInfo-only push (field 15) — updates counter/epoch/clock
             //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — terminal

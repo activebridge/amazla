@@ -211,6 +211,16 @@ const parseFromVCSECMessage = (data) => {
 }
 const parseRoutableMessage = (data) => {
   const fields = decodeMessage(data)
+  // to_destination (field 6) is a Destination { domain(1) | routing_address(2) }.
+  // Command responses carry our 16-byte routing_address here; unsolicited vehicle
+  // pushes (periodic VehicleStatus etc.) are addressed to a domain instead.
+  let toRoutingAddress = null
+  if (fields[6] instanceof Uint8Array) {
+    try {
+      const dest = decodeMessage(fields[6])
+      if (dest[2] instanceof Uint8Array) toRoutingAddress = dest[2]
+    } catch (_e) {}
+  }
   // SessionInfo lives in RoutableMessage field 15 (bytes session_info) per spec.
   let sessionInfo = null
   let sessionInfoStatus = 0 // SessionInfoStatus enum: OK=0, KEY_NOT_ON_WHITELIST=1
@@ -255,6 +265,7 @@ const parseRoutableMessage = (data) => {
     try { signedMessageStatus = parseMessageStatus(fields[12]) } catch (_e) {}
   }
   return {
+    toRoutingAddress:    toRoutingAddress,
     sessionInfo:         sessionInfo,
     sessionInfoBytes:    sessionInfoBytes,
     sessionInfoTag:      sessionInfoTag,

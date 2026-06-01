@@ -209,7 +209,11 @@ describe('TeslaSession sendCommand fault paths', () => {
         encodeVarintField(1, 2),  // operationStatus = ERROR
         encodeVarintField(2, 5),  // signedMessageFault = arbitrary nonzero code
       )
-      cb({ success: true, data: encodeBytes(12, faultStatus) })
+      // Address the response to this command's routing address (to_destination
+      // field 6 → routing_address field 2), like a real vehicle reply — otherwise
+      // session.js treats it as an unsolicited push and keeps listening.
+      const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
+      cb({ success: true, data: concat(toDest, encodeBytes(12, faultStatus)) })
     }
     const result = await p((cb) => session.sendCommand(1 /* LOCK */, cb))
     teslaBLE.send = origSend

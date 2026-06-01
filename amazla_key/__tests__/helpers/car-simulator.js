@@ -96,6 +96,14 @@ export class CarSimulator {
 
     // Authenticated command: field 10 = ToVCSECMessage, field 13 = SignatureData
     if (fields[10] instanceof Uint8Array) {
+      // Remember the requestor's routing address (from_destination field 7 →
+      // Destination.routing_address field 2). The real vehicle echoes it back in
+      // to_destination so the client can tell command responses apart from the
+      // unsolicited VehicleStatus pushes it streams on the same characteristic.
+      if (fields[7] instanceof Uint8Array) {
+        const fromDest = decodeMessage(fields[7])
+        if (fromDest[2] instanceof Uint8Array) this._requestorRoutingAddress = fromDest[2]
+      }
       this._handleCommand(fields[10], harness)
       return
     }
@@ -259,9 +267,16 @@ export class CarSimulator {
     }
   }
 
+  // Prefix a response with to_destination (field 6 → Destination.routing_address
+  // field 2) so the client recognizes it as a reply to its command.
+  _addressed(payload) {
+    if (!this._requestorRoutingAddress) return payload
+    return concat(encodeBytes(6, encodeBytes(2, this._requestorRoutingAddress)), payload)
+  }
+
   // RoutableMessage { payload(10) = FromVCSECMessage { commandStatus(4) = { operationStatus(1) } } }
   _buildCommandResponse(operationStatus) {
-    return encodeBytes(10, encodeBytes(4, encodeVarintField(1, operationStatus)))
+    return this._addressed(encodeBytes(10, encodeBytes(4, encodeVarintField(1, operationStatus))))
   }
 
   _buildSessionInfoPush() {
@@ -273,7 +288,7 @@ export class CarSimulator {
       encodeBytes(3, this._session.epoch),
       encodeVarintField(4, this._session.clockTime),
     )
-    return encodeBytes(15, si)  // RoutableMessage field 15 = session_info
+    return this._addressed(encodeBytes(15, si))  // RoutableMessage field 15 = session_info
   }
 
   _buildStatusResponse() {

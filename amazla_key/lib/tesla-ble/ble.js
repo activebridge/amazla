@@ -370,17 +370,17 @@ class TeslaBLE {
       callback({ success: false, error: 'Not connected' })
       return
     }
-    // Wrap callback to support multi-response commands (e.g., unlock gets status push then action response)
+    // Wrap callback to support multi-response commands (e.g., unlock gets status push then action response).
+    // The session layer signals "keep listening" by setting result._requeue during its callback — so the
+    // re-registration MUST happen AFTER callback() returns, not on entry (the result has no _requeue yet
+    // when _handleResponse first delivers it).
     const wrappedCallback = (result) => {
-      if (result.success && result._requeue) {
-        // Command wants to wait for another response - re-register callback but don't call user's callback yet
-        console.log('[BLE] Re-queuing callback for multi-response command')
-        this.responseCallback = wrappedCallback
-        return
-      }
-      // Normal flow: clear callback and invoke user's callback
       this.responseCallback = null
       callback(result)
+      if (result && result._requeue && this.responseCallback === null) {
+        console.log('[BLE] Re-queuing callback for multi-response command')
+        this.responseCallback = wrappedCallback
+      }
     }
     this.responseCallback = wrappedCallback
     this._sendMessage(_frame(data))
@@ -441,7 +441,12 @@ class TeslaBLE {
     }
     if (this._rxBuf === null) {
       const now = Date.now()
-      const sig = `${chunk.length}_${chunk[0] || 0}_${chunk[1] || 0}`
+      // Dedup guard for genuinely repeated indications. chunk[0]/chunk[1] are just
+      // the frame-length prefix, so sampling only those collides for any two distinct
+      // messages of equal length (e.g. a command response followed by a same-length
+      // status push). Sample payload bytes (first two after the prefix + last byte) too.
+      const last = chunk[chunk.length - 1] || 0
+      const sig = `${chunk.length}_${chunk[2] || 0}_${chunk[3] || 0}_${last}`
       if (sig === this._lastResponseData && now - this._lastResponseTime < 200) {
         console.log('[BLE] Duplicate first chunk ignored')
         return
