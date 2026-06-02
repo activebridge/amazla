@@ -202,14 +202,6 @@ Page({
       BLE.reset()
       teslaSession.reset()
 
-      // Sync watch key on page open; only log if newly stored.
-      phone.syncKeys((result) => {
-        if (result.success && !store.watchPublicKey) {
-          addLog('✓ Watch key synced', 0x44ff44)
-        }
-        updateChecklist()
-      })
-
       uiText({
         x: 0,
         y: 8,
@@ -390,7 +382,12 @@ Page({
           addLog('BLE dropped', 0xff8800)
         }
       }
-      updateStatus('IDLE', 0x888888)
+      // Render from locally-persisted state — keys, table, EC key and VIN all
+      // live in LocalStorage / files and need no phone. After pairing the watch
+      // is fully standalone; keys are written by PAIR (pairSetup), never synced
+      // on page open, so the checklist must reflect local state with no phone.
+      updateChecklist()
+      updateStatus(store.isPaired ? 'READY' : 'NOT PAIRED', store.isPaired ? 0x00cc44 : 0x888888)
       addLog('BLE control ready', 0xcccccc)
       keepScreenOn(true, 600000)
     },

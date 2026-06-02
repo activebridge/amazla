@@ -168,19 +168,6 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │      │               │MAC,  │                │                    │          │
 │      │               │table │                │                    │          │
 │      │               └──┬───┘                │                    │          │
-│      │ ◄── syncPool ─── │                    │                    │          │
-│   ┌──┴──────┐           │                    │                    │          │
-│   │Generate │           │                    │                    │          │
-│   │33 P-256 │           │                    │                    │          │
-│   │keypairs │           │                    │                    │          │
-│   └──┬──────┘           │                    │                    │          │
-│      │ ── pool(raw) ──► │                    │                    │          │
-│      │               ┌──┴───┐                │                    │          │
-│      │               │Save  │                │                    │          │
-│      │               │key_  │                │                    │          │
-│      │               │pool  │                │                    │          │
-│      │               │.dat  │                │                    │          │
-│      │               └──┬───┘                │                    │          │
 │      │                  │                    │                    │          │
 │      ▼                  ▼                    ▼                    ▼          │
 │   Paired + table built. Watch is now standalone — no phone needed.           │
@@ -530,21 +517,26 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 
 `mstSetMTU` is not in the ZeppOS BLE documentation. `ble.js` opportunistically calls it inside a try/catch (so a missing implementation is a silent no-op), but BLE writes still use fixed 20-byte chunks (`BLE_CHUNK_SIZE = 20`) with 20ms pacing — the only configuration confirmed working on device. Larger chunks would require a documented MTU negotiation API.
 
-### BLE transport: easy-ble wrapper (active)
+### BLE transport: easy-ble wrapper (sole implementation)
 
-`session.js` and `pairing.js` both import from `lib/tesla-ble/ble.js`, the wrapper around `@silver-zepp/easy-ble`'s `BLEMaster`. This is the path validated on device.
+`session.js` and `pairing.js` both import from `lib/tesla-ble/ble.js`, the wrapper around `@silver-zepp/easy-ble`'s `BLEMaster`. This is the path validated on device, and as of 2026-06-02 it is the **only** BLE transport in the tree.
 
-`lib/tesla-ble/ble-native.js` — a direct `@zos/ble` reimplementation — is **parked**, not active. It reaches `WhitelistOp` and `STATUS_WAIT` correctly, but the terminal 14-byte post-NFC pair indication was not delivered through either `mstOnCharaNotification` or `mstOnCharaValueArrived` on device, and we couldn't reproduce that firmware behavior in the test harness. The notes below remain documented because they capture the firmware contract `ble-native.js` was written against; if we ever revisit it, drift from these is what produced the GATT-prepare-fail and NFC-pending regressions we already debugged.
+> **Removed: the direct `@zos/ble` path (`ble-native.js`).** An alternate transport that drove the raw `mst*` native API directly (no easy-ble) was developed in parallel. It reached `WhitelistOp` and `STATUS_WAIT` correctly, but the terminal 14-byte post-NFC pair indication was never delivered through either `mstOnCharaNotification` or `mstOnCharaValueArrived` on device, and we couldn't reproduce that firmware behavior in the test harness. It was deleted (along with `__tests__/ble-native.test.js`) once `ble.js` was confirmed working end-to-end. The firmware-contract notes it was written against are preserved below as a research record in case the native path is ever revisited — the `easy-ble` wrapper already handles all of this internally.
+
+<details>
+<summary>Firmware contract the native path required (historical)</summary>
 
 - **Profile shape** — `pair: true`, outer `list[0]` with `uuid: true, size, len`, service with `len1` and `len2`, characteristic with `desc` and `len`, descriptor with `permission`. Any missing field makes `mstBuildProfile` return non-zero via `mstOnPrepare`.
 - **Callback arg shape** — all `mstOn*` callbacks receive a single response object `{profile, status, uuid, data, length, chara, desc}`. Positional destructuring silently breaks.
 - **Subscribe both** `mstOnCharaNotification` AND `mstOnCharaValueArrived`. Firmware routes some payloads through each; the post-NFC pair completion can land on `charaValueArrived` while ambient pushes arrive on `charaNotification`.
 - **No profile-id filter on the notification handler** — some firmware reports a different `profile` value on `mstOnCharaNotification` than the one returned from `mstOnPrepare`. UUID match alone is reliable.
 - **`mstOffAllCb()` on cleanup** before destroying the profile so handlers don't stack across reconnects (would corrupt multi-chunk reassembly).
-- **`CONNECTION_CONFIG.prepareDelayMs = 50`** — 50ms guard between registering `mstOnPrepare` and calling `mstBuildProfile`, mirroring easy-ble's `SHORT_DELAY`. Defensive against firmware that fires the prepare event synchronously inside the build call.
+- **50ms prepare guard** between registering `mstOnPrepare` and calling `mstBuildProfile`, mirroring easy-ble's `SHORT_DELAY`. Defensive against firmware that fires the prepare event synchronously inside the build call.
 - **First-chunk dedup window 200ms** — when both event streams deliver the same payload, drop the duplicate by signature.
 
-The test mock in `__mocks__/zos.js` reproduces these contract details (object-shape callbacks, separate notification/value streams, MAC-buffer arg). If you change `ble-native.js`, also stress the mock — past regressions slipped through because the harness modelled only the path the implementation happened to take.
+The test mock in `__mocks__/zos.js` still reproduces these contract details (object-shape callbacks, separate notification/value streams, MAC-buffer arg) since the `easy-ble` wrapper sits on the same native API underneath.
+
+</details>
 
 ### Scan-by-name on every connect (Tesla MAC rotation)
 
@@ -570,7 +562,7 @@ client, err := device.Dial(ctx, ble.NewAddr(target.Address))
 **Implementation (applied):**
 
 1. `lib/tesla-ble/ble-name.js` exports `computeTeslaBLEName(vinBytes)` → `'S' + bytesToHex(sha1(vin).subarray(0,8)) + 'C'`, mirroring Tesla's algorithm (lowercase hex).
-2. `teslaBLE.scan(callback, duration, expectedName)` takes an optional `expectedName` — case-insensitive exact match on `dev_name` so we lock onto the right car even with multiple Teslas nearby. Implemented in `lib/tesla-ble/ble.js` (active path) and mirrored in `lib/tesla-ble/ble-native.js` (parked).
+2. `teslaBLE.scan(callback, duration, expectedName)` takes an optional `expectedName` — case-insensitive exact match on `dev_name` so we lock onto the right car even with multiple Teslas nearby. Implemented in `lib/tesla-ble/ble.js`.
 3. `session.js#_ensureConnected` always scans first when not already connected: derives the local name from `store.vehicleVin`, scans for it, dials whatever fresh MAC the beacon reports, and refreshes `store.vehicleMac` opportunistically.
 4. `pairing.js#scanAndConnect` does the same — no MAC shortcut, always scan.
 5. `store.vehicleMac` is now a transient cache hint only; session never trusts it across the rotation window.
@@ -678,7 +670,7 @@ Notes:
 | Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. Note: scan-by-name was originally hypothesized as the fix for connect-time-out-after-pair, but the actual cause turned out to be native BLE state poisoning across app sessions — see "Native BLE crash recovery". |
 | Session uses long-term enrolled key | ✅ Applied | `session.js` sends `watchPublicKey` in `SessionInfoRequest` and uses `watchPrivateKey` for ECDH. See "Session identity key (Tesla Go SDK parity)". |
 | Native BLE crash recovery | ✅ Applied | `lib/tesla-ble/ble.js` persists `connect_id` and runs `mstDisconnect` on next launch. See "Native BLE crash recovery". |
-| Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
+| Native `@zos/ble` path (`ble-native.js`) | ❌ Removed 2026-06-02 | Reached `STATUS_WAIT` but the post-NFC 14-byte indication was never delivered on device through either notification stream, and it couldn't be reproduced in the harness. Deleted (with its test) once the easy-ble wrapper (`ble.js`) was confirmed working end-to-end. Firmware notes kept under "BLE transport". |
 | Key pool removal | ✅ Done 2026-06-02 | Pool fully removed — dropped from `isPaired`, no more `syncPool` on app open / BLE page, removed from `phone.js` + `simulatePair` + checklist. It was an artifact of the old per-session ephemeral-key design (never consumed after the long-term-key refactor). Low-level `store.keyPool`/`popKey` getters left unreferenced (harmless); deleting them is optional cleanup. |
 | Vehicle EC key persistence | ✅ Done 2026-06-02 | Moved `vehicleEcPublicKey` from a null-byte LocalStorage string to a binary file (`vehicle_ec_public_key.dat`), with a legacy LS fallback. Fixes the table rebuilding via phone every launch — watch now reuses the cached table standalone. |
 | Connect trusts cached table (no phone-home) | ⏳ Next | `_ensureTableForVehiclePub` still rebuilds via phone when the stored EC key mismatches. For guaranteed standalone use, trust an existing table on connect and only rebuild at an explicit pair/refresh. |
@@ -721,11 +713,11 @@ Confirmed empirically with TEST KEYS + `[SESSION.diag]` (three distinct EC pubke
 | `lib/tesla-ble/protocol/vcsec.js` `parseWhitelistEntryInfo` | Removed (2026-05-28). It misread `KeyIdentifier.publicKeySHA1` (20 B hash) as the 65-byte EC point. The 65-byte length gate in `parsePairingResponse` always rejected it so nothing real depended on it, but keeping the path risked a future "fix" silently building the doublings table from a hash. Tesla Go SDK never extracts vehicle EC from a pair response — only from `SessionInfo.publicKey`. |
 | `lib/tesla-ble/protocol/vcsec-pairing.js` `parsePairingResponse` | Dropped the field-17 extraction block and the `vehiclePublicKey` field from every return value. Consumers (`pairing.js`) only ever read `status` / `error` / `dbg`. |
 
-### Diagnostics kept in place
+### Diagnostics
 
-- **TEST KEYS** button on the BLE debug page (`onTestKeys` in `page/ble/index.js`): prints `[Keys.diag]` hex for watch pub/priv, phone pub/priv, derived pub (priv·G), and stored `vehicleEcPublicKey` for visual comparison. Includes `vehicleEc==watchPub` sanity flag.
 - **`[SESSION.diag]`** lines in `session.js._ensureTableForVehiclePub` print `sessionInfo.publicKey` and `store.vehicleEcPublicKey` hex whenever a rebuild is needed.
-- **`VERIFY_KEYPAIR`** action on phone (`app-side/index.js`) returns phone-derived pubkey from priv to confirm priv·G == pub.
+
+> The keypair-verification diagnostics — the **TEST KEYS** / **GENKEY** / **TEST BLE** buttons on the BLE debug page, plus the `VERIFY_KEYPAIR` phone RPC (and its `derivePublicKey` helper) and `phone.verifyKeypair()` — were removed on 2026-06-02 once pairing/session/commands were confirmed on hardware. They were one-off debugging aids for the HMAC-mismatch hunts documented above; the historical references to "TEST KEYS" / "VERIFY KEYS" elsewhere in this doc describe how those bugs were found, not a tool that still exists.
 
 ### Migration notes
 
@@ -765,7 +757,7 @@ amazla_key/
 ├── page/
 │   ├── index.js                  # Main UI (lock/unlock/trunk/frunk + vehicle status)
 │   └── ble/
-│       └── index.js              # BLE debug page (scan, pair via controller, pool management)
+│       └── index.js              # BLE debug page (PAIR / CLEAR / CONNECT / LOCK / UNLOCK + status checklist + log)
 ├── setting/
 │   └── index.js                  # Companion settings page (vehicle name + VIN entry)
 ├── lib/
@@ -774,8 +766,7 @@ amazla_key/
 │   └── tesla-ble/
 │       ├── README.md             # Module-level design notes
 │       ├── pairing.js            # createPairingController — headless pairing state machine
-│       ├── ble.js                # Low-level BLE — @silver-zepp/easy-ble wrapper (ACTIVE). Imported by session.js and pairing.js; validated end-to-end on device.
-│       ├── ble-native.js         # Low-level BLE — direct @zos/ble (PARKED). Reaches STATUS_WAIT but the post-NFC 14-byte indication isn't delivered through either subscribed stream on device; couldn't reproduce the firmware quirk in tests. Kept as reference: profile shape mirrors easy-ble, subscribes both mstOnCharaNotification AND mstOnCharaValueArrived, dedupes first-chunk within 200ms, mstOffAllCb on cleanup.
+│       ├── ble.js                # Low-level BLE — @silver-zepp/easy-ble wrapper. Sole transport; imported by session.js and pairing.js; validated end-to-end on device.
 │       ├── ble-name.js           # computeTeslaBLEName(vin) → 'S' + sha1(vin)[:8] hex + 'C'. Mirrors Tesla Go SDK VehicleLocalName. Used by scan-by-name on every connect (MAC rotates every ~15 min).
 │       ├── session.js            # Session management (ECDH, signing, commands)
 │       ├── index.js              # Tesla BLE API (high-level wrapper)
@@ -843,9 +834,9 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 
 **Navigation**: Index page → BLE button
 
-1. Open app on watch → tap **BLE** button → BLE debug page
-2. Tap **SCAN** → finds Tesla vehicle by BLE MAC
-3. Tap **PAIR** → initiates enrollment
+1. Enter the vehicle name + VIN in the companion settings page first (the VIN derives the BLE scan name)
+2. Open app on watch → tap **BLE** button → BLE debug page
+3. Tap **PAIR** → scans for the Tesla by its VIN-derived name, connects, and initiates enrollment
 4. **Tap your NFC keycard** on car's center console when prompted
 5. Watch logs show: **"✓ ECDH table built — standalone"** ✅
 6. Pairing complete!
@@ -876,7 +867,7 @@ The session crypto path uses the long-term `watchPrivateKey` / `watchPublicKey` 
 **Need to re-pair?**
 1. Tap **BLE** button on main page → BLE debug page
 2. Tap **CLEAR** button (removes saved MAC and EC key)
-3. Tap **SCAN** and **PAIR** again
+3. Tap **PAIR** again
 
 ## Tesla SDK Protocol - Vehicle EC Key Acquisition
 
