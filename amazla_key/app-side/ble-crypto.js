@@ -295,25 +295,6 @@ class BLECryptoSession {
       return { success: false, error: e.message }
     }
   }
-
-  // Derive the uncompressed pub (65 bytes, 0x04 || X || Y) from a 32-byte
-  // private key. Used by VERIFY_KEYPAIR to check whether stored pub matches
-  // priv-mul-G — a mismatch is the textbook cause of SessionInfo HMAC failures.
-  derivePublicKey(privBytes) {
-    try {
-      if (!privBytes || privBytes.length !== 32) return { success: false, error: `priv must be 32 bytes, got ${privBytes ? privBytes.length : 'null'}` }
-      let k = BigInt(`0x${bytesToHex(privBytes)}`) % P256_N
-      if (k === 0n) return { success: false, error: 'priv is zero mod n' }
-      const pt = p256ScalarMul(k, [P256_GX, P256_GY])
-      const pubBytes = new Uint8Array(65)
-      pubBytes[0] = 0x04
-      pubBytes.set(bigIntToBytes32(pt[0]), 1)
-      pubBytes.set(bigIntToBytes32(pt[1]), 33)
-      return { success: true, pubBytes }
-    } catch (e) {
-      return { success: false, error: e.message }
-    }
-  }
 }
 
 const bleCryptoSession = new BLECryptoSession()

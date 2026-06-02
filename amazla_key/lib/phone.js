@@ -91,13 +91,6 @@ class Phone {
     })
   }
 
-  // Diagnostic: phone reads its stored priv/pub, derives pub from priv, returns
-  // all three as hex. Watch caller compares to local store + logs everything.
-  // No vehicle needed; tells us if phone↔watch keys agree AND if priv·G == pub.
-  verifyKeypair(cb) {
-    return this._call('VERIFY_KEYPAIR', {}, cb, (r) => r)
-  }
-
   // Persist Tesla MAC to companion settingsStorage so the settings page can show paired state.
   saveVehicleMac(mac, cb) {
     this._call('SAVE_VEHICLE_MAC', { mac }, cb, () => {})

@@ -1,7 +1,7 @@
 import kpayAppSide from 'kpay-amazfit/app-side'
 import { kpayConfig } from '../shared/kpay-config'
 import { MessageBuilder } from '../shared/message-side'
-import bleCrypto, { binaryStringToBytes, bytesToBinaryString, bytesToHex } from './ble-crypto.js'
+import bleCrypto, { bytesToBinaryString } from './ble-crypto.js'
 
 const messageBuilder = new MessageBuilder()
 const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
@@ -89,35 +89,6 @@ const actions = {
   BLE_COMPLETE_PAIRING: async () => {
     console.log('[App] BLE_COMPLETE_PAIRING: no-op (vehicle pub is fetched from SessionInfo on connect)')
     return okBin()
-  },
-
-  // Diagnostic: read stored phone-side priv/pub, derive pub from priv on phone,
-  // and return all three as hex strings (ASCII-safe over JSON). Watch compares
-  // to its locally-stored values + logs the result. No vehicle needed.
-  VERIFY_KEYPAIR: async () => {
-    const pubBinStr = settings.settingsStorage.getItem('tesla_public_key')
-    const privBinStr = settings.settingsStorage.getItem('tesla_private_key')
-    const phonePubHex = pubBinStr ? bytesToHex(binaryStringToBytes(pubBinStr)) : null
-    const phonePrivHex = privBinStr ? bytesToHex(binaryStringToBytes(privBinStr)) : null
-    let derivedPubHex = null
-    let deriveError = null
-    if (privBinStr && privBinStr.length === 32) {
-      const r = bleCrypto.derivePublicKey(binaryStringToBytes(privBinStr))
-      if (r.success) derivedPubHex = bytesToHex(r.pubBytes)
-      else deriveError = r.error
-    } else {
-      deriveError = `priv length wrong: ${privBinStr ? privBinStr.length : 'null'}`
-    }
-    return {
-      success: true,
-      phonePubLen: pubBinStr ? pubBinStr.length : null,
-      phonePrivLen: privBinStr ? privBinStr.length : null,
-      phonePubHex,
-      phonePrivHex,
-      derivedPubHex,
-      deriveError,
-      pubMatchesDerived: derivedPubHex && phonePubHex && derivedPubHex === phonePubHex,
-    }
   },
 
   SAVE_VEHICLE_MAC: async ({ mac }) => {
