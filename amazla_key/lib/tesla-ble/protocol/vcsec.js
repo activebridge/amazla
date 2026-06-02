@@ -172,13 +172,22 @@ const parseSessionInfo = (data) => {
     : fields[2].length === 16
     ? [null, fields[2]]
     : [fields[2], asEpoch(fields[3])]
-  // clockTime is a varint; if the vehicle sends it as bytes, default to 0
-  const clockTime = typeof fields[4] === 'number' ? fields[4] : 0
+  // clock_time / counter are uint32. The vehicle encodes them as fixed32
+  // (wire type 5) → our decoder hands back a 4-byte little-endian Uint8Array,
+  // NOT a number. Treating that as "not a number → 0" left clockTime=0, so
+  // expires_at = 0 + 60 was always in the past → the vehicle rejected every
+  // command with MESSAGEFAULT_ERROR_TIME_EXPIRED (17). Decode LE fixed32.
+  const u32 = (v) =>
+    typeof v === 'number'
+      ? v
+      : v instanceof Uint8Array && v.length === 4
+      ? (v[0] | (v[1] << 8) | (v[2] << 16) | (v[3] << 24)) >>> 0
+      : 0
   return {
-    counter:    fields[1] ?? 0,
+    counter:    u32(fields[1]),
     publicKey:  publicKey,
     epoch:      epoch,
-    clockTime:  clockTime,
+    clockTime:  u32(fields[4]),
     status:     fields[5] ?? 0,
     handle:     fields[6] ?? 0,
   }

@@ -20,7 +20,7 @@ import {
   generateRoutingAddress,
   DOMAIN_VEHICLE_SECURITY,
 } from '../lib/tesla-ble/protocol/vcsec.js'
-import { decodeMessage, encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
+import { decodeMessage, encodeBytes, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
 import bleCryptoSession from '../app-side/ble-crypto.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import { createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
@@ -271,6 +271,21 @@ describe('parseSessionInfo', () => {
     expect(info.publicKey.length).toBe(65)
     expect(info.epoch.length).toBe(16)
     expect(info.clockTime).toBe(9999)
+  })
+
+  // Real vehicles encode clock_time (and counter) as fixed32 (wire type 5),
+  // not varint — decoder hands back 4 LE bytes. Parsing must read the uint32,
+  // not fall back to 0. clock_time=0 made expires_at always-in-the-past →
+  // every command rejected with MESSAGEFAULT_ERROR_TIME_EXPIRED (17).
+  test('parses clock_time sent as fixed32 (LE bytes), not just varint', () => {
+    const encoded = [
+      encodeBytes(2, new Uint8Array(65).fill(0x04)),
+      encodeBytes(3, new Uint8Array(16).fill(0xab)),
+      encodeFixed32(4, 542),   // wire-type-5 clock_time, as the car sends it
+    ].reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
+
+    const info = parseSessionInfo(encoded)
+    expect(info.clockTime).toBe(542)
   })
 })
 
@@ -858,18 +873,16 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     expect(outer[10].length).toBeGreaterThan(0)
   })
 
-  test('SignatureData in RoutableMessage field 13 — not in inner SignedMessage', () => {
+  test('SignatureData in RoutableMessage field 13; payload(10) is a bare UnsignedMessage', () => {
     makeSession().getVehicleStatus(() => {})
     const outer = decodeMessage(capturedMsg)
     // Auth data in field 13 (RoutableMessage.signature_data)
     expect(outer[13]).toBeDefined()
-    // Inner SignedMessage (inside ToVCSECMessage) has no HMAC fields
-    const toVcsec   = decodeMessage(outer[10])
-    const signedMsg = decodeMessage(toVcsec[1])
-    expect(signedMsg[4]).toBeUndefined()   // no counter field (doesn't exist in vcsec.proto)
-    expect(signedMsg[5]).toBeUndefined()   // no signature field
-    expect(signedMsg[6]).toBeUndefined()   // no epoch field
-    expect(signedMsg[7]).toBeUndefined()   // no expiresAt field
+    // Payload (field 10) is the vcsec.UnsignedMessage itself — no ToVCSECMessage/
+    // SignedMessage wrapper. GET_STATUS rides in UnsignedMessage.informationRequest (field 1).
+    const unsignedMsg = decodeMessage(outer[10])
+    expect(unsignedMsg[1]).toBeDefined()   // informationRequest present
+    expect(unsignedMsg[2]).toBeUndefined() // not an RKEAction
   })
 
   test('SignatureData has signer_identity (field 1) and HMAC_Personalized_data (field 8)', () => {
@@ -895,9 +908,7 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
 
   test('UnsignedMessage has InformationRequest with GET_STATUS (0)', () => {
     makeSession().getVehicleStatus(() => {})
-    const toVcsec     = decodeMessage(decodeMessage(capturedMsg)[10])
-    const signedMsg   = decodeMessage(toVcsec[1])
-    const unsignedMsg = decodeMessage(signedMsg[2])
+    const unsignedMsg = decodeMessage(decodeMessage(capturedMsg)[10])
     const infoReq     = decodeMessage(unsignedMsg[1])
     expect(infoReq[1]).toBe(0)  // GET_STATUS = 0
   })
@@ -936,18 +947,16 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
     expect(decodeMessage(decodeMessage(msg)[6])[1]).toBe(DOMAIN_VEHICLE_SECURITY)
   })
 
-  test('SignatureData at field 13, not inside ToVCSECMessage', () => {
+  test('SignatureData at field 13; payload(10) is a bare UnsignedMessage (no wrapper)', () => {
     const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
     const outer = decodeMessage(msg)
     expect(outer[13]).toBeDefined()
     expect(outer[10]).toBeDefined()
-    // Inner SignedMessage has no HMAC fields — only payload
-    const toVcsec   = decodeMessage(outer[10])
-    const signedMsg = decodeMessage(toVcsec[1])
-    expect(signedMsg[4]).toBeUndefined()
-    expect(signedMsg[5]).toBeUndefined()
-    expect(signedMsg[6]).toBeUndefined()
-    expect(signedMsg[7]).toBeUndefined()
+    // Payload is the vcsec.UnsignedMessage directly: RKEAction at field 2, and no
+    // ToVCSECMessage/SignedMessage wrapper (field 1 would be InformationRequest).
+    const unsigned = decodeMessage(outer[10])
+    expect(unsigned[2]).toBe(RKE_ACTION_LOCK)
+    expect(unsigned[1]).toBeUndefined()
   })
 
   test('SignatureData signer_identity contains 65-byte public key', () => {
@@ -972,16 +981,13 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
 
   test('UnsignedMessage has LOCK=1 at field 2', () => {
     const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_LOCK)
-    const outer     = decodeMessage(msg)
-    const toVcsec   = decodeMessage(outer[10])
-    const signedMsg = decodeMessage(toVcsec[1])
-    const unsigned  = decodeMessage(signedMsg[2])
+    const unsigned = decodeMessage(decodeMessage(msg)[10])
     expect(unsigned[2]).toBe(RKE_ACTION_LOCK)
   })
 
   test('UnsignedMessage has UNLOCK=0 at field 2', () => {
     const msg = makeSession().buildAuthenticatedCommand(RKE_ACTION_UNLOCK)
-    const unsigned  = decodeMessage(decodeMessage(decodeMessage(decodeMessage(msg)[10])[1])[2])
+    const unsigned = decodeMessage(decodeMessage(msg)[10])
     expect(unsigned[2]).toBe(RKE_ACTION_UNLOCK)
   })
 

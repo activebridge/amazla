@@ -189,17 +189,10 @@ export class CarSimulator {
 
   // ── Authenticated command dispatch ────────────────────────────────────────
 
-  _handleCommand(toVCSECBytes, harness) {
-    // Decode: ToVCSECMessage → field 1 → SignedMessage → field 2 → UnsignedMessage
-    const toVcsecFields  = decodeMessage(toVCSECBytes)
-    const signedMsgBytes = toVcsecFields[1]
-    if (!(signedMsgBytes instanceof Uint8Array)) return
-
-    const signedFields   = decodeMessage(signedMsgBytes)
-    const unsignedBytes  = signedFields[2]
-    if (!(unsignedBytes instanceof Uint8Array)) return
-
-    const unsigned = decodeMessage(unsignedBytes)
+  _handleCommand(payloadBytes, harness) {
+    // RoutableMessage.protobuf_message_as_bytes IS the vcsec.UnsignedMessage directly
+    // (no ToVCSECMessage/SignedMessage wrapper) — matches Tesla SDK executeRKEAction.
+    const unsigned = decodeMessage(payloadBytes)
 
     // Error injection
     if (this._nextCommandError) {
@@ -208,16 +201,16 @@ export class CarSimulator {
       return
     }
 
-    // RKE action (field 2 = RKEAction_E enum)
+    // RKE action (UnsignedMessage field 2 = RKEAction_E enum)
     if (unsigned[2] !== undefined) {
       this._applyRKE(unsigned[2])
       this._sendCommandResponse(harness)
       return
     }
 
-    // ClosureMoveRequest (field 3 = bytes)
-    if (unsigned[3] instanceof Uint8Array) {
-      const closureFields = decodeMessage(unsigned[3])
+    // ClosureMoveRequest (UnsignedMessage field 4 = bytes)
+    if (unsigned[4] instanceof Uint8Array) {
+      const closureFields = decodeMessage(unsigned[4])
       this._applyClosure(closureFields[1], closureFields[2])
       this._sendCommandResponse(harness)
       return

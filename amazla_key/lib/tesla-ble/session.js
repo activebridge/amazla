@@ -13,8 +13,6 @@ import {
   buildSessionInfoHmacInput,
   buildSessionInfoRequest,
   buildSignatureData,
-  buildSignedMessage,
-  buildToVCSECMessage,
   buildUnsignedMessage,
   DOMAIN_VEHICLE_SECURITY,
   generateRoutingAddress,
@@ -359,14 +357,20 @@ class TeslaSession {
   _buildAuthMessage(unsignedMessage) {
     this.counter++
     const expiresAt = this.clockTime + 60
-    const signedMessage = buildSignedMessage({ payload: unsignedMessage })
-    const toVcsec = buildToVCSECMessage(signedMessage)
-    const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, toVcsec)
+    // RoutableMessage.protobuf_message_as_bytes for a VCSEC HMAC command IS the
+    // vcsec.UnsignedMessage itself — NOT wrapped in ToVCSECMessage/SignedMessage.
+    // (Tesla SDK executeRKEAction marshals UnsignedMessage directly and passes it
+    // straight to the routable payload.) The old double-wrapping meant the vehicle
+    // parsed field 1 of our ToVCSECMessage as UnsignedMessage.InformationRequest,
+    // so it replied with VehicleStatus and never executed the RKE action — and gave
+    // no fault, because the HMAC still matched the bytes we sent. The HMAC must cover
+    // the same bytes we put in the payload: the UnsignedMessage.
+    const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, unsignedMessage)
     const signatureData = buildSignatureData(this.ephemeralPublicKey, this.epoch, this.counter, expiresAt, tag)
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
-      payload: toVcsec,
+      payload: unsignedMessage,
       signatureData,
       uuid: generateUUID(),
     })
@@ -375,8 +379,8 @@ class TeslaSession {
     if (!this.established) {
       throw new Error('Session not established')
     }
-    // Per vcsec.proto SignedMessage has only field 2 (payload) and field 3 (signatureType).
-    // For HMAC commands, signatureType is omitted (NONE=0 default); auth is in RoutableMessage.signature_data.
+    // For HMAC commands the payload is a bare vcsec.UnsignedMessage; auth rides in
+    // RoutableMessage.signature_data. No SignedMessage/ToVCSECMessage wrapper.
     const unsignedMessage =
       typeof rkeActionOrClosure === 'number'
         ? buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
@@ -422,6 +426,9 @@ class TeslaSession {
             //   1. SessionInfo-only push (field 15) — updates counter/epoch/clock
             //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — terminal
             // Treat "no commandStatus and no signedMessageStatus" as first-response waiting.
+            // NOTE: a bare vehicleStatus reply is NOT treated as success — the car
+            // returns one even when it accepts-but-does-not-actuate a command (no
+            // commandStatus), so claiming success on it would be a lie.
             const isTerminal = !!(response.commandStatus || response.signedMessageStatus)
             if (!isTerminal && !this._waitingForSecondResponse) {
               this._waitingForSecondResponse = true
