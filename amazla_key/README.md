@@ -5,8 +5,11 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 ## Features
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
+- **Lock / Unlock / Trunk / Frunk** - HMAC-signed RKE commands; **device-confirmed actuating the vehicle (2026-06-02)**
 - **Vehicle Status** - Door/closure states, lock state, sleep status
 - **Offline session** - Long-term enrolled keypair persisted on watch enables session establishment + ECDH without the phone
+
+> **Status (2026-06-02):** Pairing, session establishment, and lock/unlock are working end-to-end on real hardware. Getting commands to actuate required six fixes to the command/response path — see [Command path fixes](#command-path-fixes-2026-06-02).
 
 ## Architecture Overview
 
@@ -299,13 +302,12 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   ┌────┴────────────────────────────┐                     │                  │
 │   │ Build Authenticated Command     │                     │                  │
 │   │                                 │                     │                  │
-│   │ unsigned_msg = {                │                     │                  │
-│   │   RKE_ACTION: UNLOCK            │                     │                  │
+│   │ payload = UnsignedMessage{      │                     │                  │
+│   │   RKE_ACTION: UNLOCK  (field 2) │                     │                  │
 │   │ }                               │                     │                  │
-│   │                                 │                     │                  │
-│   │ signed_msg = {                  │                     │                  │
-│   │   payload: unsigned_msg         │                     │                  │
-│   │ }                               │                     │                  │
+│   │ // BARE UnsignedMessage — NOT   │                     │                  │
+│   │ // wrapped in ToVCSEC/Signed-   │                     │                  │
+│   │ // Message (Tesla SDK parity)   │                     │                  │
 │   │                                 │                     │                  │
 │   │ signature_data = {              │                     │                  │
 │   │   public_key: eph_pub,          │                     │                  │
@@ -321,8 +323,9 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │   │ //   "authenticated command")   │                     │                  │
 │   └────┬────────────────────────────┘                     │                  │
 │        │                                                  │                  │
-│        │  ─── RoutableMessage{ payload:ToVCSEC(signed),   │                  │
-│        │        signature_data } ──────────────────────►  │                  │
+│        │  ─── RoutableMessage{ to:domain, from:routing,   │                  │
+│        │        payload: UnsignedMessage,                 │                  │
+│        │        signature_data, uuid } ────────────────►  │                  │
 │        │                                                  │                  │
 │        │                                    ┌─────────────┴─────────────┐    │
 │        │                                    │ Verify HMAC signature     │    │
@@ -331,7 +334,12 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 │        │                                    │ Execute action            │    │
 │        │                                    └─────────────┬─────────────┘    │
 │        │                                                  │                  │
-│        │  ◄── CommandStatus(OK) ───────────────────────── │                  │
+│        │  ◄── (opt) SessionInfo push (field 15) ───────── │  non-terminal    │
+│        │  ◄── FromVCSECMessage (field 10) ─────────────── │  TERMINAL        │
+│        │       addressed to our routing address;          │                  │
+│        │       empty / no commandStatus = SUCCESS         │                  │
+│        │       (state change also arrives as a separate   │                  │
+│        │        domain-0 broadcast, which we ignore)      │                  │
 │        │                                                  │                  │
 │        ▼                                                  ▼                  │
 │   Command executed!                                                          │
@@ -389,7 +397,7 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 
 ## Tesla BLE Command Reference
 
-All commands are sent as HMAC-signed `RoutableMessage` → `ToVCSECMessage` → `UnsignedMessage` packets over BLE after a session is established.
+All commands are sent after a session is established as an HMAC-signed `RoutableMessage` whose `protobuf_message_as_bytes` (field 10) is a **bare `vcsec.UnsignedMessage`** — no `ToVCSECMessage`/`SignedMessage` wrapper. Authentication rides in `signature_data` (field 13). This matches Tesla's Go SDK (`executeRKEAction` marshals `UnsignedMessage` straight into `getReceiver`). The earlier `ToVCSECMessage{SignedMessage{UnsignedMessage}}` wrapping authenticated fine (no fault) but the vehicle parsed field 1 of our wrapper as `UnsignedMessage.InformationRequest` → replied with status and never actuated. See [Command path fixes](#command-path-fixes-2026-06-02).
 
 ### RKE Actions (Remote Keyless Entry)
 
@@ -541,6 +549,10 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | RX reassembly timeout | 1000ms per chunk | 1 second per chunk | ✅ Match |
 | HMAC signature type | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` in `signature_data` | `SIGNATURE_TYPE_HMAC_PERSONALIZED = 8` | ✅ Match |
 | HMAC computation | `subKey=HMAC(sessionKey,"authenticated command")`, tag over metadata + payload | Same | ✅ Match |
+| Command payload (field 10) | bare `vcsec.UnsignedMessage` | `proto.Marshal(UnsignedMessage)` → `ProtobufMessageAsBytes` (`getReceiver`) | ✅ Match (fixed 2026-06-02 — was double-wrapped in ToVCSEC/SignedMessage) |
+| SessionInfo `clock_time` | parsed as fixed32 LE (wire type 5) | `fixed32 clock_time = 4` | ✅ Match (fixed 2026-06-02 — was read as varint → 0 → `expires_at` always expired, fault 17) |
+| Command terminal detection | FromVCSECMessage (field 10) present; success when no `commandStatus` | `done := commandStatus == nil` (`executeRKEAction`) | ✅ Match (fixed 2026-06-02) |
+| `RoutableMessage.flags` | unset (`FLAG_USER_COMMAND`) → plaintext responses | `DefaultFlags = FLAG_ENCRYPT_RESPONSE` | ⚠️ Intentional: we read plaintext replies; we don't implement response decryption |
 | SessionInfo tag verification | `subKey=HMAC(sessionKey,"session info")`, tag over TLV(sigType=HMAC, VIN, uuid) + encodedInfo | Same | ✅ Match |
 | Outgoing uuid → RoutableMessage field | 51 (`uuid`) — vehicle uses this as SessionInfo HMAC challenge | 51 (`message.Uuid`) per `dispatcher.go` | ✅ Match (fixed 2026-05-28 — see [SessionInfo HMAC mismatch](#sessioninfo-hmac-mismatch--outgoing-uuid-was-in-wrong-field-2026-05-28)) |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
@@ -673,10 +685,29 @@ The reason `vehicle-command` works in the wild: it puts the uuid in field 51 on 
 
 **Test simulator lesson:** The simulator was decoded the same wrong-field as the code under test, so they "agreed" and 490 tests passed while the real vehicle never could. Mocks have to model the platform's contract, not just the implementation's idiosyncrasies — already in `feedback_mocks_model_os_contract` but worth restating: when a single field number flip silently maps both sides, that's a sign the mock was written from the code instead of from the spec.
 
+## Command path fixes (2026-06-02)
+
+Session establishment worked for weeks, but `Lock`/`Unlock` never actuated the car. Six issues on the command/response path, each one unblocking the next, fixed in order. All verified against the [Tesla Go SDK](https://github.com/teslamotors/vehicle-command) and confirmed on real hardware (the car now locks/unlocks and the watch shows success).
+
+| # | Bug | Symptom | Fix |
+|---|-----|---------|-----|
+| 1 | Dead `_requeue` re-registration in `ble.js` | Commands went deaf after the first frame ("No response callback, ignoring") | Re-arm `responseCallback` *after* the callback runs, when `result._requeue` is set |
+| 2 | Unsolicited VehicleStatus pushes (domain 0) consumed as the command response | Periodic broadcasts stole the response slot | Filter by `to_destination` routing address; drop frames not addressed to this command (`parseRoutableMessage.toRoutingAddress`) |
+| 3 | Weak RX dedup signature (`len_b0_b1` = frame-length prefix) | Same-length frames within 200 ms collided and got dropped | Sample payload bytes: `len_b2_b3_last` |
+| 4 | `SessionInfo.clock_time` parsed as varint | Arrived as **fixed32** → read as 0 → `expires_at = 60` → every command `MESSAGEFAULT_ERROR_TIME_EXPIRED` (fault 17) | Decode `clock_time` (and `counter`) as LE fixed32 |
+| 5 | Command payload double-wrapped `ToVCSECMessage{SignedMessage{UnsignedMessage}}` | Car authenticated it (no fault) but read field 1 as `UnsignedMessage.InformationRequest` → replied with status, never actuated | Send the **bare `UnsignedMessage`** as `protobuf_message_as_bytes`; HMAC over it. Matches SDK `executeRKEAction` → `getReceiver` |
+| 6 | Terminal detection required `commandStatus` | Car actuated, but its ack is an **empty `FromVCSECMessage`** (field 10, len 0, no `commandStatus`) → watch waited → timed out | Terminal = field-10 payload present (even empty) or auth fault; success when no `commandStatus`. Mirrors SDK `done := commandStatus == nil` |
+
+Notes:
+- The `SignedMessage`/`ToVCSECMessage` wrapper belongs only to the **legacy un-sessioned VCSEC path** (pairing with `SIGNATURE_TYPE_PRESENT_KEY`), not to HMAC session commands — which is why pairing worked while commands didn't.
+- The car's actual lock-state change arrives as a **separate domain-0 broadcast**; fix #2 correctly ignores it, so success is taken from the addressed FromVCSECMessage ack.
+- The test mocks (`car-simulator`, `session-protocol`) had encoded the wrong (wrapped) shape and rubber-stamped #5; they now model the bare-`UnsignedMessage` contract.
+
 ## Pending
 
 | Item | Status | Notes |
 |------|--------|-------|
+| Lock / Unlock / Trunk / Frunk actuation | ✅ Device-confirmed 2026-06-02 | See [Command path fixes](#command-path-fixes-2026-06-02). Six fixes on the command/response path; car actuates and watch shows success. |
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
 | MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented. `ble.js` calls it inside a try/catch but writes still use fixed 20-byte chunks. No known ZeppOS API for MTU negotiation. |
 | Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. Note: scan-by-name was originally hypothesized as the fix for connect-time-out-after-pair, but the actual cause turned out to be native BLE state poisoning across app sessions — see "Native BLE crash recovery". |

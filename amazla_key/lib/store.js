@@ -1,6 +1,6 @@
 import { readFileSync, rmSync, writeFileSync } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
-import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/binary-utils.js'
+import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
 
 const TABLE_PATH = 'vehicle_doublings_table.dat'
 
@@ -65,11 +65,23 @@ const store = {
     else this.removeBinary('watch_private_key')
   },
 
+  // File-backed: the 65-byte vehicle EC point contains null bytes, which don't
+  // survive in LocalStorage (same hazard that moved watchPrivateKey to a file —
+  // it read back null on the next launch, so the doublings-table staleness check
+  // failed and the watch rebuilt the table via the phone every session instead of
+  // running standalone). Falls back to the legacy LocalStorage value once so an
+  // already-paired watch migrates without re-pairing.
   get vehicleEcPublicKey() {
-    return get('vehicleEcPublicKey')
+    const fromFile = readBinary('vehicle_ec_public_key')
+    if (fromFile) return fromFile
+    const legacy = get('vehicleEcPublicKey')
+    return legacy && legacy.length ? legacy : null
   },
   set vehicleEcPublicKey(value) {
-    set('vehicleEcPublicKey', value ? bytesToBinaryString(value) : null)
+    if (value) writeBinary('vehicle_ec_public_key', value)
+    else this.removeBinary('vehicle_ec_public_key')
+    // File is the single source of truth — drop any stale LocalStorage copy.
+    localStorage.removeItem('vehicleEcPublicKey')
   },
   get vehicleDoublingsTable() {
     if (_doublingsTableCache) return _doublingsTableCache
@@ -218,7 +230,7 @@ const store = {
     }
     console.log(`[STORE.diag] watchPublicKey:      ${lsLen('watchPublicKey')}`)
     console.log(`[STORE.diag] watchPrivateKey:     ${lsLen('watchPrivateKey')}`)
-    console.log(`[STORE.diag] vehicleEcPublicKey:  ${lsLen('vehicleEcPublicKey')}`)
+    console.log(`[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`)
     console.log(`[STORE.diag] hasDoublingsTable:   ${lsLen('hasDoublingsTable')}`)
     console.log(`[STORE.diag] vehicle_doublings_table.dat: ${fileSize('vehicle_doublings_table.dat')}`)
     console.log(`[STORE.diag] keyPoolCount:        ${lsLen('keyPoolCount')}`)
@@ -244,6 +256,7 @@ const store = {
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('key_pool')
     this.removeBinary('watch_private_key')
+    this.removeBinary('vehicle_ec_public_key')
   },
 }
 
