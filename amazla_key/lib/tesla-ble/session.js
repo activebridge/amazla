@@ -423,13 +423,14 @@ class TeslaSession {
             }
 
             // Vehicle sends up to two responses per authenticated command:
-            //   1. SessionInfo-only push (field 15) — updates counter/epoch/clock
-            //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — terminal
-            // Treat "no commandStatus and no signedMessageStatus" as first-response waiting.
-            // NOTE: a bare vehicleStatus reply is NOT treated as success — the car
-            // returns one even when it accepts-but-does-not-actuate a command (no
-            // commandStatus), so claiming success on it would be a lie.
-            const isTerminal = !!(response.commandStatus || response.signedMessageStatus)
+            //   1. SessionInfo-only push (field 15, no field 10) — non-terminal,
+            //      updates counter/epoch/clock; keep waiting.
+            //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — TERMINAL.
+            // The terminal FromVCSECMessage is success when it carries no commandStatus
+            // — mirrors Tesla SDK executeRKEAction (done := commandStatus == nil). The
+            // car acks an RKE action with an EMPTY FromVCSECMessage (field 10, len 0),
+            // so detect terminal by the PRESENCE of the payload, not commandStatus.
+            const isTerminal = !!(response.payload || response.signedMessageStatus)
             if (!isTerminal && !this._waitingForSecondResponse) {
               this._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')

@@ -161,5 +161,38 @@ describe('sendCommand — second response timeout handling', () => {
 
     teslaBLE.send = origSend
   })
+
+  test('empty FromVCSECMessage (field 10, len 0) addressed to us → terminal success', () => {
+    const session = new TeslaSession()
+    session.established = true
+    session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    session.ephemeralPrivateKey = new Uint8Array(32).fill(0x01)
+    session.epoch = new Uint8Array(16).fill(0xee)
+    session.counter = 0
+    session.clockTime = 1000
+    session.sessionKey = new Uint8Array(16).fill(0x11)
+    session.routingAddress = new Uint8Array(16).fill(0x22)
+    { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
+
+    // Real vehicles ack an RKE action with an EMPTY FromVCSECMessage (field 10,
+    // length 0) addressed to our routing address — no commandStatus. Per Tesla SDK
+    // (done := commandStatus == nil) that's success. Must NOT hang waiting.
+    const origSend = teslaBLE.send
+    teslaBLE.send = function(_message, cb) {
+      const routable = makeAddressedRoutable(session.routingAddress, encodeBytes(10, new Uint8Array(0)))
+      cb({ success: true, data: routable })
+    }
+
+    const uiCb = function() { uiCb.calls.push(Array.from(arguments)) }
+    uiCb.calls = []
+    session.sendCommand(RKE_ACTION_LOCK, uiCb)
+
+    expect(session._waitingForSecondResponse).toBe(false)
+    const last = uiCb.calls[uiCb.calls.length - 1][0]
+    expect(last.success).toBe(true)
+    expect(last._requeue).toBeUndefined()
+
+    teslaBLE.send = origSend
+  })
 })
 
