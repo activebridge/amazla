@@ -1,5 +1,5 @@
 import store from './store.js'
-import { binaryStringToBytes, bytesToBinaryString } from './tesla-ble/crypto/binary-utils.js'
+import { bytesToBinaryString } from './tesla-ble/crypto/binary-utils.js'
 
 // Copy a buffer view into a fresh Uint8Array so the large underlying BLE
 // message buffer can be GC'd once the bytes we need are extracted.
@@ -121,29 +121,6 @@ class Phone {
       .then((body) => toU8(body))
   }
 
-  // Dev-mode: simulate full pairing flow without a real vehicle.
-  // Writes all pairing artifacts to store.
-  // cb: { success }
-  simulatePair(cb) {
-    var vehicleEcKeyBinary
-    this._request('SIMULATE_PAIR')
-      .then((r) => {
-        store.watchPublicKey = r.watchPublicKeyBinary
-        if (r.watchPrivateKeyBinary) store.watchPrivateKey = r.watchPrivateKeyBinary
-        store.vehicleEcPublicKey = binaryStringToBytes(r.vehicleEcKeyBinary)
-        store.vehicleMac = r.mac
-        store.vehicleVin = r.vin
-        vehicleEcKeyBinary = r.vehicleEcKeyBinary
-        return this._requestBin('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary: vehicleEcKeyBinary })
-      })
-      .then((tableBody) => {
-        store.vehicleDoublingsTable = toU8(tableBody)
-        cb({ success: true })
-      })
-      .catch((e) => {
-        cb({ success: false, error: e.message || 'Error' })
-      })
-  }
 }
 
 export default Phone

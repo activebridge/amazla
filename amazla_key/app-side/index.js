@@ -148,25 +148,6 @@ const actions = {
     return okBin(new Uint8Array(result.buffer))
   },
 
-  SIMULATE_PAIR: async () => {
-    console.log('[App] SIMULATE_PAIR: generating fake vehicle pairing data')
-
-    const watchKeypair = bleCrypto.generateEnrolledKeyPair()
-    if (!watchKeypair.success) return { success: false, error: 'Watch keypair gen failed' }
-
-    const vehicleKeypair = bleCrypto.generateEnrolledKeyPair()
-    if (!vehicleKeypair.success) return { success: false, error: 'Vehicle keypair gen failed' }
-
-    console.log('[App] SIMULATE_PAIR: keypairs generated OK')
-    return {
-      success: true,
-      watchPublicKeyBinary: watchKeypair.publicKeyBinary,
-      watchPrivateKeyBinary: watchKeypair.privateKeyBinary,
-      vehicleEcKeyBinary: vehicleKeypair.publicKeyBinary,
-      mac: 'AA:BB:CC:DD:EE:FF',
-      vin: '5YJ3E1EA6JF020598',
-    }
-  },
 }
 
 AppSideService({

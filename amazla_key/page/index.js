@@ -112,24 +112,6 @@ const render = () => {
       {
         centered: true,
         x: 0,
-        y: 375,
-        w: 280,
-        h: 50,
-        text: 'Simulate Pair',
-        text_size: 16,
-        color: 0x99ffcc,
-        normal_color: 0x003322,
-        press_color: 0x004433,
-        radius: 6,
-        click_func: onSimulatePair,
-      },
-      slide1,
-    )
-
-    button(
-      {
-        centered: true,
-        x: 0,
         y: 435,
         w: 280,
         h: 50,
@@ -238,20 +220,6 @@ const onFrunk = () => {
     hmUI.updateStatusBarTitle(r.success ? '✓ Frunk' : '✗ Error')
     if (r.success) vibrate(24)
     else hmUI.showToast({ text: r.error || 'Error' })
-  })
-}
-
-const onSimulatePair = () => {
-  hmUI.updateStatusBarTitle('Simulating pair...')
-  phone.simulatePair((r) => {
-    if (r.success) {
-      hmUI.showToast({ text: 'Simulate pair OK' })
-      hmUI.updateStatusBarTitle('Sim pair OK')
-      tesla.connect()
-    } else {
-      hmUI.showToast({ text: r.error || 'Simulate failed' })
-      hmUI.updateStatusBarTitle('Sim pair failed')
-    }
   })
 }
 
