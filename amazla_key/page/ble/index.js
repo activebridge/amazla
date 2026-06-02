@@ -3,7 +3,6 @@ import UI, { button as uiButton, rect as uiRect, text as uiText } from '../../..
 import { keepScreenOn } from '../../../zeppify/index.js'
 import store from '../../lib/store.js'
 import BLE from '../../lib/tesla-ble/index.js'
-import teslaBLE from '../../lib/tesla-ble/ble-native.js'
 import { createPairingController } from '../../lib/tesla-ble/pairing.js'
 import teslaSession from '../../lib/tesla-ble/session.js'
 import Phone from '../../lib/phone.js'
@@ -129,18 +128,6 @@ function onPair() {
   })
   pairingCtrl.start()
 }
-function onGenKey() {
-  addLog('Generating keys...', 0xffcc00)
-  phone.syncKeys((result) => {
-    if (!result.success) {
-      addLog(`Key err: ${result.error || '?'}`, 0xff8844)
-      return
-    }
-    addLog('✓ Watch key ready', 0x44ff44)
-    updateStatus('READY', 0x00cc44)
-    updateChecklist()
-  })
-}
 function onConnect() {
   addLog('Connecting...', 0xffcc00)
   updateStatus('CONNECTING...', 0xffcc00)
@@ -180,134 +167,6 @@ function onUnlock() {
       addLog(`✗ ${result.error || 'failed'}`, 0xff4444)
     }
   })
-}
-function onTestKeys() {
-  addLog('Verifying keypair...', 0xffcc00)
-  updateStatus('VERIFY KEYS', 0xffcc00)
-  function bytesToHex(b) {
-    if (!b) return '<null>'
-    var s = ''
-    for (var i = 0; i < b.length; i++) {
-      var h = (b[i] & 0xff).toString(16)
-      s += h.length < 2 ? '0' + h : h
-    }
-    return s
-  }
-  phone.verifyKeypair(function (r) {
-    if (!r || !r.success) {
-      addLog('Verify err: ' + ((r && r.error) || '?'), 0xff4444)
-      updateStatus('VERIFY FAIL', 0xff4444)
-      return
-    }
-    var wPub = store.watchPublicKey
-    var wPriv = store.watchPrivateKey
-    var wPubHex = bytesToHex(wPub)
-    var wPrivHex = bytesToHex(wPriv)
-    console.log('[Keys.diag] phone.pubLen        = ' + r.phonePubLen)
-    console.log('[Keys.diag] phone.privLen       = ' + r.phonePrivLen)
-    console.log('[Keys.diag] phone.pubHex        = ' + r.phonePubHex)
-    console.log('[Keys.diag] phone.privHex       = ' + r.phonePrivHex)
-    console.log('[Keys.diag] phone.derivedPubHex = ' + r.derivedPubHex)
-    console.log('[Keys.diag] phone.deriveError   = ' + r.deriveError)
-    console.log('[Keys.diag] phone.pub==derived  = ' + r.pubMatchesDerived)
-    console.log('[Keys.diag] watch.pubLen        = ' + (wPub ? wPub.length : 'null'))
-    console.log('[Keys.diag] watch.privLen       = ' + (wPriv ? wPriv.length : 'null'))
-    console.log('[Keys.diag] watch.pubHex        = ' + wPubHex)
-    console.log('[Keys.diag] watch.privHex       = ' + wPrivHex)
-    console.log('[Keys.diag] phone.pub==watch.pub  = ' + (r.phonePubHex === wPubHex))
-    console.log('[Keys.diag] phone.priv==watch.priv= ' + (r.phonePrivHex === wPrivHex))
-    var vehEc = store.vehicleEcPublicKey
-    var vehEcHex = bytesToHex(vehEc)
-    console.log('[Keys.diag] watch.vehicleEcLen  = ' + (vehEc ? vehEc.length : 'null'))
-    console.log('[Keys.diag] watch.vehicleEcHex  = ' + vehEcHex)
-    console.log('[Keys.diag] vehicleEc==watchPub = ' + (vehEcHex === wPubHex) + '  (if TRUE: phone extracted wrong key from pairing response)')
-    var ok = r.pubMatchesDerived && r.phonePubHex === wPubHex && r.phonePrivHex === wPrivHex
-    if (ok) {
-      updateStatus('KEYS OK', 0x00cc44)
-      addLog('✓ Keypair valid', 0x44ff44)
-    } else {
-      updateStatus('KEYS BAD', 0xff4444)
-      if (!r.pubMatchesDerived) addLog('✗ pub != priv·G', 0xff4444)
-      if (r.phonePubHex !== wPubHex) addLog('✗ pub phone≠watch', 0xff4444)
-      if (r.phonePrivHex !== wPrivHex) addLog('✗ priv phone≠watch', 0xff4444)
-    }
-  })
-}
-function onTestBLE() {
-  addLog('BLE self-test...', 0xffcc00)
-  updateStatus('TESTING...', 0xffcc00)
-  var pass = 0,
-    failCount = 0
-  function ok(msg) {
-    pass++
-    addLog(`✓ ${msg}`, 0x44ff44)
-  }
-  function notOk(msg) {
-    failCount++
-    addLog(`✗ ${msg}`, 0xff4444)
-  }
-  function done() {
-    updateStatus(
-      failCount === 0 ? `PASS ${pass}` : `FAIL ${failCount}/${pass + failCount}`,
-      failCount === 0 ? 0x00cc44 : 0xff4444,
-    )
-  }
-
-  // 1. API methods exist on teslaBLE
-  if (typeof teslaBLE.scan === 'function') {
-    ok('scan fn')
-  } else {
-    notOk('scan fn')
-  }
-  if (typeof teslaBLE.connect === 'function') {
-    ok('connect fn')
-  } else {
-    notOk('connect fn')
-  }
-  if (typeof teslaBLE.send === 'function') {
-    ok('send fn')
-  } else {
-    notOk('send fn')
-  }
-
-  // 2. Single-chunk reassembly: header [0x00,0x03] + payload [0xAA,0xBB,0xCC]
-  var rx1 = null
-  teslaBLE._rxBuf = null
-  teslaBLE._rxExpected = 0
-  teslaBLE.responseCallback = (r) => {
-    if (r.success) rx1 = r.data
-  }
-  teslaBLE._handleResponse(new Uint8Array([0x00, 0x03, 0xaa, 0xbb, 0xcc]).buffer)
-  if (rx1 && rx1.length === 3 && rx1[0] === 0xaa && rx1[2] === 0xcc) ok('reassembly 1chunk')
-  else notOk('reassembly 1chunk')
-
-  // 3. Multi-chunk reassembly: header+[0x01,0x02] then [0x03,0x04]
-  var rx2 = null
-  teslaBLE._rxBuf = null
-  teslaBLE._rxExpected = 0
-  teslaBLE.responseCallback = (r) => {
-    if (r.success) rx2 = r.data
-  }
-  teslaBLE._handleResponse(new Uint8Array([0x00, 0x04, 0x01, 0x02]).buffer)
-  teslaBLE._handleResponse(new Uint8Array([0x03, 0x04]).buffer)
-  if (rx2 && rx2.length === 4 && rx2[0] === 0x01 && rx2[3] === 0x04) ok('reassembly 2chunk')
-  else notOk('reassembly 2chunk')
-
-  teslaBLE.responseCallback = null
-
-  // 5. BLE scan 3s — verifies BLE hardware + mstStartScan callable
-  addLog('Scanning 3s...', 0x888888)
-  var scanCount = 0
-  teslaBLE.scan((result) => {
-    if (result.type === 'found') {
-      scanCount++
-      addLog(`DEV:${result.device.name || result.device.mac}`, 0x4488ff)
-    }
-    if (result.type === 'complete') {
-      ok(`scan (${scanCount} devs)`)
-      done()
-    }
-  }, 3000)
 }
 function onClear() {
   BLE.clear()
@@ -455,20 +314,6 @@ Page({
       }
       uiRect({ x: 20, y: 316, w: 440, h: 1, color: 0x333333, centered: false })
       uiButton({
-        x: 20,
-        y: 322,
-        w: 120,
-        h: 42,
-        text: 'GENKEY',
-        text_size: 15,
-        color: 0xffffff,
-        normal_color: 0x003366,
-        press_color: 0x001a33,
-        radius: 8,
-        click_func: onGenKey,
-        centered: false,
-      })
-      uiButton({
         x: 148,
         y: 322,
         w: 184,
@@ -536,34 +381,6 @@ Page({
         press_color: 0x0d2d15,
         radius: 8,
         click_func: onUnlock,
-        centered: false,
-      })
-      uiButton({
-        x: 20,
-        y: 418,
-        w: 215,
-        h: 42,
-        text: 'TEST BLE',
-        text_size: 16,
-        color: 0xffffff,
-        normal_color: 0x2a2a66,
-        press_color: 0x15153a,
-        radius: 8,
-        click_func: onTestBLE,
-        centered: false,
-      })
-      uiButton({
-        x: 245,
-        y: 418,
-        w: 215,
-        h: 42,
-        text: 'TEST KEYS',
-        text_size: 16,
-        color: 0xffffff,
-        normal_color: 0x663a1a,
-        press_color: 0x331d0d,
-        radius: 8,
-        click_func: onTestKeys,
         centered: false,
       })
       BLE.onDisconnect = () => {
