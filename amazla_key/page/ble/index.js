@@ -26,7 +26,6 @@ var chkKeyWidget = null
 var chkPrivWidget = null
 var chkECWidget = null
 var chkTableWidget = null
-var chkPoolWidget = null
 var chkMacWidget = null
 var logWidgets = []
 function addLog(msg, color) {
@@ -64,7 +63,6 @@ function updateChecklist() {
   var ecKey = store.vehicleEcPublicKey
   var hasTable = store.hasDoublingsTable
   var mac = store.vehicleMac
-  var poolSize = store.keyPoolCount
   var vehicleName = store.vehicleName
   var vehicleVinBytes = store.vehicleVin
   var vehicleVin = vehicleVinBytes ? String.fromCharCode.apply(null, vehicleVinBytes) : null
@@ -74,7 +72,6 @@ function updateChecklist() {
     chkPrivWidget.setProperty(hmUI.prop.TEXT, `${watchPriv ? '✓' : '✗'} PRIV:${watchPriv ? watchPriv.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasTable ? '✓' : '✗'} TABLE`)
-  if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.TEXT, `POOL:${poolSize}`)
   if (chkMacWidget) {
     var hasVehicle = !!(vehicleName && vehicleVin)
     if (hasVehicle) {
@@ -89,7 +86,6 @@ function updateChecklist() {
   if (chkPrivWidget) chkPrivWidget.setProperty(hmUI.prop.COLOR, watchPriv ? 0x44cc66 : 0xff5555)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.COLOR, ecKey ? 0x44cc66 : 0xff5555)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasTable ? 0x44cc66 : 0xff5555)
-  if (chkPoolWidget) chkPoolWidget.setProperty(hmUI.prop.COLOR, poolSize > 0 ? 0x44cc66 : 0xff8833)
 }
 const STATE_COLORS = {
   setup: 0xffcc00, scanning: 0xffcc00, connecting: 0xffcc00,
@@ -141,16 +137,8 @@ function onGenKey() {
       return
     }
     addLog('✓ Watch key ready', 0x44ff44)
-    addLog('Generating pool...', 0x888888)
-    phone.syncPool((r) => {
-      if (r.success) {
-        addLog('✓ Pool ready', 0x44ff44)
-      } else {
-        addLog('Pool gen failed', 0xff8800)
-      }
-      updateStatus('READY', 0x00cc44)
-      updateChecklist()
-    }, 0)
+    updateStatus('READY', 0x00cc44)
+    updateChecklist()
   })
 }
 function onConnect() {
@@ -363,9 +351,6 @@ Page({
         updateChecklist()
       })
 
-      phone.syncPool((r) => {
-        if (r.success) addLog('✓ Pool synced', 0x44ff44)
-      })
       uiText({
         x: 0,
         y: 8,
@@ -438,17 +423,6 @@ Page({
         w: 210,
         h: 22,
         text: '? TABLE',
-        text_size: 18,
-        color: 0x888888,
-        align_h: hmUI.align.LEFT,
-        centered: false,
-      })
-      chkPoolWidget = uiText({
-        x: 250,
-        y: 104,
-        w: 210,
-        h: 22,
-        text: 'POOL:?',
         text_size: 18,
         color: 0x888888,
         align_h: hmUI.align.LEFT,
@@ -625,7 +599,6 @@ Page({
       chkPrivWidget = null
       chkECWidget = null
       chkTableWidget = null
-      chkPoolWidget = null
       chkMacWidget = null
     },
     onHide() {

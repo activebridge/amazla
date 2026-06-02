@@ -8,7 +8,7 @@ import { binaryStringToBytes, bytesToBinaryString } from './crypto/binary-utils.
 
 // createPairingController orchestrates the full Tesla BLE pairing flow.
 //
-// phone:     Phone instance (provides pairSetup, completePairing, syncPool)
+// phone:     Phone instance (provides pairSetup, completePairing)
 // callbacks:
 //   onState(state)   — flow stage changed
 //                      states: 'setup'|'scanning'|'connecting'|'pairing'|'confirming'|'verifying'|'done'

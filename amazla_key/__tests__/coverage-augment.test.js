@@ -16,12 +16,6 @@ describe('coverage augment tests', () => {
     expect(gen.success).toBe(true)
     expect(typeof gen.publicKeyBinary).toBe('string')
 
-    // generateKeyPool returns pool of expected size
-    const pool = session.generateKeyPool(2)
-    expect(pool.success).toBe(true)
-    expect(typeof pool.pool).toBe('string')
-    expect(pool.pool.length).toBeGreaterThan(0)
-
     // buildDoublingsTable fails on wrong length
     const bad = session.buildDoublingsTable('\x01\x02')
     expect(bad.success).toBe(false)

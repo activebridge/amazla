@@ -28,12 +28,14 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │          │              Direct BLE Connection                │               │
 │          └───────────────────────────────────────────────────┘               │
 │                                                                              │
-│   Phone needed ONLY for:          Watch handles:                             │
+│   Phone needed ONLY at PAIRING:   Watch handles (standalone use):            │
 │   • Initial key generation        • BLE communication                        │
-│   • Session key pool sync         • Session establishment (ECDH)             │
-│   • BigInt scalar-mul (table)     • Commands (HMAC signing)                  │
-│     once per vehicle pubkey       • Passive entry                            │
+│   • BigInt scalar-mul (table),    • Session establishment (ECDH)             │
+│     once per vehicle pubkey       • Commands (HMAC signing)                   │
+│                                   • Stores keypair+table+EC key+VIN           │
 │                                                                              │
+│   After pairing the watch operates with NO phone. (The old ephemeral key     │
+│   "pool" is removed — session + ECDH use the long-term enrolled keypair.)    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -65,76 +67,31 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │     • Public key added to car's whitelist during pairing                     │
 │     • Used to identify watch as authorized key                               │
 │                                                                              │
-│  2. SESSION KEYS (Ephemeral, for ECDH)                                       │
-│  ═════════════════════════════════════                                       │
+│  2. VEHICLE ECDH TABLE (the "doublings table")                               │
+│  ══════════════════════════════════════════════                             │
 │                                                                              │
 │     ┌─────────────────────────────────────────────────────────────────┐      │
-│     │  key_pool.dat (binary file on watch, 97 bytes/key)              │      │
-│     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │  [ key0_priv(32B) | key0_pub(65B) ]                         ││      │
-│     │  │  [ key1_priv(32B) | key1_pub(65B) ]                         ││      │
-│     │  │  ...                                                        ││      │
-│     │  │  97 bytes per key                                           ││      │
-│     │  └─────────────────────────────────────────────────────────────┘│      │
+│     │  vehicle_doublings_table.dat (16384 bytes, Uint32Array)         │      │
+│     │  = [ P, 2P, 4P, …, 2^255·P ] affine, where P = vehicle EC key   │      │
 │     └─────────────────────────────────────────────────────────────────┘      │
 │                                                                              │
-│     • Generated on phone (P-256 key gen is slow)                             │
-│     • Auto-synced via BLE_SYNC_POOL (on app open)                            │
-│     • One keypair consumed per session establishment                         │
-│     • Used for ECDH key exchange with Tesla                                  │
+│     • P (vehicle EC pubkey) comes from SessionInfo on the first connect      │
+│     • Phone does the BigInt scalar-mul to build the table (BLE_PRECOMPUTE_   │
+│       TABLE), ONCE at pairing; watch stores it + the EC key as files         │
+│     • Watch consumes it directly via scalarMulFixed for ECDH — no runtime    │
+│       transformation. Reused every session; rebuilt only if the vehicle      │
+│       key rotates (= a re-pair event)                                        │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Key Sync Flow
-
-Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to generate. Watch is passive.
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           SESSION KEY SYNC FLOW                              │
-│                         (Proactive on app open)                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│      Watch                                    Phone                          │
-│        │                                        │                            │
-│   ┌────┴──────┐  App opens                      │                            │
-│   │ Count     │                                 │                            │
-│   │ pool (N)  │                                 │                            │
-│   │ N >= 10?  │  → skip sync                    │                            │
-│   │ N < 10?   │  → request pool                 │                            │
-│   └────┬──────┘                                 │                            │
-│        │                                        │                            │
-│        │  ──────────────────────────────────►   │                            │
-│        │     BLE_SYNC_POOL                      │                            │
-│        │     { currentCount: N }                │                            │
-│        │                                        │                            │
-│        │                              ┌─────────┴──────────┐                 │
-│        │                              │ N >= 33?           │                 │
-│        │                              │   → { pool: null } │                 │
-│        │                              │ N < 33?            │                 │
-│        │                              │   → generate 33    │                 │
-│        │                              │     P-256 keypairs │                 │
-│        │                              └─────────┬──────────┘                 │
-│        │                                        │                            │
-│        │  ◄──────────────────────────────────   │                            │
-│        │     { success, pool: binary | null }   │                            │
-│        │                                        │                            │
-│   ┌────┴────┐                                   │                            │
-│   │ pool?   │   store → key_pool.dat            │                            │
-│   │ Store   │   (97 bytes/key raw binary)       │                            │
-│   │ it raw  │                                   │                            │
-│   └────┬────┘                                   │                            │
-│        │                                        │                            │
-│        ▼                                        ▼                            │
-│   Ready for standalone operation! (33 keys ≈ ~3.2 KB)                        │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Triggers**:
-- `page/index.js` `build()` — proactive sync on app open, gated by `store.keyPoolCount < 10`
-- `page/ble/index.js` `build()` — forced sync on BLE debug page open (debug surface)
+> **Removed: the ephemeral key pool.** Earlier versions synced a pool of P-256
+> keypairs from the phone (`BLE_SYNC_POOL`) and consumed one per session, because
+> the original design used an ephemeral key per ECDH handshake. After the long-term
+> enrolled-key refactor (Go SDK `Session.localKey` parity) session + ECDH use the
+> **single long-term keypair**, so the pool became dead weight — it was never
+> consumed (`popKey` had no callers) and only gated `isPaired`. It has been removed
+> entirely (2026-06-02); the watch no longer syncs, stores, or displays a pool.
 
 ## Pairing Flow
 
@@ -348,6 +305,14 @@ Key pool sync uses `BLE_SYNC_POOL` — phone decides when and how much to genera
 ```
 
 ## Passive Entry Flow
+
+> ⚠️ **Aspirational / not verified.** The Tesla `vehicle-command` Go SDK has **no**
+> passive-entry mechanism — no RSSI, proximity, or auto-unlock anywhere in the SDK,
+> the protobufs, or its BLE connector (it's a command-only library). Passive entry
+> is **vehicle firmware behavior** for first-party phone keys; whether a third-party
+> enrolled key can trigger it is unconfirmed. This app does **not** implement the
+> flow below — it's kept as a description of how the feature works on the vehicle
+> side, not something the watch drives. Treat as a research note, not a spec.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -714,7 +679,9 @@ Notes:
 | Session uses long-term enrolled key | ✅ Applied | `session.js` sends `watchPublicKey` in `SessionInfoRequest` and uses `watchPrivateKey` for ECDH. See "Session identity key (Tesla Go SDK parity)". |
 | Native BLE crash recovery | ✅ Applied | `lib/tesla-ble/ble.js` persists `connect_id` and runs `mstDisconnect` on next launch. See "Native BLE crash recovery". |
 | Native `@zos/ble` path (`ble-native.js`) | ⏳ Parked | Reaches `STATUS_WAIT` but the post-NFC 14-byte indication is not delivered on device through either notification stream. Couldn't reproduce in the harness; using easy-ble wrapper (`ble.js`) instead. |
-| Key pool removal | ⏳ Vestigial | After the long-term key refactor, the pool is no longer used for session establishment. Still synced from phone and still required by `store.isPaired`. Safe to remove in a follow-up. |
+| Key pool removal | ✅ Done 2026-06-02 | Pool fully removed — dropped from `isPaired`, no more `syncPool` on app open / BLE page, removed from `phone.js` + `simulatePair` + checklist. It was an artifact of the old per-session ephemeral-key design (never consumed after the long-term-key refactor). Low-level `store.keyPool`/`popKey` getters left unreferenced (harmless); deleting them is optional cleanup. |
+| Vehicle EC key persistence | ✅ Done 2026-06-02 | Moved `vehicleEcPublicKey` from a null-byte LocalStorage string to a binary file (`vehicle_ec_public_key.dat`), with a legacy LS fallback. Fixes the table rebuilding via phone every launch — watch now reuses the cached table standalone. |
+| Connect trusts cached table (no phone-home) | ⏳ Next | `_ensureTableForVehiclePub` still rebuilds via phone when the stored EC key mismatches. For guaranteed standalone use, trust an existing table on connect and only rebuild at an explicit pair/refresh. |
 | Vehicle pub from SessionInfo (not pair response) | ✅ Applied 2026-05-28 | See "Doublings table built from SessionInfo (Go SDK parity)" below. |
 | RoutableMessage uuid in field 51 (not 50) | ✅ Applied 2026-05-28 | See "SessionInfo HMAC mismatch — outgoing UUID was in wrong field". Field 50 = `request_uuid` (response-side), field 51 = `uuid` (request-side challenge source). |
 
@@ -853,20 +820,20 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 | Key | Contents | Format | Managed By |
 |-----|----------|--------|------------|
 | `watchPublicKey` | 65-byte enrolled public key | binary string | `BLE_SYNC_KEYS` phone sync |
-| `vehicleEcPublicKey` | 65-byte vehicle EC key | binary string | Auto-saved after pairing |
 | `vehicleMac` | Vehicle BLE MAC address | plain string | Auto-saved on scan |
 | `vehicleVin` | Vehicle VIN | binary string (getter returns `Uint8Array`) | Saved during pairing |
 | `vehicleName` | Vehicle display name | plain string | Saved during pairing |
 | `vehicleModel` | Vehicle model | plain string | Saved during pairing |
 
-> **Note**: Watch private key is NOT stored on watch. It lives on the phone in `TeslaSession` (`app-side/tesla/session.js`).
+> **Note**: keys/points with null bytes are stored as **files**, not LocalStorage — null bytes corrupt later LocalStorage writes on ZeppOS (see Binary Files below). `vehicleEcPublicKey` and `watchPrivateKey` are file-backed for this reason; `vehicleEcPublicKey` keeps a one-time legacy LocalStorage fallback so an already-paired watch migrates without re-pairing.
 
 ### Binary Files (via `@zos/fs`)
 
 | File | Size | Format | Managed By |
 |------|------|--------|------------|
+| `watch_private_key.dat` | 32 bytes | Raw binary | Enrolled long-term private key (synced from phone at pair) |
+| `vehicle_ec_public_key.dat` | 65 bytes | Raw binary | Vehicle EC pubkey from SessionInfo (saved on first connect; staleness check for the table) |
 | `vehicle_doublings_table.dat` | 16,384 bytes | Native `Uint32Array` LSW-first (256 × 16 uint32s) | `BLE_PRECOMPUTE_TABLE` phone sync |
-| `key_pool.dat` | 97 × N bytes | Raw binary (32-byte priv + 65-byte pub per key) | `BLE_SYNC_POOL` auto-sync |
 
 **Doublings table format**: Phone converts P-256 coordinates to LSW-first `Uint32Array` layout during `BLE_PRECOMPUTE_TABLE`. Watch loads with `new Uint32Array(raw)` — zero-copy, zero-conversion. Each entry is 16 uint32s: x[0..7] then y[0..7], where `[0]` = least-significant word.
 
@@ -885,16 +852,9 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 
 **What happens**: After the whitelist enrollment succeeds, the watch immediately fires a `SessionInfoRequest`. The vehicle's response carries its 65-byte EC public key. The phone (still in range) precomputes the doublings table; the watch persists both. This key/table is reused for every future session — the watch is then fully standalone.
 
-### 2. Session Keys (auto-synced)
+### 2. Session crypto (no per-session keys)
 
-The session crypto path now uses the long-term `watchPrivateKey` / `watchPublicKey` enrolled during pair (matches Tesla Go SDK's `Session.localKey`) — no per-session key needed. The pool below is vestigial and still synced for legacy reasons; nothing in `session.js` consumes it. Safe to remove in a follow-up — see Pending table.
-
-Legacy pool sync (still runs):
-- App open → watch asks phone for pool if `keyPoolCount < 10`
-- Phone generates 33 P-256 keypairs and returns them as raw binary
-- Watch stores to `key_pool.dat`
-
-The ECDH doublings table is synced once after pairing via `BLE_PRECOMPUTE_TABLE`.
+The session crypto path uses the long-term `watchPrivateKey` / `watchPublicKey` enrolled during pair (matches Tesla Go SDK's `Session.localKey`) — no per-session key, no key pool. The old ephemeral pool has been **removed** (2026-06-02). The ECDH doublings table is built by the phone once after pairing (`BLE_PRECOMPUTE_TABLE`) and reused for every session; after that the watch needs no phone.
 
 ### 3. Use!
 

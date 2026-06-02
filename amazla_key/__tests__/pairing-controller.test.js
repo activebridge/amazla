@@ -58,10 +58,6 @@ function makePhone(overrides = {}) {
       store.vehicleDoublingsTable = binaryStringToBytes(result.table)
       cb({ success: true })
     },
-    syncPool(cb) {
-      store.keyPool = new Uint8Array(97 * 3)
-      cb({ success: true })
-    },
     ...overrides,
   }
 }
@@ -479,12 +475,6 @@ describe('BLE scan path', () => {
     expect(store.watchPublicKey.length).toBe(65)
     expect(store.watchPrivateKey).toBeTruthy()
     expect(store.watchPrivateKey.length).toBe(32)
-    // On real device the main page auto-syncs the key pool on open
-    // (`page/index.js: if (store.keyPoolCount < 10) phone.syncPool()`), so by
-    // the time the user reaches the BLE debug page to pair, the pool is
-    // already populated. Mimic that here so the post-pair isPaired check
-    // reflects real-device state.
-    await new Promise((resolve) => makePhone().syncPool(resolve))
     expect(store.isPaired).toBe(true)
   })
 

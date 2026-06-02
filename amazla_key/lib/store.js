@@ -7,8 +7,6 @@ const TABLE_PATH = 'vehicle_doublings_table.dat'
 const localStorage = new LocalStorage()
 
 let _doublingsTableCache = null
-let _keyPoolCache = null // full pool file as Uint8Array
-let _keyPoolOffset = 0 // bytes consumed from front (persisted in localStorage)
 
 const readBinary = (path) => {
   try {
@@ -113,43 +111,6 @@ const store = {
       return false
     }
   },
-  get keyPool() {
-    if (!_keyPoolCache) _keyPoolCache = readBinary('key_pool')
-    if (!_keyPoolCache) return undefined
-    return _keyPoolCache.length > _keyPoolOffset ? _keyPoolCache.slice(_keyPoolOffset) : undefined
-  },
-  set keyPool(value) {
-    _keyPoolCache = value || null
-    _keyPoolOffset = 0
-    localStorage.setItem('keyPoolOffset', '0')
-    writeBinary('key_pool', value)
-    localStorage.setItem('keyPoolCount', String(value ? (value.length / 97) | 0 : 0))
-  },
-  popKey() {
-    if (!_keyPoolCache) _keyPoolCache = readBinary('key_pool')
-    if (!_keyPoolCache) return null
-    if (!_keyPoolOffset) {
-      const n = parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
-      _keyPoolOffset = Number.isNaN(n) ? 0 : n
-    }
-    if (_keyPoolOffset + 97 > _keyPoolCache.length) return null
-    const privBytes = _keyPoolCache.slice(_keyPoolOffset, _keyPoolOffset + 32)
-    const pubBytes = _keyPoolCache.slice(_keyPoolOffset + 32, _keyPoolOffset + 97)
-    _keyPoolOffset += 97
-    localStorage.setItem('keyPoolOffset', String(_keyPoolOffset))
-    return { privateKeyBytes: privBytes, publicKeyBytes: pubBytes }
-  },
-  // Lightweight pool count — reads from LocalStorage, no file I/O.
-  // Use this in UI code (updateChecklist) instead of reading the pool file.
-  get keyPoolCount() {
-    try {
-      const total = parseInt(localStorage.getItem('keyPoolCount') || '0', 10)
-      const offset = _keyPoolOffset || parseInt(localStorage.getItem('keyPoolOffset') || '0', 10)
-      return Math.max(0, total - ((offset / 97) | 0))
-    } catch (_e) {
-      return 0
-    }
-  },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')
   },
@@ -169,10 +130,12 @@ const store = {
   // They're populated on the first successful CONNECT (from SessionInfo),
   // not at pair time — pair just enrolls the watch key with the vehicle.
   get isPaired() {
+    // The ephemeral key pool is no longer part of the protocol — session
+    // establishment + ECDH use the long-term enrolled keypair (Go SDK
+    // Session.localKey parity), so the pool is not required to be "paired".
     return !!(
       this.watchPublicKey &&
       this.watchPrivateKey &&
-      this.keyPoolCount > 0 &&
       this.vehicleVin
     )
   },
@@ -194,12 +157,6 @@ const store = {
       rmSync({ path: `${key}.dat` })
     } catch (_e) {
       // ignore
-    }
-    if (key === 'key_pool') {
-      _keyPoolCache = null
-      _keyPoolOffset = 0
-      localStorage.setItem('keyPoolOffset', '0')
-      localStorage.setItem('keyPoolCount', '0')
     }
     if (key === 'vehicle_doublings_table') localStorage.removeItem('hasDoublingsTable')
   },
@@ -233,9 +190,6 @@ const store = {
     console.log(`[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`)
     console.log(`[STORE.diag] hasDoublingsTable:   ${lsLen('hasDoublingsTable')}`)
     console.log(`[STORE.diag] vehicle_doublings_table.dat: ${fileSize('vehicle_doublings_table.dat')}`)
-    console.log(`[STORE.diag] keyPoolCount:        ${lsLen('keyPoolCount')}`)
-    console.log(`[STORE.diag] keyPoolOffset:       ${lsLen('keyPoolOffset')}`)
-    console.log(`[STORE.diag] key_pool.dat:        ${fileSize('key_pool.dat')}`)
     console.log(`[STORE.diag] vehicleVin:          ${lsLen('vehicleVin')}`)
     console.log(`[STORE.diag] vehicleMac:          ${lsLen('vehicleMac')}`)
   },
@@ -248,13 +202,8 @@ const store = {
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
     localStorage.removeItem('hasDoublingsTable')
-    localStorage.removeItem('keyPoolCount')
-    localStorage.removeItem('keyPoolOffset')
     _doublingsTableCache = null
-    _keyPoolCache = null
-    _keyPoolOffset = 0
     this.removeBinary('vehicle_doublings_table')
-    this.removeBinary('key_pool')
     this.removeBinary('watch_private_key')
     this.removeBinary('vehicle_ec_public_key')
   },

@@ -73,65 +73,6 @@ beforeEach(() => {
   store.reset()
 })
 
-// ─── syncPool ─────────────────────────────────────────────────────────────────
-
-describe('syncPool()', () => {
-  test('writes store.keyPool when companion returns pool', async () => {
-    const poolBinary = fakeBinary(97 * 3)
-    const page = makeMb({ BLE_SYNC_POOL: okEnv(poolBinary) })
-    const phone = new Phone(page)
-
-    await new Promise(resolve => phone.syncPool(resolve))
-
-    expect(store.keyPool).toBeDefined()
-    expect(store.keyPool.length).toBe(97 * 3)
-  })
-
-  test('passes currentCount from store.keyPoolCount by default', async () => {
-    store.keyPool = new Uint8Array(97 * 2) // 2 keys → keyPoolCount = 2
-    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
-    const phone = new Phone(page)
-
-    await new Promise(resolve => phone.syncPool(resolve))
-
-    expect(page.request).toHaveBeenCalledWith(
-      expect.objectContaining({ params: expect.objectContaining({ currentCount: 2 }) }),
-      { dataType: 'bin' },
-    )
-  })
-
-  test('count=0 overrides store.keyPoolCount (force full regen)', async () => {
-    store.keyPool = new Uint8Array(97 * 5) // has 5 keys
-    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
-    const phone = new Phone(page)
-
-    await new Promise(resolve => phone.syncPool(resolve, 0))
-
-    expect(page.request).toHaveBeenCalledWith(
-      expect.objectContaining({ params: expect.objectContaining({ currentCount: 0 }) }),
-      { dataType: 'bin' },
-    )
-  })
-
-  test('does not write store.keyPool when companion returns no pool', async () => {
-    const page = makeMb({ BLE_SYNC_POOL: okEnv() })
-    const phone = new Phone(page)
-
-    await new Promise(resolve => phone.syncPool(resolve))
-
-    expect(store.keyPool).toBeFalsy()
-  })
-
-  test('calls cb with success:false on rejection', async () => {
-    const page = { request: jest.fn(() => Promise.reject(new Error('net error'))) }
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.syncPool(resolve))
-    expect(result.success).toBe(false)
-    expect(result.error).toMatch(/net error/)
-  })
-})
-
 // ─── syncSettings ─────────────────────────────────────────────────────────────
 
 describe('syncSettings()', () => {
@@ -299,7 +240,6 @@ describe('simulatePair()', () => {
         vin: new Uint8Array(17).fill(0x56),
       },
       BLE_PRECOMPUTE_TABLE: okEnv(fakeBinary(16384)),
-      BLE_SYNC_POOL: okEnv(fakeBinary(97 * 5)),
     })
   }
 
@@ -315,18 +255,16 @@ describe('simulatePair()', () => {
     expect(store.vehicleDoublingsTable).toBeDefined()
     // stored as Uint32Array: 16384 bytes / 4 = 4096 elements
     expect(store.vehicleDoublingsTable.length).toBe(4096)
-    expect(store.keyPool).toBeDefined()
-    expect(store.keyPool.length).toBe(97 * 5)
   })
 
-  test('calls all three phone methods in order', async () => {
+  test('calls pair + table methods in order (no pool — pool dropped)', async () => {
     const page = makeSimulateMb()
     const phone = new Phone(page)
 
     await new Promise(resolve => phone.simulatePair(resolve))
 
     const methods = page.request.mock.calls.map(c => c[0].method)
-    expect(methods).toEqual(['SIMULATE_PAIR', 'BLE_PRECOMPUTE_TABLE', 'BLE_SYNC_POOL'])
+    expect(methods).toEqual(['SIMULATE_PAIR', 'BLE_PRECOMPUTE_TABLE'])
   })
 
   test('stops and reports error if SIMULATE_PAIR fails', async () => {
@@ -360,7 +298,8 @@ describe('simulatePair()', () => {
     const result = await new Promise(resolve => phone.simulatePair(resolve))
 
     expect(result.success).toBe(false)
+    // Stops at the table step — SIMULATE_PAIR then BLE_PRECOMPUTE_TABLE, nothing after.
     const methods = page.request.mock.calls.map(c => c[0].method)
-    expect(methods).not.toContain('BLE_SYNC_POOL')
+    expect(methods).toEqual(['SIMULATE_PAIR', 'BLE_PRECOMPUTE_TABLE'])
   })
 })

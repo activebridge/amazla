@@ -42,7 +42,7 @@ describe('lib/store.js', () => {
   })
 
   test('removeBinary does not throw when file absent', () => {
-    expect(() => store.removeBinary('key_pool')).not.toThrow()
+    expect(() => store.removeBinary('nonexistent_file')).not.toThrow()
   })
 
   // ── watchPublicKey ────────────────────────────────────────────────────────
@@ -83,33 +83,15 @@ describe('lib/store.js', () => {
     expect(Array.from(result)).toEqual(Array.from(original))
   })
 
-  // ── keyPool ───────────────────────────────────────────────────────────────
-
-  test('keyPool: returns undefined when nothing stored', () => {
-    expect(store.keyPool).toBeUndefined()
-  })
-
-  test('keyPool round-trip: Uint8Array in, Uint8Array out', () => {
-    const original = new Uint8Array(97 * 3)
-    for (let i = 0; i < original.length; i++) original[i] = i & 0xff
-
-    store.keyPool = original
-
-    const result = store.keyPool
-    expect(result).toBeInstanceOf(Uint8Array)
-    expect(result.length).toBe(original.length)
-    expect(Array.from(result)).toEqual(Array.from(original))
-  })
-
   test('writeBinary accepts Uint8Array with non-zero byteOffset', () => {
     const buffer = new ArrayBuffer(10)
     const full = new Uint8Array(buffer)
     for (let i = 0; i < 10; i++) full[i] = i
     const sub = new Uint8Array(buffer, 2, 5) // bytes 2..6
 
-    store.keyPool = sub
+    store.vehicleEcPublicKey = sub
 
-    const result = store.keyPool
+    const result = store.vehicleEcPublicKey
     expect(result).toBeInstanceOf(Uint8Array)
     expect(Array.from(result)).toEqual([2, 3, 4, 5, 6])
   })
@@ -198,95 +180,6 @@ describe('lib/store.js', () => {
     expect(store.hasDoublingsTable).toBe(true)
   })
 
-  // ── popKey ───────────────────────────────────────────────────────────────
-
-  test('popKey: returns null when pool empty', () => {
-    expect(store.popKey()).toBeNull()
-  })
-
-  test('popKey: returns first key as { privateKeyBytes, publicKeyBytes }', () => {
-    const pool = new Uint8Array(2 * 97)
-    for (let i = 0; i < pool.length; i++) pool[i] = i & 0xff
-    store.keyPool = pool
-
-    const key = store.popKey()
-    expect(key).not.toBeNull()
-    expect(key.privateKeyBytes).toBeInstanceOf(Uint8Array)
-    expect(key.publicKeyBytes).toBeInstanceOf(Uint8Array)
-    expect(key.privateKeyBytes.length).toBe(32)
-    expect(key.publicKeyBytes.length).toBe(65)
-    expect(Array.from(key.privateKeyBytes)).toEqual(Array.from(pool.slice(0, 32)))
-    expect(Array.from(key.publicKeyBytes)).toEqual(Array.from(pool.slice(32, 97)))
-  })
-
-  test('popKey: successive calls return successive keys without rewriting file', () => {
-    const pool = new Uint8Array(3 * 97)
-    for (let i = 0; i < pool.length; i++) pool[i] = i & 0xff
-    store.keyPool = pool
-
-    const k1 = store.popKey()
-    const k2 = store.popKey()
-    const k3 = store.popKey()
-    expect(Array.from(k1.privateKeyBytes)).toEqual(Array.from(pool.slice(0, 32)))
-    expect(Array.from(k2.privateKeyBytes)).toEqual(Array.from(pool.slice(97, 129)))
-    expect(Array.from(k3.privateKeyBytes)).toEqual(Array.from(pool.slice(194, 226)))
-  })
-
-  test('popKey: returns null when all keys consumed', () => {
-    store.keyPool = new Uint8Array(1 * 97)
-    store.popKey()
-    expect(store.popKey()).toBeNull()
-  })
-
-  test('popKey: keyPoolCount decrements on each pop', () => {
-    store.keyPool = new Uint8Array(3 * 97)
-    expect(store.keyPoolCount).toBe(3)
-    store.popKey()
-    expect(store.keyPoolCount).toBe(2)
-    store.popKey()
-    expect(store.keyPoolCount).toBe(1)
-    store.popKey()
-    expect(store.keyPoolCount).toBe(0)
-  })
-
-  test('popKey: writing new pool resets offset — all keys available again', () => {
-    store.keyPool = new Uint8Array(2 * 97)
-    store.popKey()
-    store.popKey()
-    expect(store.popKey()).toBeNull()
-
-    store.keyPool = new Uint8Array(2 * 97)
-    expect(store.popKey()).not.toBeNull()
-    expect(store.popKey()).not.toBeNull()
-    expect(store.popKey()).toBeNull()
-  })
-
-  // ── keyPoolCount ──────────────────────────────────────────────────────────
-
-  test('keyPoolCount: 0 when nothing stored', () => {
-    expect(store.keyPoolCount).toBe(0)
-  })
-
-  test('keyPoolCount: updated when pool is written', () => {
-    const pool = new Uint8Array(33 * 97)
-    store.keyPool = pool
-    expect(store.keyPoolCount).toBe(33)
-  })
-
-  test('keyPoolCount: updates to 0 when pool is removed', () => {
-    store.keyPool = new Uint8Array(5 * 97)
-    expect(store.keyPoolCount).toBe(5)
-    store.removeBinary('key_pool')
-    expect(store.keyPoolCount).toBe(0)
-  })
-
-  test('keyPoolCount: reflects partial pool', () => {
-    store.keyPool = new Uint8Array(10 * 97)
-    expect(store.keyPoolCount).toBe(10)
-    store.keyPool = new Uint8Array(7 * 97)
-    expect(store.keyPoolCount).toBe(7)
-  })
-
   // ── isPaired ──────────────────────────────────────────────────────────────
 
   function setupFullyPaired() {
@@ -294,7 +187,6 @@ describe('lib/store.js', () => {
     store.watchPrivateKey       = bytesToBinaryString(new Uint8Array(32).fill(0x05))
     store.vehicleEcPublicKey    = new Uint8Array(65).fill(0x04)
     store.vehicleDoublingsTable = new Uint32Array(256 * 16)
-    store.keyPool               = new Uint8Array(1 * 97)
     store.vehicleVin            = '5YJ3E1EA6JF020598'
   }
 
@@ -329,12 +221,6 @@ describe('lib/store.js', () => {
     expect(store.isPaired).toBe(true)
   })
 
-  test('isPaired: false when keyPool empty', () => {
-    setupFullyPaired()
-    store.removeBinary('key_pool')
-    expect(store.isPaired).toBe(false)
-  })
-
   test('isPaired: false when VIN missing', () => {
     setupFullyPaired()
     store.vehicleVin = null
@@ -358,7 +244,6 @@ describe('lib/store.js', () => {
     store.vehicleEcPublicKey = new Uint8Array(65)
     store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65))
     store.vehicleDoublingsTable = new Uint32Array(256 * 16)
-    store.keyPool = new Uint8Array(5 * 97)
 
     expect(() => store.reset()).not.toThrow()
 
@@ -369,6 +254,5 @@ describe('lib/store.js', () => {
     expect(store.vehicleEcPublicKey).toBeNull()
     expect(store.watchPublicKey).toBeNull()
     expect(store.hasDoublingsTable).toBe(false)
-    expect(store.keyPoolCount).toBe(0)
   })
 })

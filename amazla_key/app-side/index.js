@@ -9,7 +9,7 @@ const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
 // Methods whose responses are raw binary (watch requests them with dataType:'bin').
 // Envelope: [0x01][payload bytes] on success, [0x00][utf-8 error] on failure.
 // Avoids the JSON \uXXXX 2x size blowup that OOM-rebooted the watch on big tables.
-const BINARY_METHODS = { BLE_PRECOMPUTE_TABLE: 1, BLE_SYNC_POOL: 1, BLE_COMPLETE_PAIRING: 1 }
+const BINARY_METHODS = { BLE_PRECOMPUTE_TABLE: 1, BLE_COMPLETE_PAIRING: 1 }
 
 const okBin = (...parts) => Buffer.concat([Buffer.from([1]), ...parts.map((p) => Buffer.from(p))])
 const errBin = (msg) => Buffer.concat([Buffer.from([0]), Buffer.from(String(msg || 'error'), 'utf-8')])
@@ -89,16 +89,6 @@ const actions = {
   BLE_COMPLETE_PAIRING: async () => {
     console.log('[App] BLE_COMPLETE_PAIRING: no-op (vehicle pub is fetched from SessionInfo on connect)')
     return okBin()
-  },
-
-  // Binary response: [0x01][pool bytes]. Empty payload = already have enough keys.
-  BLE_SYNC_POOL: async ({ currentCount = 0 }) => {
-    const TARGET = 33
-    console.log(`[App] BLE_SYNC_POOL: have ${currentCount}, target ${TARGET}`)
-    if (currentCount >= TARGET) return okBin()
-    const r = bleCrypto.generateKeyPool(TARGET)
-    if (!r.success) return errBin(r.error)
-    return okBin(binaryStringToBytes(r.pool))
   },
 
   // Diagnostic: read stored phone-side priv/pub, derive pub from priv on phone,

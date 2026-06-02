@@ -8,7 +8,7 @@
  * Test setup:
  *   1. Generate fresh vehicle keypair (CarSimulator)
  *   2. Build ECDH doublings table from vehicle pubkey (app-side bleCrypto)
- *   3. Generate ephemeral watch keypair, store in key pool (store.keyPool)
+ *   3. Generate long-term enrolled watch keypair, enroll in sim whitelist
  *   4. Install harness + simulator → tests run full session establishment
  */
 
@@ -60,23 +60,6 @@ function p(fn) {
   return new Promise((resolve) => fn(resolve))
 }
 
-/** Generate one 97-byte key pool entry (P-256 priv32 + pub65) */
-function makePoolEntry() {
-  const ecdh = createECDH('prime256v1')
-  ecdh.generateKeys()
-  const entry = new Uint8Array(97)
-  entry.set(new Uint8Array(ecdh.getPrivateKey()), 0)
-  entry.set(new Uint8Array(ecdh.getPublicKey()),  32)
-  return entry
-}
-
-/** Build and store a key pool with `n` entries */
-function buildPool(n = 5) {
-  const pool = new Uint8Array(n * 97)
-  for (let i = 0; i < n; i++) pool.set(makePoolEntry(), i * 97)
-  store.keyPool = pool
-}
-
 /** Build doublings table from sim.vehiclePubKey and store it */
 function storeDoublingsTable(sim) {
   const pubKeyBinary = bytesToBinaryString(sim.vehiclePubKey)
@@ -101,7 +84,6 @@ function setupStore(sim) {
   store.watchPrivateKey = bytesToBinaryString(watchPriv)
   sim._enrolledPublicKey = watchPub
   storeDoublingsTable(sim)
-  buildPool(5)
   // Production session.js scans by VIN-derived local name (Tesla rotates the
   // BLE MAC every ~15 min). Tell the harness which beacon to surface so the
   // scan resolves immediately instead of waiting the full duration.
@@ -438,7 +420,6 @@ describe('connection error paths', () => {
     const watchPriv = new Uint8Array(32); watchPriv.fill(7)
     store.watchPrivateKey = bytesToBinaryString(watchPriv)
     store.watchPublicKey = bytesToBinaryString(sim._enrolledPublicKey)
-    buildPool(5)
     // no doublings table, no vehicleEcPublicKey
     const result = await p((cb) => session.requestSessionInfo(cb))
     // Session won't actually establish (watchPriv random ≠ enrolled), but the

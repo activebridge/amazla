@@ -58,19 +58,6 @@ class Phone {
       })
   }
 
-  // Sync ephemeral key pool from companion. Writes store.keyPool if pool returned.
-  // Pass count=0 to force full regeneration (e.g. after pairing).
-  syncPool(cb, count) {
-    var currentCount = count !== undefined ? count : store.keyPoolCount
-    this._requestBin('BLE_SYNC_POOL', { currentCount })
-      .then((body) => {
-        if (body.length > 0) store.keyPool = toU8(body)
-        if (cb) cb({ success: true })
-      })
-      .catch((e) => {
-        if (cb) cb({ success: false, error: e.message })
-      })
-  }
 
   // Sync vehicle name and VIN from companion settings. Writes store.vehicleName/vehicleVin.
   syncSettings() {
@@ -151,10 +138,6 @@ class Phone {
       })
       .then((tableBody) => {
         store.vehicleDoublingsTable = toU8(tableBody)
-        return this._requestBin('BLE_SYNC_POOL', { currentCount: 0 })
-      })
-      .then((poolBody) => {
-        if (poolBody.length > 0) store.keyPool = toU8(poolBody)
         cb({ success: true })
       })
       .catch((e) => {

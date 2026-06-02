@@ -74,7 +74,6 @@ class TeslaSession {
     console.log(`[SESSION] Saved MAC (cached hint): ${store.vehicleMac || '<none>'}`)
     console.log(`[SESSION] EC pubkey: ${store.vehicleEcPublicKey ? store.vehicleEcPublicKey.length + 'B present' : '<absent>'}`)
     console.log(`[SESSION] Doublings table: ${store.vehicleDoublingsTable ? 'present' : '<absent>'}`)
-    console.log(`[SESSION] Key pool count: ${store.keyPoolCount}`)
     // Tesla rotates the BLE MAC every ~15 min. The MAC in store.vehicleMac
     // may already be stale. Mirror the Tesla Go SDK's VehicleLocalName flow:
     // derive the BLE local name from VIN, scan for an exact-name advertisement,

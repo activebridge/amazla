@@ -167,23 +167,6 @@ class BLECryptoSession {
     }
   }
 
-  // Generate N ephemeral P-256 keypairs for watch key pool.
-  // Returns binary string: N × 97 bytes per key (32 priv + 65 pub).
-  // Binary format: 50% storage reduction vs hex, direct byte slicing on watch.
-  // Watch stores this directly and pops one key (97 bytes) per session.
-  generateKeyPool(count) {
-    const n = count || 5
-    const buf = new Uint8Array(n * 97)
-
-    for (let i = 0; i < n; i++) {
-      const { privBytes, pubBytes } = generateKeypair()
-      buf.set(privBytes, i * 97)
-      buf.set(pubBytes, i * 97 + 32)
-    }
-
-    return { success: true, pool: bytesToBinaryString(buf) }
-  }
-
   // Precompute doublings table for vehicle's fixed public key.
   // Returns ArrayBuffer: 256 entries × 64 bytes = 16384 bytes.
   // Phone does this once during pairing; watch stores it as binary for fast fixed-base ECDH.

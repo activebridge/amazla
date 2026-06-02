@@ -9,7 +9,6 @@ import UI, { button, img, page, rect } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
 import Phone from '../lib/phone.js'
-import store from '../lib/store.js'
 import tesla from '../lib/tesla.js'
 import BLE from '../lib/tesla-ble/index.js'
 import teslaSession from '../lib/tesla-ble/session.js'
@@ -262,7 +261,6 @@ Page({
     setPageBrightTime(300)
 
     phone = new Phone()
-    if (store.keyPoolCount < 10) phone.syncPool()
     phone.syncSettings()
 
     tesla.onChange(render)
