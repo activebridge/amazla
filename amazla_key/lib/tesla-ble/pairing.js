@@ -180,9 +180,9 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         teslaSession.requestSessionInfo((sr) => {
           if (cancelled) return
           if (sr && sr.success) {
-            log('✓ ECDH table built — standalone')
+            log('✓ Session key derived — standalone')
           } else {
-            log('Table build skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
+            log('Session key derivation skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
           }
           onState('done')
           onSuccess()

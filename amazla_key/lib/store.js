@@ -123,11 +123,7 @@ const store = {
   // the connect this gate allows (deriving it requires connecting), so requiring
   // it would deadlock the bootstrap.
   get isEnrolled() {
-    return !!(
-      this.watchPublicKey &&
-      this.watchPrivateKey &&
-      this.vehicleVin
-    )
+    return !!(this.watchPublicKey && this.watchPrivateKey && this.vehicleVin)
   },
   // Fully paired = enrolled AND the session key is cached, i.e. ready to unlock
   // without the phone. Use for UI/status, NOT as the connect gate.
@@ -181,7 +177,9 @@ const store = {
     }
     console.log(`[STORE.diag] watchPublicKey:      ${lsLen('watchPublicKey')}`)
     console.log(`[STORE.diag] watchPrivateKey:     ${lsLen('watchPrivateKey')}`)
-    console.log(`[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`)
+    console.log(
+      `[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`,
+    )
     console.log(`[STORE.diag] session_key.dat:     ${fileSize('session_key.dat')}`)
     console.log(`[STORE.diag] vehicleVin:          ${lsLen('vehicleVin')}`)
     console.log(`[STORE.diag] vehicleMac:          ${lsLen('vehicleMac')}`)
