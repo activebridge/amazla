@@ -63,6 +63,23 @@ const store = {
     else this.removeBinary('watch_private_key')
   },
 
+  // Cached 16-byte ECDH-derived session key. The key is a constant for a paired
+  // watch+vehicle (static watchPrivateKey × static vehicle EC pubkey), so it's
+  // computed once (at pair time, or first connect after this cache was added)
+  // and reused — letting normal connects skip the ~3.8s ECDH scalar-mul. It's a
+  // symmetric secret with null bytes, so it lives in a file like the private key.
+  // Invalidated together with vehicleEcPublicKey (re-pair / vehicle key change);
+  // session.js rebuilds it via the slow path whenever the stored EC pubkey no
+  // longer matches the SessionInfo pubkey.
+  get sessionKey() {
+    return readBinary('session_key')
+  },
+  set sessionKey(value) {
+    if (typeof value === 'string') value = binaryStringToBytes(value)
+    if (value) writeBinary('session_key', value)
+    else this.removeBinary('session_key')
+  },
+
   // File-backed: the 65-byte vehicle EC point contains null bytes, which don't
   // survive in LocalStorage (same hazard that moved watchPrivateKey to a file —
   // it read back null on the next launch, so the doublings-table staleness check
@@ -190,6 +207,7 @@ const store = {
     console.log(`[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`)
     console.log(`[STORE.diag] hasDoublingsTable:   ${lsLen('hasDoublingsTable')}`)
     console.log(`[STORE.diag] vehicle_doublings_table.dat: ${fileSize('vehicle_doublings_table.dat')}`)
+    console.log(`[STORE.diag] session_key.dat:     ${fileSize('session_key.dat')}`)
     console.log(`[STORE.diag] vehicleVin:          ${lsLen('vehicleVin')}`)
     console.log(`[STORE.diag] vehicleMac:          ${lsLen('vehicleMac')}`)
   },
@@ -206,6 +224,7 @@ const store = {
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('watch_private_key')
     this.removeBinary('vehicle_ec_public_key')
+    this.removeBinary('session_key')
   },
 }
 

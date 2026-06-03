@@ -2,6 +2,44 @@
 // Tests for Tesla BLE communication layer
 
 import { hexToBytes, bytesToHex } from '../app-side/ble-crypto.js'
+import teslaBLE from '../lib/tesla-ble/ble.js'
+
+describe('RX framing orphan/oversized guard', () => {
+  beforeEach(() => teslaBLE.reset())
+  afterEach(() => teslaBLE.reset())
+
+  test('chunk with an implausible length prefix is dropped; a real frame after it still parses', () => {
+    const results = []
+    teslaBLE.responseCallback = (r) => results.push(r)
+
+    // Orphan tail of an ambient frame, mis-read as a length prefix: 0xd1a2 = 53666.
+    teslaBLE._handleResponse(new Uint8Array([0xd1, 0xa2, 0xac, 0xe3, 0x15]), 5)
+    expect(results.length).toBe(0) // not delivered upward
+    expect(teslaBLE.responseCallback).not.toBeNull() // still waiting for a real frame
+    expect(teslaBLE._rxBuf).toBeNull() // no doomed reassembly started
+
+    // A genuine frame (length prefix 0x0003) arrives next and parses cleanly.
+    teslaBLE._handleResponse(new Uint8Array([0x00, 0x03, 0xaa, 0xbb, 0xcc]), 5)
+    expect(results.length).toBe(1)
+    expect(results[0].success).toBe(true)
+    expect(Array.from(results[0].data)).toEqual([0xaa, 0xbb, 0xcc])
+  })
+
+  test('a frame at the size cap still reassembles normally', () => {
+    const results = []
+    teslaBLE.responseCallback = (r) => results.push(r)
+    // 177-byte SessionInfo-sized frame: prefix 0x00b1 = 177, well under the cap.
+    const payload = new Uint8Array(177).fill(0x5a)
+    const frame = new Uint8Array(2 + 177)
+    frame[0] = 0x00
+    frame[1] = 0xb1
+    frame.set(payload, 2)
+    teslaBLE._handleResponse(frame, frame.length)
+    expect(results.length).toBe(1)
+    expect(results[0].success).toBe(true)
+    expect(results[0].data.length).toBe(177)
+  })
+})
 
 describe('BLE Message Format', () => {
   describe('Length prefix', () => {

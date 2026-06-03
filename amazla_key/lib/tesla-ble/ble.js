@@ -6,6 +6,13 @@ const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_READ_UUID = '00000213-b2d1-43f0-9b88-960cebf8b91e'
 const BLE_CHUNK_SIZE = 20
+// Upper bound on a reassembled Tesla response frame. The largest we ever see is
+// SessionInfo (~177B); commands/status are <60B. A declared length above this
+// means the chunk is an orphan fragment (e.g. the tail of a frame whose head
+// arrived before our callback was registered, then mis-read as a 2-byte length
+// prefix → values like 9516/53666). Reject it instead of opening a multi-second
+// bogus reassembly window that could swallow the real response.
+const MAX_FRAME_SIZE = 2048
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   // 8 s is enough for any successful Tesla GATT connect we've observed (350 ms
@@ -355,6 +362,17 @@ class TeslaBLE {
     this.connected = false
     this._cleanup()
   }
+  // Deeper native cleanup for the session watchdog's recycle. disconnect()/quit()
+  // frees the connection, but stale native RX callbacks and queued notification
+  // fragments can still bleed into the next connection (observed: orphan frame
+  // tails arriving right after a reconnect). Dropping all native callbacks +
+  // stopping scans mirrors the relaunch-time _clearStaleNativeState that reliably
+  // recovers a wedged link. Call AFTER disconnect() and BEFORE the next connect,
+  // while no BLEMaster is attached, so only stale registrations are cleared.
+  flushNative() {
+    try { hmBle.mstStopScan() } catch (_e) {}
+    try { if (hmBle.mstOffAllCb) hmBle.mstOffAllCb() } catch (_e) {}
+  }
   reset() {
     this.connected = false
     this._cleanup()
@@ -461,6 +479,15 @@ class TeslaBLE {
         return
       }
       this._rxExpected = (chunk[0] << 8) | chunk[1]
+      // Orphan/oversized guard: a length above any real frame means this chunk
+      // isn't a genuine frame start (it's a stray fragment). Drop it, keep the
+      // callback registered, and wait for a clean frame instead of starting a
+      // doomed reassembly that times out ~1s later and may eat the real reply.
+      if (this._rxExpected > MAX_FRAME_SIZE) {
+        console.log(`[BLE] Ignoring orphan frame: declared ${this._rxExpected} bytes (cap ${MAX_FRAME_SIZE})`)
+        this._rxExpected = 0
+        return
+      }
       this._rxBuf = chunk.slice(2)
       this._rxLastChunkTime = Date.now()
       console.log(`[BLE] Starting reassembly: expect ${this._rxExpected} bytes, first chunk has ${this._rxBuf.length}`)

@@ -7,6 +7,7 @@
  * covered in car-simulator.test.js).
  */
 
+import { jest } from '@jest/globals'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
 import store from '../lib/store.js'
@@ -18,6 +19,132 @@ describe('TeslaSession edge cases', () => {
     const s = new TeslaSession()
     s._cmdHmacFn = null
     expect(() => s._buildHMACTag(new Uint8Array(), 0, 0, new Uint8Array())).toThrow(/Command HMAC not initialized/)
+  })
+})
+
+describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => {
+  // When a SessionInfoRequest gets only ambient (fields:[3]) broadcasts and no
+  // real SessionInfo, the native write path is wedged (RX works, TX dropped).
+  // The watchdog recycles the link (disconnect → re-scan → reconnect → resend)
+  // up to SESSION_INFO_MAX_ATTEMPTS, mirroring an app relaunch.
+  let session
+  let origDisconnect
+  let origFlushNative
+  beforeEach(() => {
+    bootSessionEnv()
+    session = new TeslaSession()
+    origDisconnect = teslaBLE.disconnect.bind(teslaBLE)
+    origFlushNative = teslaBLE.flushNative.bind(teslaBLE)
+  })
+  afterEach(() => {
+    teslaBLE.disconnect = origDisconnect
+    teslaBLE.flushNative = origFlushNative
+    session.reset()
+    teslaBLE.reset()
+  })
+
+  test('timeout with attempts remaining → disconnects + flushes native, then re-runs connect after a settle', () => {
+    jest.useFakeTimers()
+    try {
+      teslaBLE.disconnect = jest.fn()
+      teslaBLE.flushNative = jest.fn()
+      session._ensureConnected = jest.fn()
+      let cbResult = 'NOT_CALLED'
+      const cb = (r) => { cbResult = r }
+
+      session._sessionInfoAttempts = 1 // first attempt in flight, retry available
+      session._onSessionInfoTimeout(cb)
+
+      // Teardown happens immediately; reconnect is deferred past the settle.
+      expect(teslaBLE.disconnect).toHaveBeenCalledTimes(1)
+      expect(teslaBLE.flushNative).toHaveBeenCalledTimes(1)
+      expect(session._ensureConnected).not.toHaveBeenCalled()
+      expect(cbResult).toBe('NOT_CALLED') // not failed — a retry is underway
+
+      jest.advanceTimersByTime(600)
+      expect(session._ensureConnected).toHaveBeenCalledTimes(1)
+      expect(session._ensureConnected).toHaveBeenCalledWith(cb)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('timeout after final attempt → gives up with actionable error, no reconnect', () => {
+    teslaBLE.disconnect = jest.fn()
+    session._ensureConnected = jest.fn()
+    let cbResult = null
+    const cb = (r) => { cbResult = r }
+
+    session._sessionInfoAttempts = 99 // exhausted
+    session._onSessionInfoTimeout(cb)
+
+    expect(session._ensureConnected).not.toHaveBeenCalled()
+    expect(cbResult.success).toBe(false)
+    expect(cbResult.error).toMatch(/not responding|wake the car/i)
+  })
+
+  test('watchdog is cleared once a real SessionInfo establishes the session', async () => {
+    await p((cb) => teslaBLE.connect('AA:BB:CC:DD:EE:FF', cb))
+    const result = await p((cb) => session.requestSessionInfo(cb))
+    expect(result.success).toBe(true)
+    expect(session._sessionInfoTimer).toBeNull()
+  })
+})
+
+describe('TeslaSession cached session key (skip ECDH)', () => {
+  let session
+  beforeEach(async () => {
+    bootSessionEnv()
+    session = new TeslaSession()
+    await p((cb) => teslaBLE.connect('AA:BB:CC:DD:EE:FF', cb))
+  })
+  afterEach(() => {
+    session.reset()
+    teslaBLE.reset()
+  })
+
+  test('first establish derives + caches the key; second reuses it and skips ECDH', async () => {
+    expect(store.sessionKey).toBeFalsy()
+
+    const r1 = await p((cb) => session.requestSessionInfo(cb))
+    expect(r1.success).toBe(true)
+    const cached = store.sessionKey
+    expect(cached && cached.length).toBe(16)
+
+    // Fresh session over the same (still-connected) BLE link + same store.
+    session.reset()
+    const session2 = new TeslaSession()
+    const deriveSpy = jest.spyOn(session2, '_deriveSessionKey')
+    const tableSpy = jest.spyOn(session2, '_ensureTableForVehiclePub')
+
+    const r2 = await p((cb) => session2.requestSessionInfo(cb))
+    expect(r2.success).toBe(true)
+    expect(session2.established).toBe(true)
+    // Fast path: neither the table check nor the ECDH ran.
+    expect(deriveSpy).not.toHaveBeenCalled()
+    expect(tableSpy).not.toHaveBeenCalled()
+    session2.reset()
+  })
+
+  test('cached key but stored EC pubkey no longer matches SessionInfo → slow path re-derives', async () => {
+    await p((cb) => session.requestSessionInfo(cb))
+    expect(store.sessionKey && store.sessionKey.length).toBe(16)
+
+    // Simulate a vehicle key change: the stored EC pubkey (and thus the cached
+    // session key) no longer matches the pubkey the car returns in SessionInfo,
+    // so the fast-path guard must fail and force a fresh ECDH derivation.
+    store.vehicleEcPublicKey = new Uint8Array(65).fill(9)
+    store.sessionKey = new Uint8Array(16).fill(7)
+    session.reset()
+    const session2 = new TeslaSession()
+    const deriveSpy = jest.spyOn(session2, '_deriveSessionKey')
+
+    const r2 = await p((cb) => session2.requestSessionInfo(cb))
+    expect(r2.success).toBe(true)
+    expect(deriveSpy).toHaveBeenCalled()
+    // Re-cached the correct key (overwrote the bogus one).
+    expect(store.sessionKey && store.sessionKey.length).toBe(16)
+    session2.reset()
   })
 })
 

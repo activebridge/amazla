@@ -78,7 +78,11 @@ function setupStore(sim) {
   // tell the simulator which pubkey is "enrolled" so its whitelist check passes.
   const watchEcdh = createECDH('prime256v1')
   watchEcdh.generateKeys()
-  const watchPriv = new Uint8Array(watchEcdh.getPrivateKey())
+  // Left-pad to a fixed 32 bytes: Node returns the scalar minimally, so ~0.4% of
+  // keys are 31 bytes (leading zero) and session.js would reject them as "Watch
+  // keypair missing" — a pre-existing ~1-in-5 harness flake.
+  const rawPriv = new Uint8Array(watchEcdh.getPrivateKey())
+  const watchPriv = rawPriv.length === 32 ? rawPriv : (() => { const o = new Uint8Array(32); o.set(rawPriv, 32 - rawPriv.length); return o })()
   const watchPub = new Uint8Array(watchEcdh.getPublicKey())
   store.watchPublicKey = bytesToBinaryString(watchPub)
   store.watchPrivateKey = bytesToBinaryString(watchPriv)

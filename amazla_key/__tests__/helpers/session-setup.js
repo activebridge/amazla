@@ -29,6 +29,15 @@ Phone.prototype.precomputeTable = function (vehiclePubBytes) {
 /** Wrap a callback-style function as a Promise */
 export const p = (fn) => new Promise((resolve) => fn(resolve))
 
+/** Left-pad a big-endian scalar buffer to a fixed 32 bytes (value-preserving). */
+export const pad32 = (buf) => {
+  const src = new Uint8Array(buf)
+  if (src.length === 32) return src
+  const out = new Uint8Array(32)
+  out.set(src, 32 - src.length)
+  return out
+}
+
 /** Build doublings table from sim.vehiclePubKey and store it */
 export const storeDoublingsTable = (sim) => {
   const result = bleCrypto.buildDoublingsTable(bytesToBinaryString(sim.vehiclePubKey))
@@ -46,7 +55,10 @@ export const setupStore = (sim) => {
   // the pubkey with the simulator's whitelist.
   const watchEcdh = createECDH('prime256v1')
   watchEcdh.generateKeys()
-  const watchPriv = new Uint8Array(watchEcdh.getPrivateKey())
+  // Node returns the scalar as a *minimal* big-endian buffer, so ~0.4% of keys
+  // are <32 bytes (leading zero). Left-pad to a fixed 32 bytes (value-preserving)
+  // — otherwise session.js rejects it as "Watch keypair missing" ~1 run in 5.
+  const watchPriv = pad32(watchEcdh.getPrivateKey())
   const watchPub = new Uint8Array(watchEcdh.getPublicKey())
   store.watchPublicKey = bytesToBinaryString(watchPub)
   store.watchPrivateKey = bytesToBinaryString(watchPriv)

@@ -24,6 +24,20 @@ import {
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
 
+// When a SessionInfoRequest gets only ambient (fields:[3]) broadcasts and no
+// real SessionInfo within this window, the native BLE write path is wedged
+// (RX still works, TX silently dropped — see project_amazla_key_native_ble_poison).
+// Generous because the car legitimately emits several ambient frames before a
+// real response (pairing.js tolerates ~5×6s). Past this we recycle the link.
+const SESSION_INFO_AMBIENT_TIMEOUT_MS = 8000
+// Total SessionInfoRequest attempts including the first. Each retry does a full
+// reset → re-scan → reconnect → resend, mirroring what an app relaunch does.
+const SESSION_INFO_MAX_ATTEMPTS = 2
+// Idle gap between tearing down the wedged link and reconnecting on a retry.
+// Lets the native BLE stack drain queued RX (stale notification fragments) while
+// nothing is attached — a back-to-back reconnect reuses that dirty state.
+const RECYCLE_SETTLE_MS = 600
+
 class TeslaSession {
   constructor() {
     this.reset()
@@ -47,6 +61,14 @@ class TeslaSession {
       clearTimeout(this._secondResponseTimer)
       this._secondResponseTimer = null
     }
+    this._sessionInfoAttempts = 0
+    this._clearSessionInfoTimer()
+  }
+  _clearSessionInfoTimer() {
+    if (this._sessionInfoTimer) {
+      clearTimeout(this._sessionInfoTimer)
+      this._sessionInfoTimer = null
+    }
   }
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
     if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
@@ -55,6 +77,7 @@ class TeslaSession {
   requestSessionInfo(callback) {
     // No table check here anymore — _ensureTableForVehiclePub will build it
     // on the fly from the SessionInfo response if missing or stale.
+    this._sessionInfoAttempts = 0
     this._ensureConnected(callback)
   }
   _ensureConnected(callback) {
@@ -156,6 +179,7 @@ class TeslaSession {
     this.ephemeralPublicKey = watchPub
     this.routingAddress = generateRoutingAddress()
     this._lastRequestUuid = generateUUID()
+    this._sessionInfoAttempts = (this._sessionInfoAttempts || 0) + 1
 
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
@@ -165,18 +189,46 @@ class TeslaSession {
       sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
       uuid: this._lastRequestUuid,
     })
-    console.log(`[SESSION] TX request (first 64 bytes of ${message.length} total bytes)`)
+    console.log(`[SESSION] TX request (attempt ${this._sessionInfoAttempts}/${SESSION_INFO_MAX_ATTEMPTS}, first 64 bytes of ${message.length} total bytes)`)
 
     const handler = (result) => this._handleSessionInfoResponse(result, callback, handler)
+    // Watchdog: if only ambient broadcasts arrive (no real SessionInfo) within
+    // the window, the native BLE link is wedged — recycle it and resend.
+    this._clearSessionInfoTimer()
+    this._sessionInfoTimer = setTimeout(() => this._onSessionInfoTimeout(callback), SESSION_INFO_AMBIENT_TIMEOUT_MS)
     teslaBLE.send(message, handler)
+  }
+  _onSessionInfoTimeout(callback) {
+    this._sessionInfoTimer = null
+    if (this._sessionInfoAttempts >= SESSION_INFO_MAX_ATTEMPTS) {
+      console.log('[SESSION] ❌ Only ambient frames after all attempts — giving up')
+      try { teslaBLE.disconnect() } catch (_e) {}
+      callback({ success: false, error: 'Vehicle not responding to session request. Wake the car and retry.' })
+      return
+    }
+    console.log('[SESSION] ⟳ Only ambient frames, no SessionInfo — recycling BLE link and retrying')
+    // Mirrors an app relaunch as closely as we can in-process:
+    //   1. disconnect() → _cleanup() runs ble.quit() (native disconnect of the
+    //      wedged link) and nulls this.ble. (Not reset() — keeps the BLE page's
+    //      onDisconnect handler intact.)
+    //   2. flushNative() drops stale native callbacks / queued RX so the next
+    //      connection doesn't inherit orphan notification fragments.
+    //   3. A short idle settle before reconnecting lets the native stack drain
+    //      while nothing is attached. A bare back-to-back reconnect reuses the
+    //      dirty native state and tends to land in ambient-only again.
+    try { teslaBLE.disconnect() } catch (_e) {}
+    try { teslaBLE.flushNative() } catch (_e) {}
+    setTimeout(() => this._ensureConnected(callback), RECYCLE_SETTLE_MS)
   }
   _handleSessionInfoResponse(result, callback, handler) {
     if (!result.success) {
+      this._clearSessionInfoTimer()
       callback({ success: false, error: result.error })
       return
     }
     try {
       if (!result.data) {
+        this._clearSessionInfoTimer()
         console.log('[SESSION] ERROR: result.data is null/undefined')
         callback({ success: false, error: 'No data in response' })
         return
@@ -194,19 +246,23 @@ class TeslaSession {
       // BLE immediately so the vehicle's slot frees up instead of waiting for
       // its supervision timeout (observed >6 min on Model 3).
       if (response.sessionInfoStatus === 1) {
+        this._clearSessionInfoTimer()
         console.log('[SESSION] ❌ Vehicle rejected key: KEY_NOT_ON_WHITELIST — re-pair required')
         try { teslaBLE.disconnect() } catch (_e) {}
         callback({ success: false, error: 'Key not on vehicle whitelist — re-pair from phone' })
         return
       }
 
-      // Intermediate ack from vehicle: no sessionInfo, payload, or status. Re-register for the real response.
+      // Intermediate ack / ambient broadcast: no sessionInfo, payload, or status.
+      // Re-register for the real response and keep the watchdog running — if only
+      // these arrive until it fires, _onSessionInfoTimeout recycles the link.
       if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
         console.log(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
         teslaBLE.responseCallback = handler
         return
       }
 
+      this._clearSessionInfoTimer()
       console.log(`[SESSION] RX bytes: ${result.data ? result.data.length : 0}`)
       if (!response.sessionInfo) {
         console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
@@ -217,6 +273,7 @@ class TeslaSession {
       }
       this._processSessionInfo(response, callback)
     } catch (e) {
+      this._clearSessionInfoTimer()
       console.log(`[SESSION] Exception: ${e.message}`)
       if (e.stack) console.log(`[SESSION] Stack: ${e.stack}`)
       callback({ success: false, error: e.message })
@@ -252,16 +309,45 @@ class TeslaSession {
       return
     }
 
+    // Fast path: the session key is a constant for a paired watch+vehicle
+    // (static watchPrivateKey × static vehicle EC pubkey). If we already derived
+    // it for THIS vehicle pubkey, reuse the cached 16-byte key and skip the
+    // ~3.8s ECDH (and the table entirely). Guard on the stored EC pubkey
+    // matching the live SessionInfo pubkey so a rotated vehicle key falls
+    // through to re-derivation. The HMAC tag verify below still runs, so a
+    // corrupted cache surfaces as an auth error (→ re-pair), never a silent pass.
+    const cachedKey = store.sessionKey
+    const storedPub = store.vehicleEcPublicKey
+    if (cachedKey && cachedKey.length === 16 && this._ecPubMatches(storedPub, this.vehiclePublicKey)) {
+      console.log('[SESSION] Using cached session key — skipping ECDH')
+      this.sessionKey = cachedKey
+      this._finalizeSession(response, callback)
+      return
+    }
+
+    // Slow path: no usable cache (first connect after pairing/update, or vehicle
+    // key changed). Build/refresh the table, run ECDH once, then cache the key so
+    // every subsequent connect takes the fast path.
     this._ensureTableForVehiclePub((err) => {
       if (err) { callback({ success: false, error: err }); return }
       if (!this._deriveSessionKey(callback)) return
-      if (!this._verifySessionInfoTag(response, callback)) return
-      const { cmdHmac } = createSessionHmacs(this.sessionKey)
-      this._cmdHmacFn = cmdHmac
-      this.established = true
-      console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
-      callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
+      store.sessionKey = this.sessionKey
+      console.log('[SESSION] Session key derived via ECDH and cached')
+      this._finalizeSession(response, callback)
     })
+  }
+  _ecPubMatches(a, b) {
+    if (!a || !b || a.length !== 65 || b.length !== 65) return false
+    for (let i = 0; i < 65; i++) if (a[i] !== b[i]) return false
+    return true
+  }
+  _finalizeSession(response, callback) {
+    if (!this._verifySessionInfoTag(response, callback)) return
+    const { cmdHmac } = createSessionHmacs(this.sessionKey)
+    this._cmdHmacFn = cmdHmac
+    this.established = true
+    console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
+    callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
   }
   // Build/refresh the doublings table on phone when the vehicle's SessionInfo
   // pubkey differs from what's stored (or nothing is stored). The pair
