@@ -2,11 +2,7 @@ import { readFileSync, rmSync, writeFileSync } from '@zos/fs'
 import { LocalStorage } from '@zos/storage'
 import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
 
-const TABLE_PATH = 'vehicle_doublings_table.dat'
-
 const localStorage = new LocalStorage()
-
-let _doublingsTableCache = null
 
 const readBinary = (path) => {
   try {
@@ -98,36 +94,6 @@ const store = {
     // File is the single source of truth — drop any stale LocalStorage copy.
     localStorage.removeItem('vehicleEcPublicKey')
   },
-  get vehicleDoublingsTable() {
-    if (_doublingsTableCache) return _doublingsTableCache
-    try {
-      const raw = readFileSync({ path: TABLE_PATH })
-      if (!raw || raw.byteLength !== 16384) return undefined
-      _doublingsTableCache = new Uint32Array(raw)
-    } catch (_e) {
-      return undefined
-    }
-    return _doublingsTableCache
-  },
-  set vehicleDoublingsTable(value) {
-    _doublingsTableCache = null
-    writeBinary('vehicle_doublings_table', value)
-    set('hasDoublingsTable', value ? '1' : null)
-  },
-  // Cached or flag-based check first; fall back to actual file read because the
-  // LS flag can go missing across runs while the file itself persists.
-  get hasDoublingsTable() {
-    if (_doublingsTableCache) return true
-    try {
-      if (localStorage.getItem('hasDoublingsTable') === '1') return true
-    } catch (_e) {}
-    try {
-      const raw = readFileSync({ path: TABLE_PATH })
-      return !!(raw && raw.byteLength === 16384)
-    } catch (_e) {
-      return false
-    }
-  },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')
   },
@@ -143,18 +109,30 @@ const store = {
   },
   // True iff all artifacts required for passive entry are present.
   // Computed — cannot get out of sync after reset or partial writes.
-  // Note: vehicleEcPublicKey and hasDoublingsTable are NOT required here.
-  // They're populated on the first successful CONNECT (from SessionInfo),
-  // not at pair time — pair just enrolls the watch key with the vehicle.
-  get isPaired() {
-    // The ephemeral key pool is no longer part of the protocol — session
-    // establishment + ECDH use the long-term enrolled keypair (Go SDK
-    // Session.localKey parity), so the pool is not required to be "paired".
+  // Note: vehicleEcPublicKey and the cached sessionKey are NOT required here.
+  // They're populated on the first successful CONNECT (from SessionInfo +
+  // phone-computed ECDH), not at pair time — pair just enrolls the watch key.
+  // Ready to begin pairing: we know which vehicle (VIN synced from the companion).
+  // The VIN is required to derive the BLE local name we scan/enroll against.
+  get isReady() {
+    return !!this.vehicleVin
+  },
+  // Enrolled = has the long-term keypair (both halves) + VIN. This is everything
+  // needed to ATTEMPT a connect and derive the session key — it gates connects
+  // (session.js). The session key itself is NOT required here: it's produced by
+  // the connect this gate allows (deriving it requires connecting), so requiring
+  // it would deadlock the bootstrap.
+  get isEnrolled() {
     return !!(
       this.watchPublicKey &&
       this.watchPrivateKey &&
       this.vehicleVin
     )
+  },
+  // Fully paired = enrolled AND the session key is cached, i.e. ready to unlock
+  // without the phone. Use for UI/status, NOT as the connect gate.
+  get isPaired() {
+    return this.isEnrolled && !!this.sessionKey
   },
   get vehicleName() {
     return localStorage.getItem('vehicleName')
@@ -175,7 +153,6 @@ const store = {
     } catch (_e) {
       // ignore
     }
-    if (key === 'vehicle_doublings_table') localStorage.removeItem('hasDoublingsTable')
   },
 
   removeItem: (key) => {
@@ -205,8 +182,6 @@ const store = {
     console.log(`[STORE.diag] watchPublicKey:      ${lsLen('watchPublicKey')}`)
     console.log(`[STORE.diag] watchPrivateKey:     ${lsLen('watchPrivateKey')}`)
     console.log(`[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`)
-    console.log(`[STORE.diag] hasDoublingsTable:   ${lsLen('hasDoublingsTable')}`)
-    console.log(`[STORE.diag] vehicle_doublings_table.dat: ${fileSize('vehicle_doublings_table.dat')}`)
     console.log(`[STORE.diag] session_key.dat:     ${fileSize('session_key.dat')}`)
     console.log(`[STORE.diag] vehicleVin:          ${lsLen('vehicleVin')}`)
     console.log(`[STORE.diag] vehicleMac:          ${lsLen('vehicleMac')}`)
@@ -219,8 +194,8 @@ const store = {
     localStorage.removeItem('vehicleMac')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
+    // Legacy: clear any doublings-table artifacts left by older builds.
     localStorage.removeItem('hasDoublingsTable')
-    _doublingsTableCache = null
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('watch_private_key')
     this.removeBinary('vehicle_ec_public_key')

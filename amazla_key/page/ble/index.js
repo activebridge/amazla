@@ -60,7 +60,7 @@ function updateChecklist() {
   var watchKey = store.watchPublicKey
   var watchPriv = store.watchPrivateKey
   var ecKey = store.vehicleEcPublicKey
-  var hasTable = store.hasDoublingsTable
+  var hasSessionKey = !!store.sessionKey
   var mac = store.vehicleMac
   var vehicleName = store.vehicleName
   var vehicleVinBytes = store.vehicleVin
@@ -70,7 +70,7 @@ function updateChecklist() {
   if (chkPrivWidget)
     chkPrivWidget.setProperty(hmUI.prop.TEXT, `${watchPriv ? '✓' : '✗'} PRIV:${watchPriv ? watchPriv.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
-  if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasTable ? '✓' : '✗'} TABLE`)
+  if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasSessionKey ? '✓' : '✗'} SKEY`)
   if (chkMacWidget) {
     var hasVehicle = !!(vehicleName && vehicleVin)
     if (hasVehicle) {
@@ -84,7 +84,7 @@ function updateChecklist() {
   if (chkKeyWidget) chkKeyWidget.setProperty(hmUI.prop.COLOR, watchKey ? 0x44cc66 : 0xff5555)
   if (chkPrivWidget) chkPrivWidget.setProperty(hmUI.prop.COLOR, watchPriv ? 0x44cc66 : 0xff5555)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.COLOR, ecKey ? 0x44cc66 : 0xff5555)
-  if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasTable ? 0x44cc66 : 0xff5555)
+  if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasSessionKey ? 0x44cc66 : 0xff5555)
 }
 const STATE_COLORS = {
   setup: 0xffcc00, scanning: 0xffcc00, connecting: 0xffcc00,
@@ -273,7 +273,7 @@ Page({
         y: 104,
         w: 210,
         h: 22,
-        text: '? TABLE',
+        text: '? SKEY',
         text_size: 18,
         color: 0x888888,
         align_h: hmUI.align.LEFT,

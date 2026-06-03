@@ -117,3 +117,37 @@ describe('Tesla session key derivation (ECDH → SHA1 → slice)', () => {
     expect(bytesToHex(sessionKey)).toBe('6f11b3c24c94b5faac2d2a6964339d9c')
   })
 })
+
+// ── Phone-computed shared secret must equal watch-side ecdhFixed(table) ────────
+// Drives the "drop the table" change: the phone computes the ECDH directly so the
+// 16 KB doublings table never crosses BLE. Proves both paths yield the same key.
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
+import { createECDH } from 'crypto'
+
+const pad32 = (b) => { b = new Uint8Array(b); if (b.length === 32) return b; const o = new Uint8Array(32); o.set(b, 32 - b.length); return o }
+
+describe('phone computeSharedSecret ≡ watch ecdhFixed(buildDoublingsTable)', () => {
+  for (let i = 0; i < 5; i++) {
+    test(`random keypair #${i + 1}`, () => {
+      const veh = createECDH('prime256v1'); veh.generateKeys()
+      const vehPub = new Uint8Array(veh.getPublicKey()) // 65B uncompressed
+      const w = createECDH('prime256v1'); w.generateKeys()
+      const wPriv = pad32(w.getPrivateKey())
+
+      // Watch path: phone builds the table, watch runs fixed-base ECDH on it.
+      const tbl = bleCrypto.buildDoublingsTable(bytesToBinaryString(vehPub))
+      expect(tbl.success).toBe(true)
+      const secretWatch = ecdhFixed(wPriv, new Uint32Array(tbl.buffer))
+      const keyWatch = sha1(secretWatch).slice(0, 16)
+
+      // Phone path: direct ECDH, returns the 32-byte shared secret X.
+      const r = bleCrypto.computeSharedSecret(bytesToBinaryString(wPriv), bytesToBinaryString(vehPub))
+      expect(r.success).toBe(true)
+      const secretPhone = binaryStringToBytes(r.secret)
+      const keyPhone = sha1(secretPhone).slice(0, 16)
+
+      expect(Array.from(secretPhone)).toEqual(Array.from(secretWatch))
+      expect(Array.from(keyPhone)).toEqual(Array.from(keyWatch))
+    })
+  }
+})

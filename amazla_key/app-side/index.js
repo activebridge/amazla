@@ -1,7 +1,7 @@
 import kpayAppSide from 'kpay-amazfit/app-side'
 import { kpayConfig } from '../shared/kpay-config'
 import { MessageBuilder } from '../shared/message-side'
-import bleCrypto, { bytesToBinaryString } from './ble-crypto.js'
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from './ble-crypto.js'
 
 const messageBuilder = new MessageBuilder()
 const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
@@ -9,7 +9,7 @@ const kpay = new kpayAppSide({ ...kpayConfig, messageBuilder })
 // Methods whose responses are raw binary (watch requests them with dataType:'bin').
 // Envelope: [0x01][payload bytes] on success, [0x00][utf-8 error] on failure.
 // Avoids the JSON \uXXXX 2x size blowup that OOM-rebooted the watch on big tables.
-const BINARY_METHODS = { BLE_PRECOMPUTE_TABLE: 1, BLE_COMPLETE_PAIRING: 1 }
+const BINARY_METHODS = { BLE_COMPUTE_SHARED_SECRET: 1, BLE_COMPLETE_PAIRING: 1 }
 
 const okBin = (...parts) => Buffer.concat([Buffer.from([1]), ...parts.map((p) => Buffer.from(p))])
 const errBin = (msg) => Buffer.concat([Buffer.from([0]), Buffer.from(String(msg || 'error'), 'utf-8')])
@@ -85,7 +85,7 @@ const actions = {
   // not the vehicle's runtime EC pubkey; we used to extract it here and build
   // the doublings table, which silently produced wrong ECDH. The vehicle's
   // real pubkey now comes from SessionInfo on first connect — watch then calls
-  // BLE_PRECOMPUTE_TABLE with that key. Matches Tesla Go SDK.
+  // BLE_COMPUTE_SHARED_SECRET with that key. Matches Tesla Go SDK.
   BLE_COMPLETE_PAIRING: async () => {
     console.log('[App] BLE_COMPLETE_PAIRING: no-op (vehicle pub is fetched from SessionInfo on connect)')
     return okBin()
@@ -111,12 +111,16 @@ const actions = {
     }
   },
 
-  // Binary response: [0x01][16384-byte table]
-  BLE_PRECOMPUTE_TABLE: async ({ vehiclePublicKeyBinary }) => {
-    console.log('[App] Building ECDH doublings table for vehicle key')
-    const result = bleCrypto.buildDoublingsTable(vehiclePublicKeyBinary)
+  // Binary response: [0x01][32-byte ECDH shared secret X]. The phone owns the
+  // watch private key (settingsStorage), so it computes watchPriv × vehiclePub
+  // here and returns just the secret — the 16 KB doublings table never crosses
+  // BLE. Watch derives sessionKey = sha1(secret)[:16] and caches it.
+  BLE_COMPUTE_SHARED_SECRET: async ({ vehiclePublicKeyBinary }) => {
+    console.log('[App] Computing ECDH shared secret for vehicle key')
+    const { privateKeyBinary } = ensureValidKeypair()
+    const result = bleCrypto.computeSharedSecret(privateKeyBinary, vehiclePublicKeyBinary)
     if (!result.success) return errBin(result.error)
-    return okBin(new Uint8Array(result.buffer))
+    return okBin(binaryStringToBytes(result.secret))
   },
 
 }

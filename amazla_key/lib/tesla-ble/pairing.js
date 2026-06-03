@@ -171,11 +171,12 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
       phone.completePairing(bytesToBinaryString(r.data), (result) => {
         if (cancelled) return
         if (!result.success) { onError(result.error || 'Parse failed'); return }
-        log('Pair OK, building ECDH table now')
+        log('Pair OK, deriving session key now')
         // Reuse the live BLE connection + in-range phone: do one SessionInfo
-        // exchange right away so phone.precomputeTable runs while we have both.
-        // After this the watch is fully standalone for subsequent CONNECTs.
-        // Failure here is non-fatal: the table will rebuild on next CONNECT.
+        // exchange right away so the phone-computed ECDH (computeSharedSecret)
+        // runs and the session key gets cached while we have both. After this the
+        // watch is fully standalone for subsequent CONNECTs (cached key, no phone).
+        // Failure here is non-fatal: the key derives on the next CONNECT.
         teslaSession.requestSessionInfo((sr) => {
           if (cancelled) return
           if (sr && sr.success) {

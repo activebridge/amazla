@@ -208,21 +208,21 @@ describe('completePairing()', () => {
   })
 })
 
-// ─── precomputeTable ──────────────────────────────────────────────────────────
+// ─── computeSharedSecret ────────────────────────────────────────────────────
 
-describe('precomputeTable()', () => {
-  test('returns 16384-byte Uint8Array from BLE_PRECOMPUTE_TABLE binary response', async () => {
-    const table = fakeBinary(16384)
-    const page = makeMb({ BLE_PRECOMPUTE_TABLE: okEnv(table) })
+describe('computeSharedSecret()', () => {
+  test('returns 32-byte Uint8Array from BLE_COMPUTE_SHARED_SECRET binary response', async () => {
+    const secret = fakeBinary(32)
+    const page = makeMb({ BLE_COMPUTE_SHARED_SECRET: okEnv(secret) })
     const phone = new Phone(page)
-    const result = await phone.precomputeTable(strBytes(fakeBinary(65, 0x04)))
+    const result = await phone.computeSharedSecret(strBytes(fakeBinary(65, 0x04)))
     expect(result).toBeInstanceOf(Uint8Array)
-    expect(result.length).toBe(16384)
+    expect(result.length).toBe(32)
   })
 
   test('rejects when companion returns an error envelope', async () => {
-    const page = makeMb({ BLE_PRECOMPUTE_TABLE: errEnv('Bad point') })
+    const page = makeMb({ BLE_COMPUTE_SHARED_SECRET: errEnv('Bad point') })
     const phone = new Phone(page)
-    await expect(phone.precomputeTable(strBytes(fakeBinary(65, 0x04)))).rejects.toThrow(/bad point/i)
+    await expect(phone.computeSharedSecret(strBytes(fakeBinary(65, 0x04)))).rejects.toThrow(/bad point/i)
   })
 })

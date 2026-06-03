@@ -142,15 +142,13 @@ describe('TeslaSession cached session key (skip ECDH)', () => {
     // Fresh session over the same (still-connected) BLE link + same store.
     session.reset()
     const session2 = new TeslaSession()
-    const deriveSpy = jest.spyOn(session2, '_deriveSessionKey')
-    const tableSpy = jest.spyOn(session2, '_ensureTableForVehiclePub')
+    const deriveSpy = jest.spyOn(session2, '_deriveAndCacheSessionKey')
 
     const r2 = await p((cb) => session2.requestSessionInfo(cb))
     expect(r2.success).toBe(true)
     expect(session2.established).toBe(true)
-    // Fast path: neither the table check nor the ECDH ran.
+    // Fast path: never asked the phone to derive (no ECDH).
     expect(deriveSpy).not.toHaveBeenCalled()
-    expect(tableSpy).not.toHaveBeenCalled()
     session2.reset()
   })
 
@@ -160,12 +158,12 @@ describe('TeslaSession cached session key (skip ECDH)', () => {
 
     // Simulate a vehicle key change: the stored EC pubkey (and thus the cached
     // session key) no longer matches the pubkey the car returns in SessionInfo,
-    // so the fast-path guard must fail and force a fresh ECDH derivation.
+    // so the fast-path guard must fail and force a fresh phone-side derivation.
     store.vehicleEcPublicKey = new Uint8Array(65).fill(9)
     store.sessionKey = new Uint8Array(16).fill(7)
     session.reset()
     const session2 = new TeslaSession()
-    const deriveSpy = jest.spyOn(session2, '_deriveSessionKey')
+    const deriveSpy = jest.spyOn(session2, '_deriveAndCacheSessionKey')
 
     const r2 = await p((cb) => session2.requestSessionInfo(cb))
     expect(r2.success).toBe(true)

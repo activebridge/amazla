@@ -207,6 +207,32 @@ class BLECryptoSession {
     }
   }
 
+  // Compute the raw ECDH shared secret on the phone so the 16 KB doublings table
+  // never has to be transferred to (or stored on) the watch. Returns the 32-byte
+  // big-endian X of (watchPriv × vehiclePub) as a binary string. The watch derives
+  // sessionKey = sha1(secret)[:16] — bit-identical to its old ecdhFixed(priv, table)
+  // path (same point, same X coordinate). Inputs are binary strings.
+  computeSharedSecret(watchPrivateKeyBinary, vehiclePublicKeyBinary) {
+    try {
+      if (!watchPrivateKeyBinary || watchPrivateKeyBinary.length !== 32) {
+        return { success: false, error: 'Expected 32-byte watch private key' }
+      }
+      if (!vehiclePublicKeyBinary || vehiclePublicKeyBinary.length !== 65) {
+        return { success: false, error: 'Expected 65-byte uncompressed vehicle public key' }
+      }
+      let k = 0n, x = 0n, y = 0n
+      for (let i = 0; i < 32; i++) k = (k << 8n) | BigInt(watchPrivateKeyBinary.charCodeAt(i) & 0xff)
+      for (let i = 0; i < 32; i++) {
+        x = (x << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(1 + i) & 0xff)
+        y = (y << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(33 + i) & 0xff)
+      }
+      const [sx] = p256ScalarMul(k, [x, y])
+      return { success: true, secret: bytesToBinaryString(bigIntToBytes32(sx)) }
+    } catch (e) {
+      return { success: false, error: e.message }
+    }
+  }
+
   // Build whitelist query: asks car if our public key is enrolled.
   // Wire format: ToVCSECMessage > SignedMessage(PRESENT_KEY) > UnsignedMessage(InformationRequest)
   // Car responds: FromVCSECMessage { whitelistEntryInfo (field 17) } if enrolled,

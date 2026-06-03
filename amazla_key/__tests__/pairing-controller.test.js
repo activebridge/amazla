@@ -55,7 +55,6 @@ function makePhone(overrides = {}) {
       const result = bleCrypto.completePairing(rawBytes)
       if (!result.success) return cb({ success: false, error: result.error })
       store.vehicleEcPublicKey   = binaryStringToBytes(result.ecKey)
-      store.vehicleDoublingsTable = binaryStringToBytes(result.table)
       cb({ success: true })
     },
     ...overrides,
@@ -161,17 +160,6 @@ describe('auto-tap pairing (UNKNOWN_KEY response, no NFC wait)', () => {
     await promise
 
     expect(Array.from(store.vehicleEcPublicKey)).toEqual(Array.from(sim.vehiclePubKey))
-  })
-
-  test('stores doublings table after pairing', async () => {
-    sim.setPairingAutoTap(true)
-    const promise = runPairing(makePhone())
-    await jest.runAllTimersAsync()
-    await promise
-
-    expect(store.vehicleDoublingsTable).toBeDefined()
-    // store keeps Uint32Array: 256 entries × 16 words = 4096 elements
-    expect(store.vehicleDoublingsTable.length).toBe(4096)
   })
 
   test('simulator records the enrolled watch public key', async () => {
@@ -476,7 +464,10 @@ describe('BLE scan path', () => {
     expect(store.watchPublicKey.length).toBe(65)
     expect(store.watchPrivateKey).toBeTruthy()
     expect(store.watchPrivateKey.length).toBe(32)
-    expect(store.isPaired).toBe(true)
+    // Enrollment (keypair + VIN) is complete after pairing. The session key is
+    // derived on the SessionInfo exchange (not wired in this controller test),
+    // so assert isEnrolled here; isPaired (+sessionKey) is covered in store/session tests.
+    expect(store.isEnrolled).toBe(true)
   })
 
   test('reports error when no vehicle found within scan timeout', async () => {

@@ -1,5 +1,3 @@
-import { jest } from '@jest/globals'
-
 let store
 let zosFs
 let bytesToBinaryString
@@ -16,8 +14,7 @@ describe('lib/store.js', () => {
   beforeEach(() => {
     // Reset in-memory fs and localStorage state between tests
     for (const k of Object.keys(zosFs._fsStore)) delete zosFs._fsStore[k]
-    // Clear doublings table cache by writing undefined (triggers cache reset)
-    store.vehicleDoublingsTable = undefined
+    store.reset()
   })
 
   // ── string-backed properties ──────────────────────────────────────────────
@@ -96,105 +93,70 @@ describe('lib/store.js', () => {
     expect(Array.from(result)).toEqual([2, 3, 4, 5, 6])
   })
 
-  // ── vehicleDoublingsTable ─────────────────────────────────────────────────
+  // ── sessionKey (file-backed, secret) ──────────────────────────────────────
 
-  test('vehicleDoublingsTable: returns undefined when nothing stored', () => {
-    expect(store.vehicleDoublingsTable).toBeUndefined()
+  test('sessionKey: null when nothing stored', () => {
+    expect(store.sessionKey).toBeFalsy()
   })
 
-  test('vehicleDoublingsTable: returns undefined when data length is wrong', () => {
-    store.vehicleDoublingsTable = new Uint32Array(10) // too short — byteLength=40, not 16384
-    expect(store.vehicleDoublingsTable).toBeUndefined()
+  test('sessionKey round-trip: 16-byte value preserved', () => {
+    const input = new Uint8Array(16)
+    for (let i = 0; i < 16; i++) input[i] = i * 7
+    store.sessionKey = input
+    const got = store.sessionKey
+    expect(got.length).toBe(16)
+    expect(Array.from(got)).toEqual(Array.from(input))
   })
 
-  test('vehicleDoublingsTable round-trip: returns Uint32Array of correct length', () => {
-    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
-    const table = store.vehicleDoublingsTable
-    expect(table).toBeInstanceOf(Uint32Array)
-    expect(table.length).toBe(256 * 16)
+  test('sessionKey: preserves null bytes (file-backed, not LocalStorage)', () => {
+    const input = new Uint8Array([0, 0, 1, 0, 255, 0, 0, 7, 0, 0, 0, 0, 9, 0, 0, 0])
+    store.sessionKey = input
+    expect(Array.from(store.sessionKey)).toEqual(Array.from(input))
   })
 
-  test('vehicleDoublingsTable round-trip: values preserved (x=1, y=2)', () => {
-    const input = new Uint32Array(256 * 16)
-    input[0] = 1  // entry 0 x LSW
-    input[8] = 2  // entry 0 y LSW
-
-    store.vehicleDoublingsTable = input
-    const table = store.vehicleDoublingsTable
-
-    expect(table[0]).toBe(1)
-    for (let i = 1; i < 8; i++) expect(table[i]).toBe(0)
-    expect(table[8]).toBe(2)
-    for (let i = 9; i < 16; i++) expect(table[i]).toBe(0)
+  test('sessionKey: cleared by setting falsy', () => {
+    store.sessionKey = new Uint8Array(16).fill(3)
+    store.sessionKey = null
+    expect(store.sessionKey).toBeFalsy()
   })
 
-  test('vehicleDoublingsTable round-trip: multi-word values preserved', () => {
-    const input = new Uint32Array(256 * 16)
-    input[0] = 0x05060708
-    input[1] = 0x01020304
+  // ── isReady / isEnrolled / isPaired ────────────────────────────────────────
 
-    store.vehicleDoublingsTable = input
-    const table = store.vehicleDoublingsTable
-
-    expect(table[0]).toBe(0x05060708)
-    expect(table[1]).toBe(0x01020304)
-    for (let i = 2; i < 8; i++) expect(table[i]).toBe(0)
-  })
-
-  test('vehicleDoublingsTable round-trip: entry i=1 preserved independently', () => {
-    const input = new Uint32Array(256 * 16)
-    input[16] = 7  // entry 1 x LSW
-    input[24] = 9  // entry 1 y LSW
-
-    store.vehicleDoublingsTable = input
-    const table = store.vehicleDoublingsTable
-
-    for (let i = 0; i < 16; i++) expect(table[i]).toBe(0)
-    expect(table[16]).toBe(7)
-    expect(table[24]).toBe(9)
-  })
-
-  test('vehicleDoublingsTable is cached after first read', () => {
-    store.vehicleDoublingsTable = new Uint8Array(16384)
-    const t1 = store.vehicleDoublingsTable
-    const t2 = store.vehicleDoublingsTable
-    expect(t1).toBe(t2) // same reference
-  })
-
-  // ── hasDoublingsTable ─────────────────────────────────────────────────────
-
-  test('hasDoublingsTable: false when nothing stored', () => {
-    expect(store.hasDoublingsTable).toBe(false)
-  })
-
-  test('hasDoublingsTable: true after storing valid table', () => {
-    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
-    expect(store.hasDoublingsTable).toBe(true)
-  })
-
-  test('hasDoublingsTable: true after first cache load (no extra file I/O)', () => {
-    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
-    store.vehicleDoublingsTable // loads and caches
-    // Force cache clear — but LocalStorage flag still set
-    // We can't clear _doublingsTableCache directly; re-test from LocalStorage flag
-    expect(store.hasDoublingsTable).toBe(true)
-  })
-
-  // ── isPaired ──────────────────────────────────────────────────────────────
-
-  function setupFullyPaired() {
+  // Enrolled = keypair + VIN (gates connects). Fully paired also needs the key.
+  function setupEnrolled() {
     store.watchPublicKey        = bytesToBinaryString(new Uint8Array(65).fill(0x04))
     store.watchPrivateKey       = bytesToBinaryString(new Uint8Array(32).fill(0x05))
     store.vehicleEcPublicKey    = new Uint8Array(65).fill(0x04)
-    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
     store.vehicleVin            = '5YJ3E1EA6JF020598'
   }
+  function setupFullyPaired() {
+    setupEnrolled()
+    store.sessionKey = new Uint8Array(16).fill(0x06)
+  }
+
+  test('isReady: false when nothing stored, true once VIN is present', () => {
+    expect(store.isReady).toBe(false)
+    store.vehicleVin = '5YJ3E1EA6JF020598'
+    expect(store.isReady).toBe(true)
+  })
+
+  test('isEnrolled: true with keypair + VIN, even without a session key', () => {
+    setupEnrolled()
+    expect(store.isEnrolled).toBe(true)
+    expect(store.sessionKey).toBeFalsy()
+  })
+
+  test('isEnrolled: false when watchPrivateKey missing', () => {
+    setupEnrolled()
+    store.removeBinary('watch_private_key')
+    expect(store.isEnrolled).toBe(false)
+  })
 
   test('isPaired: false when nothing stored', () => {
     expect(store.isPaired).toBe(false)
   })
 
-  test('isPaired: true when all artifacts present', () => {
+  test('isPaired: true when enrolled AND session key cached', () => {
     setupFullyPaired()
     expect(store.isPaired).toBe(true)
   })
@@ -205,20 +167,20 @@ describe('lib/store.js', () => {
     expect(store.isPaired).toBe(false)
   })
 
-  test('isPaired: stays true when vehicleEcPublicKey missing (lands on first CONNECT, not pair)', () => {
+  test('isPaired: stays true when vehicleEcPublicKey missing (not part of pairing identity)', () => {
     setupFullyPaired()
     store.removeItem('vehicleEcPublicKey')
-    // After refactor: vehicle EC pubkey is fetched from SessionInfo on first
-    // CONNECT, not extracted at pair time. isPaired no longer depends on it.
+    store.removeBinary('vehicle_ec_public_key')
     expect(store.isPaired).toBe(true)
   })
 
-  test('isPaired: stays true when doublingsTable missing (built on first CONNECT, not pair)', () => {
+  test('isPaired: false when sessionKey missing (enrolled but not yet derived)', () => {
     setupFullyPaired()
-    store.vehicleDoublingsTable = null
-    // After refactor: doublings table is built from SessionInfo response, not
-    // at pair time. isPaired no longer depends on it.
-    expect(store.isPaired).toBe(true)
+    store.sessionKey = null
+    // The key is derived on first CONNECT; until then the watch is enrolled but
+    // not fully paired.
+    expect(store.isEnrolled).toBe(true)
+    expect(store.isPaired).toBe(false)
   })
 
   test('isPaired: false when VIN missing', () => {
@@ -243,7 +205,7 @@ describe('lib/store.js', () => {
     store.vehicleMac   = 'MAC'
     store.vehicleEcPublicKey = new Uint8Array(65)
     store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65))
-    store.vehicleDoublingsTable = new Uint32Array(256 * 16)
+    store.sessionKey         = new Uint8Array(16).fill(1)
 
     expect(() => store.reset()).not.toThrow()
 
@@ -253,6 +215,6 @@ describe('lib/store.js', () => {
     expect(store.vehicleMac).toBeNull()
     expect(store.vehicleEcPublicKey).toBeNull()
     expect(store.watchPublicKey).toBeNull()
-    expect(store.hasDoublingsTable).toBe(false)
+    expect(store.sessionKey).toBeFalsy()
   })
 })

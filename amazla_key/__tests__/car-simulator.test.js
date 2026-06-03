@@ -25,18 +25,18 @@ import store from '../lib/store.js'
 import { bleHarness, _fsStore } from '../__mocks__/zos.js'
 import { CarSimulator } from './helpers/car-simulator.js'
 import { lockedCar, unlockedCar, allDoorsOpen, sleeping } from './helpers/scenarios.js'
-import bleCrypto, { bytesToBinaryString } from '../app-side/ble-crypto.js'
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
 import { encodeBytes, encodeVarintField, concat } from '../lib/tesla-ble/protocol/protobuf.js'
 import { createECDH } from 'crypto'
 import Phone from '../lib/phone.js'
 
-// Stub Phone.precomputeTable so session.js's _ensureTableForVehiclePub rebuild
-// path works without a real messageBuilder. Returns a real 16384-byte table
-// built from the same code path the companion would use.
-Phone.prototype.precomputeTable = function (vehiclePubBytes) {
-  const r = bleCrypto.buildDoublingsTable(bytesToBinaryString(vehiclePubBytes))
+// Stub Phone.computeSharedSecret so session.js's slow path derives a real session
+// key without a working messageBuilder — runs the same bleCrypto ECDH the
+// companion would, against the watch private key in the store.
+Phone.prototype.computeSharedSecret = function (vehiclePubBytes) {
+  const r = bleCrypto.computeSharedSecret(bytesToBinaryString(store.watchPrivateKey), bytesToBinaryString(vehiclePubBytes))
   if (!r.success) return Promise.reject(new Error(r.error))
-  return Promise.resolve(new Uint8Array(r.buffer))
+  return Promise.resolve(binaryStringToBytes(r.secret))
 }
 
 // Track real timers created by production code (e.g., CCCD fallback) so tests can clear them.
@@ -60,14 +60,6 @@ function p(fn) {
   return new Promise((resolve) => fn(resolve))
 }
 
-/** Build doublings table from sim.vehiclePubKey and store it */
-function storeDoublingsTable(sim) {
-  const pubKeyBinary = bytesToBinaryString(sim.vehiclePubKey)
-  const result = bleCrypto.buildDoublingsTable(pubKeyBinary)
-  if (!result.success) throw new Error('buildDoublingsTable failed: ' + result.error)
-  store.vehicleDoublingsTable = new Uint8Array(result.buffer)
-}
-
 /** Wire up all store fields + harness for a given simulator */
 function setupStore(sim) {
   store.vehicleMac        = 'AA:BB:CC:DD:EE:FF'
@@ -87,7 +79,8 @@ function setupStore(sim) {
   store.watchPublicKey = bytesToBinaryString(watchPub)
   store.watchPrivateKey = bytesToBinaryString(watchPriv)
   sim._enrolledPublicKey = watchPub
-  storeDoublingsTable(sim)
+  // No cached sessionKey seeded — first establish runs the slow path (phone
+  // computeSharedSecret → derive → cache), mirroring a fresh pairing.
   // Production session.js scans by VIN-derived local name (Tesla rotates the
   // BLE MAC every ~15 min). Tell the harness which beacon to surface so the
   // scan resolves immediately instead of waiting the full duration.
@@ -163,7 +156,6 @@ describe('BLE connection and session establishment', () => {
     store.vehicleMac         = 'AA:BB:CC:DD:EE:FF'
     store.vehicleVin         = bytesToBinaryString(sim.vin)
     store.vehicleEcPublicKey = sim.vehiclePubKey
-    storeDoublingsTable(sim)
     // no watchPublicKey / watchPrivateKey
     const result = await p((cb) => session.requestSessionInfo(cb))
     expect(result.success).toBe(false)
@@ -388,15 +380,16 @@ describe('getVehicleStatus', () => {
     expect(result.error).toMatch(/session not established/i)
   })
 
-  test('rebuilds table when stored EC differs from SessionInfo pubkey', async () => {
-    // Old behavior errored if EC was missing. New behavior: session.js's
-    // _ensureTableForVehiclePub detects the mismatch (or absence) and rebuilds
-    // the table on phone before ECDH. Test passes if the rebuild path runs
-    // and the session establishes.
+  test('no cached key → derives via phone ECDH and caches key + EC', async () => {
+    // Fresh state (no cached sessionKey): session.js takes the slow path —
+    // phone.computeSharedSecret → sha1 → cache. Verifies the key + EC are
+    // persisted after a successful establish.
     store.vehicleEcPublicKey = null
+    expect(store.sessionKey).toBeFalsy()
     const result = await p((cb) => session.requestSessionInfo(cb))
     expect(result.success).toBe(true)
     expect(store.vehicleEcPublicKey).toBeDefined()
+    expect(store.sessionKey && store.sessionKey.length).toBe(16)
   })
 
   test('propagates BLE send error', async () => {
@@ -413,27 +406,18 @@ describe('getVehicleStatus', () => {
 // ─── connection error paths ───────────────────────────────────────────────────
 
 describe('connection error paths', () => {
-  test('no doublings table → rebuilds via phone on first SessionInfo', async () => {
-    // Old behavior errored at requestSessionInfo entry. New behavior: pair no
-    // longer builds the table; session.js builds it on first SessionInfo. The
-    // test now verifies the rebuild path runs to completion when the table is
-    // absent and re-pairing has just happened (watch key + pool + VIN present).
-    store.reset()
-    store.vehicleMac         = 'AA:BB:CC:DD:EE:FF'
-    store.vehicleVin         = bytesToBinaryString(sim.vin)
-    // Mirror setupStore so the watch key registered with the simulator survives
-    const watchPriv = new Uint8Array(32); watchPriv.fill(7)
-    store.watchPrivateKey = bytesToBinaryString(watchPriv)
-    store.watchPublicKey = bytesToBinaryString(sim._enrolledPublicKey)
-    // no doublings table, no vehicleEcPublicKey
+  test('no cached key + phone unreachable → fails with re-pair guidance (case 3)', async () => {
+    // With the table dropped, the slow path needs the phone to compute the ECDH.
+    // If it's unreachable (lost cache, no companion), establish fails and tells
+    // the user to re-pair — and nothing bad is cached.
+    store.vehicleEcPublicKey = null
+    const origCompute = Phone.prototype.computeSharedSecret
+    Phone.prototype.computeSharedSecret = () => Promise.reject(new Error('messageBuilder not available'))
     const result = await p((cb) => session.requestSessionInfo(cb))
-    // Session won't actually establish (watchPriv random ≠ enrolled), but the
-    // rebuild attempt should have populated the table+EC from SessionInfo.
-    expect(store.vehicleEcPublicKey).toBeDefined()
-    expect(store.hasDoublingsTable).toBe(true)
-    // Whether HMAC verifies depends on whether watchPriv matches the enrolled
-    // pub — not the focus of this test. Just assert rebuild fired.
-    void result
+    Phone.prototype.computeSharedSecret = origCompute
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/re-pair|derive session key/i)
+    expect(store.sessionKey).toBeFalsy()
   })
 
   test('already connected → skips BLE connect, reuses existing connection', async () => {
@@ -539,10 +523,9 @@ describe('session info response edge cases', () => {
   })
 
   test('vehicleEcPublicKey saved from SessionInfo when not in store (rebuild path)', async () => {
-    // After refactor, vehicleEcPublicKey is always populated from the SessionInfo
-    // response via _ensureTableForVehiclePub (calls phone.precomputeTable + stores
-    // both EC and table). This test now covers that path explicitly: clear EC
-    // mid-flow and verify it's restored from the response.
+    // vehicleEcPublicKey is populated from the SessionInfo response on the slow
+    // path (phone computeSharedSecret → derive → _finalizeSession persists EC +
+    // key after verify). This clears EC mid-flow and verifies it's restored.
     let capturedHandler = null
     const origSend = teslaBLE.send.bind(teslaBLE)
     teslaBLE.send = (_msg, cb) => {
@@ -679,14 +662,17 @@ describe('session info response edge cases', () => {
     expect(result.error).toMatch(/Invalid vehicle public key/i)
   })
 
-  test('exception thrown inside sessionInfoResponseHandler → catch (lines 226-228)', async () => {
-    // Stub send: corrupt ephemeralPrivateKey to a non-Uint8Array so ecdhFixed throws.
+  test('exception thrown inside sessionInfoResponseHandler → catch', async () => {
+    // Force a synchronous throw in the handler's try block: seed a cached key so
+    // the fast path runs _finalizeSession synchronously, then make the tag verify
+    // throw. The outer try/catch in _handleSessionInfoResponse should report it.
+    store.vehicleEcPublicKey = sim.vehiclePubKey
+    store.sessionKey = new Uint8Array(16).fill(0xcd)
+    session._verifySessionInfoTag = () => { throw new Error('boom') }
+
     let capturedHandler = null
     const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => {
-      session.ephemeralPrivateKey = 'corrupt'  // causes ecdhFixed to throw TypeError
-      capturedHandler = cb
-    }
+    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
 
     const resultPromise = p((cb) => session.requestSessionInfo(cb))
 
@@ -703,20 +689,19 @@ describe('session info response edge cases', () => {
     teslaBLE.send = origSend
 
     expect(result.success).toBe(false)
-    expect(result.error).toBeTruthy()
+    expect(result.error).toMatch(/boom/)
   })
 
-  test('table dropped between request and response → rebuilt via phone, then ECDH proceeds', async () => {
-    // Old behavior errored when table was null at ECDH time. New behavior:
-    // _ensureTableForVehiclePub re-checks the stored EC against SessionInfo
-    // pubkey and rebuilds via phone.precomputeTable if missing.
+  test('cached key cleared mid-flight → slow path re-derives via phone and re-caches', async () => {
+    // The cache is invalidated between request and response (e.g. lost file). The
+    // slow path must kick in on the response: phone computeSharedSecret → derive →
+    // verify → re-cache. Mirrors a stale/absent cache recovering on connect.
     let capturedHandler = null
     const origSend = teslaBLE.send.bind(teslaBLE)
     teslaBLE.send = (_msg, cb) => {
       capturedHandler = cb
-      delete _fsStore['vehicle_doublings_table.dat']
-      store.vehicleDoublingsTable = null  // clears cache
-      store.vehicleEcPublicKey = null     // force ensureTableForVehiclePub to rebuild
+      store.sessionKey = null          // clear cached key
+      store.vehicleEcPublicKey = null  // force the slow (derive) path
     }
 
     const resultPromise = p((cb) => session.requestSessionInfo(cb))
@@ -728,15 +713,16 @@ describe('session info response edge cases', () => {
       encodeBytes(3, epoch),
       encodeVarintField(4, Math.floor(Date.now() / 1000)),
     )
-    capturedHandler({ success: true, data: encodeBytes(15, si) })
+    const tag = sim.signSessionInfo(session.ephemeralPublicKey, session._lastRequestUuid, si)
+    const data = concat(encodeBytes(15, si), encodeBytes(13, sim.buildSessionInfoSigData(tag)))
+    capturedHandler({ success: true, data })
 
     const result = await resultPromise
     teslaBLE.send = origSend
 
-    // Rebuild should have happened — table back on disk, EC stored, session established
-    expect(store.hasDoublingsTable).toBe(true)
+    expect(result.success).toBe(true)
+    expect(store.sessionKey && store.sessionKey.length).toBe(16)
     expect(store.vehicleEcPublicKey).toBeDefined()
-    void result
   })
 })
 

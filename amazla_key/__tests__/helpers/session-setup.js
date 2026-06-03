@@ -12,18 +12,18 @@ import teslaBLE from '../../lib/tesla-ble/ble.js'
 import { computeTeslaBLEName } from '../../lib/tesla-ble/ble-name.js'
 import { bleHarness, _fsStore } from '../../__mocks__/zos.js'
 import { CarSimulator } from './car-simulator.js'
-import bleCrypto, { bytesToBinaryString } from '../../app-side/ble-crypto.js'
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../../app-side/ble-crypto.js'
 import Phone from '../../lib/phone.js'
 
-// Stub Phone.precomputeTable: rebuild path now needs phone-side BigInt
-// scalar-mul. In tests we run the same bleCrypto.buildDoublingsTable that the
-// companion would, so session.js gets a real 16384-byte table without
-// requiring a working messageBuilder. Tests that want to simulate phone
-// unavailability override this per-case.
-Phone.prototype.precomputeTable = function (vehiclePubBytes) {
-  const r = bleCrypto.buildDoublingsTable(bytesToBinaryString(vehiclePubBytes))
+// Stub Phone.computeSharedSecret: the phone derives the ECDH shared secret from
+// the watch private key + the SessionInfo vehicle pubkey. In tests we run the
+// real bleCrypto.computeSharedSecret against store.watchPrivateKey, so session.js
+// gets a genuine secret (→ real sessionKey) without a working messageBuilder.
+// Tests that want to simulate phone unavailability override this per-case.
+Phone.prototype.computeSharedSecret = function (vehiclePubBytes) {
+  const r = bleCrypto.computeSharedSecret(bytesToBinaryString(store.watchPrivateKey), bytesToBinaryString(vehiclePubBytes))
   if (!r.success) return Promise.reject(new Error(r.error))
-  return Promise.resolve(new Uint8Array(r.buffer))
+  return Promise.resolve(binaryStringToBytes(r.secret))
 }
 
 /** Wrap a callback-style function as a Promise */
@@ -36,13 +36,6 @@ export const pad32 = (buf) => {
   const out = new Uint8Array(32)
   out.set(src, 32 - src.length)
   return out
-}
-
-/** Build doublings table from sim.vehiclePubKey and store it */
-export const storeDoublingsTable = (sim) => {
-  const result = bleCrypto.buildDoublingsTable(bytesToBinaryString(sim.vehiclePubKey))
-  if (!result.success) throw new Error('buildDoublingsTable failed: ' + result.error)
-  store.vehicleDoublingsTable = new Uint8Array(result.buffer)
 }
 
 /** Populate all store fields required for session establishment */
@@ -63,7 +56,8 @@ export const setupStore = (sim) => {
   store.watchPublicKey = bytesToBinaryString(watchPub)
   store.watchPrivateKey = bytesToBinaryString(watchPriv)
   sim._enrolledPublicKey = watchPub
-  storeDoublingsTable(sim)
+  // No cached sessionKey is seeded — the first establish exercises the slow path
+  // (phone computeSharedSecret → derive → cache), mirroring a fresh pairing.
   // Production session.js scans by VIN-derived local name (Tesla rotates the
   // BLE MAC every ~15 min). Make the harness surface a matching beacon so the
   // scan resolves immediately instead of waiting out the scan duration.

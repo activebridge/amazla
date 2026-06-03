@@ -106,11 +106,13 @@ class Phone {
     if (cb) cb({ success: true })
   }
 
-  // Build the ECDH doublings table on phone for a vehicle EC pubkey learned
-  // from a SessionInfo response. Returns 16384-byte Uint8Array.
-  precomputeTable(vehiclePubBytes) {
+  // Ask the phone to compute the ECDH shared secret (watchPriv × vehiclePub) for
+  // a vehicle EC pubkey learned from a SessionInfo response. The phone holds the
+  // watch private key, so it does the scalar-mul and returns just the 32-byte X —
+  // the 16 KB doublings table never crosses BLE. Returns 32-byte Uint8Array.
+  computeSharedSecret(vehiclePubBytes) {
     const binStr = bytesToBinaryString(vehiclePubBytes)
-    return this._requestBin('BLE_PRECOMPUTE_TABLE', { vehiclePublicKeyBinary: binStr })
+    return this._requestBin('BLE_COMPUTE_SHARED_SECRET', { vehiclePublicKeyBinary: binStr })
       .then((body) => toU8(body))
   }
 

@@ -3,7 +3,6 @@ import store from '../store.js'
 import teslaBLE from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
-import { ecdhFixed } from './crypto/p256.js'
 import { sha1 } from './crypto/sha256.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -107,7 +106,7 @@ class TeslaSession {
     console.log(`[SESSION] VIN bytes (${vinBytes.length}B): "${vinStr}"`)
     console.log(`[SESSION] Saved MAC (cached hint): ${store.vehicleMac || '<none>'}`)
     console.log(`[SESSION] EC pubkey: ${store.vehicleEcPublicKey ? store.vehicleEcPublicKey.length + 'B present' : '<absent>'}`)
-    console.log(`[SESSION] Doublings table: ${store.vehicleDoublingsTable ? 'present' : '<absent>'}`)
+    console.log(`[SESSION] Cached session key: ${store.sessionKey ? 'present' : '<absent>'}`)
     // Tesla rotates the BLE MAC every ~15 min. The MAC in store.vehicleMac
     // may already be stale. Mirror the Tesla Go SDK's VehicleLocalName flow:
     // derive the BLE local name from VIN, scan for an exact-name advertisement,
@@ -348,81 +347,57 @@ class TeslaSession {
     if (cachedKey && cachedKey.length === 16 && this._ecPubMatches(storedPub, this.vehiclePublicKey)) {
       console.log('[SESSION] Using cached session key — skipping ECDH')
       this.sessionKey = cachedKey
-      this._finalizeSession(response, callback)
+      this._finalizeSession(response, callback, false)
       return
     }
 
-    // Slow path: no usable cache (first connect after pairing/update, or vehicle
-    // key changed). Build/refresh the table, run ECDH once, then cache the key so
-    // every subsequent connect takes the fast path.
-    this._ensureTableForVehiclePub((err) => {
-      if (err) { callback({ success: false, error: err }); return }
-      if (!this._deriveSessionKey(callback)) return
-      store.sessionKey = this.sessionKey
-      console.log('[SESSION] Session key derived via ECDH and cached')
-      this._finalizeSession(response, callback)
-    })
+    // Slow path: no usable cache (first connect after pairing, or vehicle key
+    // changed). The session key is a constant (watchPriv × vehiclePub), so the
+    // PHONE computes the ECDH and returns the 32-byte shared secret — the 16 KB
+    // doublings table never has to cross BLE or live on the watch. We derive +
+    // cache the key once; every later connect takes the fast path above. Needs
+    // the phone; if unreachable here the user re-pairs (the only "case 3" path).
+    this._deriveAndCacheSessionKey(response, callback)
+  }
+  _deriveAndCacheSessionKey(response, callback) {
+    const sessionPub = this.vehiclePublicKey
+    console.log('[SESSION] No cached key — requesting ECDH shared secret from phone')
+    const phone = new Phone()
+    phone.computeSharedSecret(sessionPub)
+      .then((secret) => {
+        if (!secret || secret.length !== 32) {
+          callback({ success: false, error: 'Bad shared secret from phone: ' + (secret ? secret.length : 'null') })
+          return
+        }
+        this.sessionKey = sha1(secret).slice(0, 16)
+        // Persist only AFTER the SessionInfo HMAC verifies (inside _finalizeSession),
+        // so a wrong key (corrupted keypair / bad pubkey) is never cached.
+        this._finalizeSession(response, callback, true)
+      })
+      .catch((e) => {
+        console.log('[SESSION] ❌ computeSharedSecret failed: ' + (e && e.message))
+        callback({ success: false, error: 'Could not derive session key — re-pair from phone' })
+      })
   }
   _ecPubMatches(a, b) {
     if (!a || !b || a.length !== 65 || b.length !== 65) return false
     for (let i = 0; i < 65; i++) if (a[i] !== b[i]) return false
     return true
   }
-  _finalizeSession(response, callback) {
+  _finalizeSession(response, callback, persist) {
     if (!this._verifySessionInfoTag(response, callback)) return
+    if (persist) {
+      // Cache the verified key + the pubkey it was derived from so every later
+      // connect takes the fast path (no phone, no ECDH).
+      store.vehicleEcPublicKey = this.vehiclePublicKey
+      store.sessionKey = this.sessionKey
+      console.log('[SESSION] Session key derived (phone ECDH), verified, and cached')
+    }
     const { cmdHmac } = createSessionHmacs(this.sessionKey)
     this._cmdHmacFn = cmdHmac
     this.established = true
     console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
     callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
-  }
-  // Build/refresh the doublings table on phone when the vehicle's SessionInfo
-  // pubkey differs from what's stored (or nothing is stored). The pair
-  // response's field 17 does NOT contain the vehicle's runtime EC key (it's a
-  // signer/admin key from WhitelistInfo), so the table must come from a live
-  // SessionInfo pubkey. Matches Tesla Go SDK.
-  // Calls done(err|null).
-  _ensureTableForVehiclePub(done) {
-    const hx = (b) => { if (!b) return '<null>'; let s=''; for (let i=0;i<b.length;i++){ const h=(b[i]&0xff).toString(16); s += h.length<2?'0'+h:h } return s }
-    const sessionPub = this.vehiclePublicKey
-    const stored = store.vehicleEcPublicKey
-    const sameKey = stored && stored.length === 65 && hx(stored) === hx(sessionPub)
-    if (sameKey && store.hasDoublingsTable) {
-      done(null)
-      return
-    }
-    console.log('[SESSION] vehicle pub changed (or no table) — rebuilding doublings table on phone')
-    console.log('[SESSION.diag] sessionInfo.publicKey hex=' + hx(sessionPub))
-    console.log('[SESSION.diag] store.vehicleEcPublicKey hex=' + hx(stored))
-    const phone = new Phone()
-    phone.precomputeTable(sessionPub)
-      .then((tableBytes) => {
-        if (!tableBytes || tableBytes.length !== 16384) {
-          done('Bad doublings table size: ' + (tableBytes ? tableBytes.length : 'null'))
-          return
-        }
-        store.vehicleEcPublicKey = sessionPub
-        store.vehicleDoublingsTable = tableBytes
-        console.log('[SESSION] ✓ Doublings table rebuilt and saved (' + tableBytes.length + ' bytes)')
-        done(null)
-      })
-      .catch((e) => {
-        console.log('[SESSION] ❌ precomputeTable failed: ' + (e && e.message))
-        done('precomputeTable failed: ' + (e && e.message))
-      })
-  }
-  _deriveSessionKey(callback) {
-    const ecdhTable = store.vehicleDoublingsTable
-    if (!ecdhTable) {
-      callback({ success: false, error: 'No ECDH table — re-pair to generate' })
-      return false
-    }
-    console.log('[SESSION] Starting ECDH (precomputed table)...')
-    const start = Date.now()
-    const sharedSecret = ecdhFixed(this.ephemeralPrivateKey, ecdhTable)
-    console.log(`[SESSION] ECDH done in ${Date.now() - start}ms`)
-    this.sessionKey = sha1(sharedSecret).slice(0, 16)
-    return true
   }
   _verifySessionInfoTag(response, callback) {
     const hx = (b, n) => {
@@ -643,8 +618,10 @@ class TeslaSession {
       callback({ success: true })
       return
     }
-    // If not paired yet, return error
-    if (!store.isPaired) {
+    // Gate on enrollment (keypair + VIN), NOT isPaired: the session key is
+    // derived BY the connect this allows, so requiring it would deadlock the
+    // first-connect bootstrap.
+    if (!store.isEnrolled) {
       callback({ success: false, error: 'Not paired - go to BLE page first' })
       return
     }
