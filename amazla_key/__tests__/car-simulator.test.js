@@ -312,6 +312,102 @@ describe('second-response timeout', () => {
   })
 })
 
+// ─── command timeout (no response / unsolicited-only) ─────────────────────────
+
+describe('command timeout', () => {
+  test('car never answers a command → command deadline fires → error, no hang', async () => {
+    jest.useFakeTimers()
+    try {
+      const [r] = await Promise.all([
+        p((cb) => session.requestSessionInfo(cb)),
+        jest.advanceTimersByTimeAsync(500),
+      ])
+      if (!r.success) throw new Error('Session setup: ' + r.error)
+
+      // Shrink the overall deadline so the test runs fast, then drop the command.
+      session.commandTimeoutMs = 200
+      sim.setDropCommands(1)
+
+      let cbResult = null
+      const cmdPromise = new Promise((resolve) => {
+        session.sendCommand(1 /* LOCK */, (res) => {
+          if (res._requeue) return
+          cbResult = res
+          resolve()
+        })
+      })
+
+      await Promise.all([cmdPromise, jest.advanceTimersByTimeAsync(400)])
+
+      expect(cbResult).not.toBeNull()
+      expect(cbResult.success).toBe(false)
+      expect(cbResult.error).toMatch(/timed out|timeout/i)
+      // State fully cleared so the next command isn't blocked.
+      expect(session._waitingForSecondResponse).toBe(false)
+      expect(session._commandTimer).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('command deadline cleared on a normal successful command (no late fire)', async () => {
+    const r = await p((cb) => session.requestSessionInfo(cb))
+    if (!r.success) throw new Error('Session setup: ' + r.error)
+    sim.setState(unlockedCar())
+    const result = await p((cb) => session.lock(cb))
+    expect(result.success).toBe(true)
+    // Terminal success must tear the deadline down so it can't fire later.
+    expect(session._commandTimer).toBeNull()
+  })
+})
+
+// ─── ambient-only watchdog → same-link resend (end-to-end) ─────────────────────
+
+describe('ambient-only stall recovery', () => {
+  test('first SessionInfoRequest gets ambient-only → watchdog resends on same link → establishes', async () => {
+    // Car answers the first SessionInfoRequest with an ambient-only frame (no
+    // SessionInfo); the watchdog fires and resends on the still-open link; the
+    // car answers the resend for real. Shrink the timeouts so this runs fast.
+    session.sessionInfoAmbientTimeoutMs = 40
+    session.sessionInfoResendTimeoutMs = 40
+    sim.setAmbientOnlyForSessionInfo(1)
+
+    const sendSpy = jest.spyOn(session, '_doSessionInfoRequest')
+    const disconnectSpy = jest.spyOn(teslaBLE, 'disconnect')
+
+    const result = await p((cb) => session.requestSessionInfo(cb))
+
+    expect(result.success).toBe(true)
+    expect(session.established).toBe(true)
+    // Tier 0: it resent on the same link (2 sends) and never recycled the link.
+    expect(sendSpy).toHaveBeenCalledTimes(2)
+    expect(disconnectSpy).not.toHaveBeenCalled()
+    expect(teslaBLE.isConnected()).toBe(true)
+
+    sendSpy.mockRestore()
+    disconnectSpy.mockRestore()
+  })
+
+  test('two ambient-only stalls exhaust resends → recycles the link, then establishes', async () => {
+    // RESENDS_PER_CONNECT = 2, so 3 ambient-only answers (initial + 2 resends)
+    // exhaust tier 0 on the first connection and force a tier-1 reconnect.
+    session.sessionInfoAmbientTimeoutMs = 30
+    session.sessionInfoResendTimeoutMs = 30
+    session.recycleSettleMs = 20
+    sim.setAmbientOnlyForSessionInfo(3)
+
+    const disconnectSpy = jest.spyOn(teslaBLE, 'disconnect')
+
+    const result = await p((cb) => session.requestSessionInfo(cb))
+
+    expect(result.success).toBe(true)
+    expect(session.established).toBe(true)
+    expect(disconnectSpy).toHaveBeenCalled() // tier 1 recycle happened
+
+    disconnectSpy.mockRestore()
+  })
+})
+
 // ─── session auto-establishes ─────────────────────────────────────────────────
 
 describe('session auto-establishment', () => {

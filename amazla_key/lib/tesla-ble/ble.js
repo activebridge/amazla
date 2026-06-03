@@ -107,7 +107,6 @@ class TeslaBLE {
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
-    this._mtu = 20
     // Inter-chunk write delay (see BLE_CHUNK_INTERVAL_MS). Instance-level so tests
     // can set it to 0 (pacing-agnostic) and so it can be tuned at runtime.
     this.chunkIntervalMs = BLE_CHUNK_INTERVAL_MS
@@ -166,7 +165,6 @@ class TeslaBLE {
     this.mac = null
     this._rxBuf = null
     this._rxExpected = 0
-    this._mtu = 20
   }
   scan(callback, duration = 10000, expectedName = null) {
     console.log(`[BLE] scan() start: duration=${duration}ms expectedName=${expectedName || '<none>'}`)
@@ -343,17 +341,12 @@ class TeslaBLE {
         this.writeCompleteHandler = (chara, desc, status) => {
           console.log(`[BLE] descWriteComplete: chara=${chara} desc=${desc} status=${status}`)
           if (done) return
-          console.log('[BLE] Requesting MTU 247...')
-          try {
-            hmBle.mstSetMTU(247, (mtuResult) => {
-              console.log(`[BLE] MTU callback raw: ${JSON.stringify(mtuResult)}`)
-              const negotiated = mtuResult && mtuResult.mtu ? mtuResult.mtu - 3 : 20
-              this._mtu = Math.max(20, negotiated)
-              console.log(`[BLE] MTU negotiated: raw=${mtuResult && mtuResult.mtu} → payload=${this._mtu}`)
-            })
-          } catch (e) {
-            console.log('[BLE] mstSetMTU not available:', e.message || e)
-          }
+          // No MTU step: ZeppOS @zos/ble exposes no MTU-exchange or connection-param
+          // API (mstConnect takes no options; there is no mstSetMTU — it was never a
+          // real function). The link stays at the BLE default ATT MTU 23 = 20-byte
+          // payload, confirmed on device 2026-06-03: the vehicle streamed its 177-byte
+          // SessionInfo back as nine 20-byte notifications, and our writes cap at 20
+          // too. So fixed 20-byte chunking is mandatory, not a tunable.
           console.log('[BLE] CCCD confirmed, ready')
           settle({ success: true, mac })
         }
@@ -443,15 +436,13 @@ class TeslaBLE {
     this._sendMessage(_frame(data))
   }
   _sendMessage(message) {
+    // Always chunk at BLE_CHUNK_SIZE (20). The link is fixed at ATT MTU 23 = 20-byte
+    // payload with no API to raise it (see connect()'s writeCompleteHandler), so every
+    // write — even a sub-20B frame, which is just a single chunk — goes this path.
     console.log(`[BLE] TX framed (${message.length}B) hex=${_hex(message)}`)
-    if (message.length <= this._mtu) {
-      console.log(`[BLE]   → single write (mtu=${this._mtu})`)
-      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer, true)
-    } else {
-      const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-      console.log(`[BLE]   → ${total} chunks of ${BLE_CHUNK_SIZE}B (${this.chunkIntervalMs}ms paced)`)
-      this._sendChunk(message, 0)
-    }
+    const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
+    console.log(`[BLE]   → ${total} chunk(s) of ${BLE_CHUNK_SIZE}B (${this.chunkIntervalMs}ms paced)`)
+    this._sendChunk(message, 0)
   }
   _sendChunk(message, offset) {
     const end = Math.min(offset + BLE_CHUNK_SIZE, message.length)

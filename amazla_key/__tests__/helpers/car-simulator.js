@@ -68,6 +68,8 @@ export class CarSimulator {
     this._skipSecondResponse      = false  // don't send actionStatus (triggers 10 s timeout)
     this._sendTwoResponses        = false  // send SessionInfo push then actionStatus (covers clearTimeout path)
     this._sendIntermediateAck     = false  // send bare intermediate ack before real SessionInfo
+    this._ambientOnlySessionInfo  = 0      // answer the next N SessionInfoRequests with ambient-only (no SessionInfo)
+    this._dropCommands            = 0      // silently drop the next N authenticated commands (no response at all)
     this._responseDelay           = 0      // ms delay before sending responses
 
     // Pairing state
@@ -118,6 +120,15 @@ export class CarSimulator {
   // ── Session establishment ─────────────────────────────────────────────────
 
   _handleSessionInfo(sessionInfoRequestBytes, requestUuid, harness) {
+    // Simulate the intermittent "ambient-only" failure: answer the first N
+    // SessionInfoRequests with a field-3-only broadcast (no SessionInfo), which
+    // the watch treats as an intermediate ack. Forces the watchdog → resend path.
+    if (this._ambientOnlySessionInfo > 0) {
+      this._ambientOnlySessionInfo--
+      harness.notify(this._frame(encodeBytes(3, new Uint8Array([0x12, 0x02, 0x08, 0x01]))))
+      return
+    }
+
     const siReqFields = decodeMessage(sessionInfoRequestBytes)
     const requestorPubKey = siReqFields[1]  // Uint8Array, 65 bytes — long-term enrolled key per Tesla SDK
 
@@ -190,6 +201,14 @@ export class CarSimulator {
   // ── Authenticated command dispatch ────────────────────────────────────────
 
   _handleCommand(payloadBytes, harness) {
+    // Simulate a dropped command write (unacked WRITE_WITHOUT_RESPONSE truncated
+    // in flight): the car never sees a complete command, so it never replies.
+    // Exercises the watch's overall command-timeout deadline.
+    if (this._dropCommands > 0) {
+      this._dropCommands--
+      return
+    }
+
     // RoutableMessage.protobuf_message_as_bytes IS the vcsec.UnsignedMessage directly
     // (no ToVCSECMessage/SignedMessage wrapper) — matches Tesla SDK executeRKEAction.
     const unsigned = decodeMessage(payloadBytes)
@@ -413,6 +432,12 @@ export class CarSimulator {
   injectCommandError()    { this._nextCommandError = true }
   skipSecondResponse()    { this._skipSecondResponse = true }
   setDelay(ms)            { this._responseDelay = ms }
+  // Answer the next N SessionInfoRequests with ambient-only (no SessionInfo),
+  // forcing the watch's watchdog → same-link resend recovery.
+  setAmbientOnlyForSessionInfo(n) { this._ambientOnlySessionInfo = n }
+  // Silently drop the next N authenticated commands (no response), simulating a
+  // dropped command write — exercises the watch's overall command-timeout deadline.
+  setDropCommands(n) { this._dropCommands = n }
 
   // Pairing control
   setPairingAutoTap(enabled) { this._pairingAutoTap = !!enabled }

@@ -66,7 +66,8 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │     • Public key added to car's whitelist during pairing; identifies the     │
 │       watch in SessionInfoRequest                                            │
 │     • The watch stores the private key but no longer USES it at runtime —    │
-│       the phone performs the ECDH (see 2). Candidate for future cleanup.     │
+│       the phone performs the ECDH (see 2). Kept as the re-pair guard / for   │
+│       a possible future on-watch ECDH path.                                  │
 │                                                                              │
 │  2. CACHED SESSION KEY (replaces the old "doublings table")                  │
 │  ════════════════════════════════════════════════════════                   │
@@ -510,13 +511,19 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | Outgoing uuid → RoutableMessage field | 51 (`uuid`) — vehicle uses this as SessionInfo HMAC challenge | 51 (`message.Uuid`) per `dispatcher.go` | ✅ Match (fixed 2026-05-28 — see [SessionInfo HMAC mismatch](#sessioninfo-hmac-mismatch--outgoing-uuid-was-in-wrong-field-2026-05-28)) |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |
 | GATT discovery | `mstBuildProfile({ pair: true, ... })` — service/char/descriptor topology declared explicitly, mirrors `@silver-zepp/easy-ble` shape | Full discovery (Tesla firmware compat handled at lower level) | ✅ Correct for ZeppOS |
-| Chunk write size | Fixed 20 bytes, ~90 ms paced (`BLE_CHUNK_INTERVAL_MS`) | `min(negotiatedMTU, 1024) - 3` | ⚠️ Sub-optimal (no MTU API in ZeppOS docs); pacing tuned to the observed link cadence to avoid dropped unacked writes |
-| MTU negotiation | Not implemented (`mstSetMTU` undocumented, removed) | `ExchangeMTU()` before first write | ❌ No equivalent API confirmed |
+| Chunk write size | Fixed 20 bytes, paced (`BLE_CHUNK_INTERVAL_MS`) | `min(negotiatedMTU, 1024) - 3` | ⚠️ Forced, not a choice: link is ATT MTU 23 (20B payload) with no API to raise it; pacing tuned to the observed link cadence to avoid dropped unacked writes |
+| MTU negotiation | None — no API exists | `ExchangeMTU()` before first write | ❌ ZeppOS exposes no MTU or connection-param API; link fixed at 23, peer chunks at 20 too (see MTU Note) |
 | Intermediate acks | Handled defensively | Not mentioned (transparent at lower level) | ✅ Harmless |
 
 ### MTU Note
 
-`mstSetMTU` is not in the ZeppOS BLE documentation. `ble.js` opportunistically calls it inside a try/catch (so a missing implementation is a silent no-op), but BLE writes still use fixed 20-byte chunks (`BLE_CHUNK_SIZE = 20`). The inter-chunk delay is `BLE_CHUNK_INTERVAL_MS` (instance-tunable via `chunkIntervalMs`), raised from 20 ms to ~90 ms to match the observed per-packet link cadence: these are unacked `WRITE_WITHOUT_RESPONSE` writes, so outrunning the link silently drops a chunk → the car gets a truncated request and never replies (the intermittent "ambient-only" failure). Larger chunks would require a documented MTU negotiation API.
+**There is no MTU lever on ZeppOS — this was confirmed both ways.** The `@zeppos/device-types` definitions for `@zos/ble` list every `mst*` function and include no MTU or connection-parameter call; `mstConnect(addr, cb)` takes no options. The `mstSetMTU(247, …)` the code used to call was never a real function — device logs show `[BLE] mstSetMTU not available: not a function`. It has been removed.
+
+Empirically the link runs at the BLE default **ATT MTU 23 = 20-byte payload**, and the peer is too: on 2026-06-03 the vehicle returned its 177-byte SessionInfo as **nine 20-byte notifications** (`RX notification: 20 bytes ×8` + `19 bytes`). So 20-byte chunking (`BLE_CHUNK_SIZE = 20`) is forced, not a tunable, and the single-write fast path was deleted (a sub-20B frame is simply a one-chunk send).
+
+The inter-chunk delay `BLE_CHUNK_INTERVAL_MS` (instance-tunable via `chunkIntervalMs`) is paced to the observed per-packet link cadence (~90 ms/packet on device): these are unacked `WRITE_WITHOUT_RESPONSE` writes, so outrunning the link silently drops a chunk → the car gets a truncated request and never replies (the intermittent "ambient-only" failure).
+
+Note the real cost this imposes: that ~90 ms cadence × 9 packets ≈ 0.8 s *just to receive SessionInfo*. A larger MTU would collapse that to ~one connection interval — which is exactly why it would be worth having — but neither MTU nor the connection interval is reachable from the app. It's a hard platform ceiling, not a missing optimization.
 
 ### BLE transport: easy-ble wrapper (sole implementation)
 
@@ -667,12 +674,14 @@ Notes:
 |------|--------|-------|
 | Lock / Unlock / Trunk / Frunk actuation | ✅ Device-confirmed 2026-06-02 | See [Command path fixes](#command-path-fixes-2026-06-02). Six fixes on the command/response path; car actuates and watch shows success. |
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
-| MTU chunk writer | ❌ Blocked | `mstSetMTU` undocumented. `ble.js` calls it inside a try/catch but writes still use fixed 20-byte chunks. No known ZeppOS API for MTU negotiation. |
+| MTU chunk writer | ❌ Impossible (not just blocked) | ZeppOS `@zos/ble` exposes **no** MTU or connection-parameter API — `mstSetMTU` was never a real function (device logs: `mstSetMTU not available: not a function`), `mstConnect(addr, cb)` takes no options, and the official `@zeppos/device-types` surface lists no MTU/conn-param call. Empirically the link sits at the BLE default ATT MTU 23 = 20-byte payload in **both** directions: 2026-06-03 the vehicle returned its 177-byte SessionInfo as nine 20-byte notifications. Fixed 20-byte chunking is mandatory; the dead MTU-negotiation code in `ble.js` was removed. |
 | Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. Note: scan-by-name was originally hypothesized as the fix for connect-time-out-after-pair, but the actual cause turned out to be native BLE state poisoning across app sessions — see "Native BLE crash recovery". |
 | Session uses long-term enrolled key | ✅ Applied | `session.js` sends `watchPublicKey` in `SessionInfoRequest` and uses `watchPrivateKey` for ECDH. See "Session identity key (Tesla Go SDK parity)". |
 | Native BLE crash recovery | ✅ Applied | `lib/tesla-ble/ble.js` persists `connect_id` and runs `mstDisconnect` on next launch. See "Native BLE crash recovery". |
 | Native `@zos/ble` path (`ble-native.js`) | ❌ Removed 2026-06-02 | Reached `STATUS_WAIT` but the post-NFC 14-byte indication was never delivered on device through either notification stream, and it couldn't be reproduced in the harness. Deleted (with its test) once the easy-ble wrapper (`ble.js`) was confirmed working end-to-end. Firmware notes kept under "BLE transport". |
-| Key pool removal | ✅ Done 2026-06-02 | Pool fully removed — dropped from `isPaired`, no more `syncPool` on app open / BLE page, removed from `phone.js` + `simulatePair` + checklist. It was an artifact of the old per-session ephemeral-key design (never consumed after the long-term-key refactor). Low-level `store.keyPool`/`popKey` getters left unreferenced (harmless); deleting them is optional cleanup. |
+| Key pool removal | ✅ Done 2026-06-02 | Pool fully removed — dropped from `isPaired`, no more `syncPool` on app open / BLE page, removed from `phone.js` + `simulatePair` + checklist. It was an artifact of the old per-session ephemeral-key design (never consumed after the long-term-key refactor). The low-level `store.keyPool`/`popKey` getters are now gone too. |
+| Dead `ephemeralPrivateKey` field | ✅ Done 2026-06-03 | `session.js` assigned `this.ephemeralPrivateKey = watchPriv` but never read it (the ECDH runs on the phone). Removed; the `watchPriv` length check stays as the re-pair guard. `ephemeralPublicKey` is still used (it's the SessionInfoRequest identity + SignatureData signer key). |
+| Command response timeout | ✅ Done 2026-06-03 | `sendCommand` now arms an overall deadline (`commandTimeoutMs`, default 15 s) covering "vehicle never replies" and "only unsolicited pushes" — neither armed `_secondResponseTimer` (which only starts after a first addressed reply). A dropped command write previously left the callback pending forever, wedging `tesla.js`'s `busy` flag with no error and no in-app recovery (no offline overlay → no Retry button). The deadline now fails cleanly → `busy` clears → Retry path appears. |
 | Vehicle EC key persistence | ✅ Done 2026-06-02 | Moved `vehicleEcPublicKey` from a null-byte LocalStorage string to a binary file (`vehicle_ec_public_key.dat`), with a legacy LS fallback. Fixes the table rebuilding via phone every launch — watch now reuses the cached table standalone. |
 | Connect is phone-free after pairing | ✅ Done | Superseded the doublings-table approach entirely: the session key is derived once (phone ECDH) and **cached** (`session_key.dat`). Normal connects reuse it — no phone, no ECDH, no table. See "Session key (phone-computed ECDH, cached)" below. |
 | Vehicle pub from SessionInfo (not pair response) | ✅ Applied 2026-05-28 | See "Doublings table built from SessionInfo (Go SDK parity)" below. |

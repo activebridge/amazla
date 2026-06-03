@@ -45,13 +45,25 @@ const SESSION_INFO_MAX_CONNECTS = 2
 // Lets the native BLE stack drain queued RX (stale notification fragments) while
 // nothing is attached — a back-to-back reconnect reuses that dirty state.
 const RECYCLE_SETTLE_MS = 600
+// Overall deadline for an authenticated command, covering the cases the
+// per-second-response timer (_secondResponseTimer) does NOT: the vehicle never
+// replies at all, or only streams unsolicited pushes. A dropped command write
+// (unacked WRITE_WITHOUT_RESPONSE) would otherwise leave the callback pending
+// forever — wedging the caller's busy flag with no error and no recovery.
+const COMMAND_TIMEOUT_MS = 15000
 
 class TeslaSession {
   constructor() {
     this.reset()
+    // Watchdog timing — instance fields (default from the consts above) so tests
+    // can shrink them for fast, deterministic recovery-path coverage. Set in the
+    // constructor (not reset()) so they survive session.reset().
+    this.sessionInfoAmbientTimeoutMs = SESSION_INFO_AMBIENT_TIMEOUT_MS
+    this.sessionInfoResendTimeoutMs = SESSION_INFO_RESEND_TIMEOUT_MS
+    this.recycleSettleMs = RECYCLE_SETTLE_MS
+    this.commandTimeoutMs = COMMAND_TIMEOUT_MS
   }
   reset() {
-    this.ephemeralPrivateKey = null
     this.ephemeralPublicKey = null
     this.vehiclePublicKey = null
     this.epoch = null
@@ -72,6 +84,7 @@ class TeslaSession {
     this._sessionInfoResends = 0  // Tier-0 resends done on the current connection
     this._sessionInfoConnects = 0 // connections established this requestSessionInfo
     this._clearSessionInfoTimer()
+    this._clearCommandTimer()
   }
   _clearSessionInfoTimer() {
     if (this._sessionInfoTimer) {
@@ -79,13 +92,19 @@ class TeslaSession {
       this._sessionInfoTimer = null
     }
   }
+  _clearCommandTimer() {
+    if (this._commandTimer) {
+      clearTimeout(this._commandTimer)
+      this._commandTimer = null
+    }
+  }
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
     if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
     return this._cmdHmacFn(buildHMACTagInput(store.vehicleVin || new Uint8Array(0), epoch, counter, expiresAt, payloadBytes))
   }
   requestSessionInfo(callback) {
-    // No table check here anymore — _ensureTableForVehiclePub will build it
-    // on the fly from the SessionInfo response if missing or stale.
+    // No key material needed up front — the session key is derived (or the cached
+    // one validated) from the SessionInfo response in _processSessionInfo.
     this._sessionInfoResends = 0
     this._sessionInfoConnects = 0
     this._ensureConnected(callback)
@@ -162,9 +181,10 @@ class TeslaSession {
   }
   _proceedWithSession(callback) {
     // Stored vehicle pubkey isn't required at this point — SessionInfo will
-    // include the real one, and _ensureTableForVehiclePub builds the table
-    // from it (rebuilding if the stored key has changed). On first connect
-    // after pair, both stored pubkey and table will be absent; that's OK.
+    // include the real one, and _processSessionInfo uses it to validate the
+    // cached session key (or re-derive via the phone if the key changed). On
+    // first connect after pair, both stored pubkey and cached key are absent;
+    // that's OK — the slow path derives and caches them.
     if (!this.vehiclePublicKey && store.vehicleEcPublicKey) {
       this.vehiclePublicKey = store.vehicleEcPublicKey
     }
@@ -188,8 +208,9 @@ class TeslaSession {
       callback({ success: false, error: 'Watch keypair missing — re-pair from phone' })
       return
     }
-    this.ephemeralPrivateKey = watchPriv // long-term, name kept for crypto-path compat
-    this.ephemeralPublicKey = watchPub
+    // watchPriv validated above (re-pair guard); the ECDH itself runs on the
+    // phone, so the watch never needs the private key past this point.
+    this.ephemeralPublicKey = watchPub // long-term key; name kept for crypto-path compat
     this.routingAddress = generateRoutingAddress()
     this._lastRequestUuid = generateUUID()
 
@@ -197,13 +218,14 @@ class TeslaSession {
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: this.routingAddress,
       // SessionInfoRequest.publicKey = enrolled long-term key (vehicle looks
-      // up its whitelist by this). Challenge comes from request UUID (field 50).
+      // up its whitelist by this). Challenge is the request uuid in field 51
+      // (see buildRoutableMessage) — the vehicle HMACs SessionInfo over it.
       sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
       uuid: this._lastRequestUuid,
     })
     // First send of a connection gets the longer window; a resend (we already
     // know the link is slow) gets the shorter one.
-    const timeout = this._sessionInfoResends === 0 ? SESSION_INFO_AMBIENT_TIMEOUT_MS : SESSION_INFO_RESEND_TIMEOUT_MS
+    const timeout = this._sessionInfoResends === 0 ? this.sessionInfoAmbientTimeoutMs : this.sessionInfoResendTimeoutMs
     console.log(`[SESSION] TX request (connect ${this._sessionInfoConnects}/${SESSION_INFO_MAX_CONNECTS}, resend ${this._sessionInfoResends}/${SESSION_INFO_RESENDS_PER_CONNECT}, ${message.length}B, ${timeout}ms window)`)
 
     const handler = (result) => this._handleSessionInfoResponse(result, callback, handler)
@@ -238,7 +260,7 @@ class TeslaSession {
       console.log('[SESSION] ⟳ Resends exhausted — recycling BLE link and reconnecting')
       try { teslaBLE.disconnect() } catch (_e) {}
       try { teslaBLE.flushNative() } catch (_e) {}
-      setTimeout(() => this._ensureConnected(callback), RECYCLE_SETTLE_MS)
+      setTimeout(() => this._ensureConnected(callback), this.recycleSettleMs)
       return
     }
 
@@ -476,17 +498,44 @@ class TeslaSession {
   }
   sendCommand(rkeActionOrClosure, callback) {
     const doSend = () => {
+      // Fire the terminal result exactly once and tear down all command state:
+      // both timers, the waiting flag, and the BLE callback (so a late frame
+      // after a timeout can't double-deliver). Non-terminal requeues do NOT go
+      // through here — they call callback(result) directly and keep listening.
+      let settled = false
+      const finish = (result) => {
+        if (settled) return
+        settled = true
+        this._clearCommandTimer()
+        if (this._secondResponseTimer) {
+          clearTimeout(this._secondResponseTimer)
+          this._secondResponseTimer = null
+        }
+        this._waitingForSecondResponse = false
+        teslaBLE.responseCallback = null
+        callback(result)
+      }
       try {
         const message = this.buildAuthenticatedCommand(rkeActionOrClosure)
 
         // Track if we received the first response (status push)
         this._waitingForSecondResponse = false
 
+        // Overall deadline: covers "no response at all" and "only unsolicited
+        // pushes" — neither arms _secondResponseTimer (that only starts after a
+        // first addressed non-terminal reply). Without this a dropped command
+        // write hangs the callback forever and wedges the caller's busy flag.
+        this._clearCommandTimer()
+        this._commandTimer = setTimeout(() => {
+          this._commandTimer = null
+          console.log('[SESSION] Command timeout — no response from vehicle')
+          finish({ success: false, error: 'Command timed out — no response from vehicle' })
+        }, this.commandTimeoutMs)
+
         // Use BLE layer's wrapper to handle multi-response
         teslaBLE.send(message, (result) => {
           if (!result.success) {
-            this._waitingForSecondResponse = false
-            callback({ success: false, error: result.error })
+            finish({ success: false, error: result.error })
             return
           }
           try {
@@ -495,7 +544,8 @@ class TeslaSession {
             // Tesla streams unsolicited pushes (periodic VehicleStatus etc.) on the
             // same characteristic. They're addressed to a domain, not our routing
             // address, so they'd otherwise be consumed as the command's response and
-            // steal a response slot. Drop them and keep listening.
+            // steal a response slot. Drop them and keep listening (the command
+            // deadline above still bounds an endless stream of them).
             const ra = this.routingAddress
             const dst = response.toRoutingAddress
             const addressedToUs = ra && dst && dst.length === ra.length && (() => {
@@ -521,15 +571,16 @@ class TeslaSession {
             if (!isTerminal && !this._waitingForSecondResponse) {
               this._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
+              // The car has answered, so hand the deadline off to the tighter
+              // second-response timer — the overall command timer is no longer
+              // the right bound now that the link is proven alive.
+              this._clearCommandTimer()
               if (this._secondResponseTimer) clearTimeout(this._secondResponseTimer)
               this._secondResponseTimer = setTimeout(() => {
                 if (this._waitingForSecondResponse) {
                   console.log('[SESSION] Second response timeout — clearing waiting state')
-                  this._waitingForSecondResponse = false
                   this._secondResponseTimer = null
-                  try {
-                    callback({ success: false, error: 'Second response timeout' })
-                  } catch (_e) {}
+                  finish({ success: false, error: 'Second response timeout' })
                 }
               }, 10000)
 
@@ -539,31 +590,24 @@ class TeslaSession {
               return
             }
 
-            if (this._secondResponseTimer) {
-              clearTimeout(this._secondResponseTimer)
-              this._secondResponseTimer = null
-            }
-            this._waitingForSecondResponse = false
-
             // Auth-layer fault (counter/epoch mismatch, invalid signature, etc.)
             const mFault = response.signedMessageStatus && response.signedMessageStatus.signedMessageFault
             if (mFault) {
-              callback({ success: false, error: `Signed message fault ${mFault}`, response })
+              finish({ success: false, error: `Signed message fault ${mFault}`, response })
               return
             }
             // VCSEC-level ERROR (command rejected — obstruction, unauthorized, etc.)
             if (response.commandStatus && response.commandStatus.operationStatus === 2) {
-              callback({ success: false, error: 'Command rejected by vehicle', response })
+              finish({ success: false, error: 'Command rejected by vehicle', response })
               return
             }
-            callback({ success: true, response })
+            finish({ success: true, response })
           } catch (e) {
-            this._waitingForSecondResponse = false
-            callback({ success: false, error: e.message })
+            finish({ success: false, error: e.message })
           }
         })
       } catch (e) {
-        callback({ success: false, error: e.message })
+        finish({ success: false, error: e.message })
       }
     }
     if (!this.established) {

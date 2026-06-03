@@ -32,7 +32,6 @@ describe('sendCommand — second response timeout handling', () => {
     // Mark session established and populate minimal fields required by buildAuthenticatedCommand
     session.established = true
     session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    session.ephemeralPrivateKey = new Uint8Array(32).fill(0x01)
     session.epoch = new Uint8Array(16).fill(0xee)
     session.counter = 0
     session.clockTime = 1000
@@ -79,7 +78,6 @@ describe('sendCommand — second response timeout handling', () => {
     const session = new TeslaSession()
     session.established = true
     session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    session.ephemeralPrivateKey = new Uint8Array(32).fill(0x01)
     session.epoch = new Uint8Array(16).fill(0xee)
     session.counter = 0
     session.clockTime = 1000
@@ -133,7 +131,6 @@ describe('sendCommand — second response timeout handling', () => {
     const session = new TeslaSession()
     session.established = true
     session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    session.ephemeralPrivateKey = new Uint8Array(32).fill(0x01)
     session.epoch = new Uint8Array(16).fill(0xee)
     session.counter = 0
     session.clockTime = 1000
@@ -158,6 +155,10 @@ describe('sendCommand — second response timeout handling', () => {
     expect(session._waitingForSecondResponse).toBe(false)
     expect(uiCb.calls.length).toBe(1)
     expect(uiCb.calls[0][0]._requeue).toBe(true)
+    // A requeue keeps the overall command deadline ticking (it bounds an endless
+    // push stream); tear it down so the real timer doesn't leak past the test.
+    expect(session._commandTimer).not.toBeNull()
+    session.reset()
 
     teslaBLE.send = origSend
   })
@@ -166,7 +167,6 @@ describe('sendCommand — second response timeout handling', () => {
     const session = new TeslaSession()
     session.established = true
     session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
-    session.ephemeralPrivateKey = new Uint8Array(32).fill(0x01)
     session.epoch = new Uint8Array(16).fill(0xee)
     session.counter = 0
     session.clockTime = 1000
