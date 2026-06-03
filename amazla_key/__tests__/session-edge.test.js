@@ -23,43 +23,67 @@ describe('TeslaSession edge cases', () => {
 })
 
 describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => {
-  // When a SessionInfoRequest gets only ambient (fields:[3]) broadcasts and no
-  // real SessionInfo, the native write path is wedged (RX works, TX dropped).
-  // The watchdog recycles the link (disconnect → re-scan → reconnect → resend)
-  // up to SESSION_INFO_MAX_ATTEMPTS, mirroring an app relaunch.
+  // When a SessionInfoRequest gets only ambient (fields:[3]) and no real
+  // SessionInfo, the request was likely truncated (dropped write chunk). Tier 0
+  // resends on the same link; Tier 1 recycles (disconnect → flush → reconnect);
+  // then it gives up.
   let session
   let origDisconnect
   let origFlushNative
+  let origIsConnected
   beforeEach(() => {
     bootSessionEnv()
     session = new TeslaSession()
     origDisconnect = teslaBLE.disconnect.bind(teslaBLE)
     origFlushNative = teslaBLE.flushNative.bind(teslaBLE)
+    origIsConnected = teslaBLE.isConnected.bind(teslaBLE)
   })
   afterEach(() => {
     teslaBLE.disconnect = origDisconnect
     teslaBLE.flushNative = origFlushNative
+    teslaBLE.isConnected = origIsConnected
     session.reset()
     teslaBLE.reset()
   })
 
-  test('timeout with attempts remaining → disconnects + flushes native, then re-runs connect after a settle', () => {
+  test('Tier 0: timeout with resends remaining → resends on the same link, no teardown', () => {
+    teslaBLE.isConnected = () => true
+    teslaBLE.disconnect = jest.fn()
+    session._doSessionInfoRequest = jest.fn()
+    let cbResult = 'NOT_CALLED'
+    const cb = (r) => { cbResult = r }
+
+    session._sessionInfoConnects = 1
+    session._sessionInfoResends = 0 // resends available
+    session._onSessionInfoTimeout(cb)
+
+    expect(session._doSessionInfoRequest).toHaveBeenCalledTimes(1)
+    expect(session._doSessionInfoRequest).toHaveBeenCalledWith(cb)
+    expect(teslaBLE.disconnect).not.toHaveBeenCalled() // same link, no recycle
+    expect(session._sessionInfoResends).toBe(1)
+    expect(cbResult).toBe('NOT_CALLED')
+  })
+
+  test('Tier 1: resends exhausted but connects remain → disconnect + flush, reconnect after settle', () => {
     jest.useFakeTimers()
     try {
+      teslaBLE.isConnected = () => true
       teslaBLE.disconnect = jest.fn()
       teslaBLE.flushNative = jest.fn()
+      session._doSessionInfoRequest = jest.fn()
       session._ensureConnected = jest.fn()
       let cbResult = 'NOT_CALLED'
       const cb = (r) => { cbResult = r }
 
-      session._sessionInfoAttempts = 1 // first attempt in flight, retry available
+      session._sessionInfoResends = 99 // resends exhausted
+      session._sessionInfoConnects = 0 // connections remain
       session._onSessionInfoTimeout(cb)
 
-      // Teardown happens immediately; reconnect is deferred past the settle.
+      expect(session._doSessionInfoRequest).not.toHaveBeenCalled() // not a resend
       expect(teslaBLE.disconnect).toHaveBeenCalledTimes(1)
       expect(teslaBLE.flushNative).toHaveBeenCalledTimes(1)
-      expect(session._ensureConnected).not.toHaveBeenCalled()
-      expect(cbResult).toBe('NOT_CALLED') // not failed — a retry is underway
+      expect(session._ensureConnected).not.toHaveBeenCalled() // deferred past settle
+      expect(cbResult).toBe('NOT_CALLED')
 
       jest.advanceTimersByTime(600)
       expect(session._ensureConnected).toHaveBeenCalledTimes(1)
@@ -69,15 +93,19 @@ describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => 
     }
   })
 
-  test('timeout after final attempt → gives up with actionable error, no reconnect', () => {
+  test('everything exhausted → gives up with an actionable error, no resend/reconnect', () => {
+    teslaBLE.isConnected = () => true
     teslaBLE.disconnect = jest.fn()
+    session._doSessionInfoRequest = jest.fn()
     session._ensureConnected = jest.fn()
     let cbResult = null
     const cb = (r) => { cbResult = r }
 
-    session._sessionInfoAttempts = 99 // exhausted
+    session._sessionInfoResends = 99
+    session._sessionInfoConnects = 99
     session._onSessionInfoTimeout(cb)
 
+    expect(session._doSessionInfoRequest).not.toHaveBeenCalled()
     expect(session._ensureConnected).not.toHaveBeenCalled()
     expect(cbResult.success).toBe(false)
     expect(cbResult.error).toMatch(/not responding|wake the car/i)

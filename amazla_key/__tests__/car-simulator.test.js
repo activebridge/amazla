@@ -117,6 +117,7 @@ beforeEach(() => {
 
   // Reset BLE singleton (clear connected state, BLEMaster #devices cache, handlers).
   teslaBLE.reset()
+  teslaBLE.chunkIntervalMs = 0 // pacing-agnostic: don't couple test timing to prod chunk delay
 
   // Populate store
   setupStore(sim)

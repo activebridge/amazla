@@ -98,6 +98,7 @@ beforeEach(() => {
   bleHarness.reset()
   bleHarness.setSimulator(sim)
   teslaBLE.reset()
+  teslaBLE.chunkIntervalMs = 0 // pacing-agnostic: don't couple fake-timer advances to prod chunk delay
 
   // pairing.js always scans by VIN-derived local name (Tesla rotates MAC every
   // ~15 min). Provide VIN + auto-emit a matching beacon so scan resolves

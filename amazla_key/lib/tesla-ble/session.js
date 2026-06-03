@@ -24,16 +24,25 @@ import {
   RKE_ACTION_UNLOCK,
 } from './protocol/vcsec.js'
 
-// When a SessionInfoRequest gets only ambient (fields:[3]) broadcasts and no
-// real SessionInfo within this window, the native BLE write path is wedged
-// (RX still works, TX silently dropped — see project_amazla_key_native_ble_poison).
-// Generous because the car legitimately emits several ambient frames before a
-// real response (pairing.js tolerates ~5×6s). Past this we recycle the link.
-const SESSION_INFO_AMBIENT_TIMEOUT_MS = 8000
-// Total SessionInfoRequest attempts including the first. Each retry does a full
-// reset → re-scan → reconnect → resend, mirroring what an app relaunch does.
-const SESSION_INFO_MAX_ATTEMPTS = 2
-// Idle gap between tearing down the wedged link and reconnecting on a retry.
+// Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
+// and no real SessionInfo. Leading cause is a dropped request chunk (unacked
+// WRITE_WITHOUT_RESPONSE under notification congestion → car gets a truncated
+// request, never replies). Two tiers, cheapest first:
+//
+//   Tier 0 — resend the request on the SAME live link (a dropped chunk just
+//     needs another complete copy; no teardown). Up to RESENDS_PER_CONNECT.
+//   Tier 1 — recycle the link (disconnect + native flush + settle + reconnect),
+//     up to MAX_CONNECTS total connections, then give up.
+//
+// Healthy SessionInfo arrives ~1.2s after TX, so these windows are "lost, not
+// slow". The first window per connection is longer to also clear the uuid-race
+// (a slow legit reply to the prior uuid mustn't be mistaken for lost) and to
+// tolerate the car's ambient-before-reply chatter.
+const SESSION_INFO_AMBIENT_TIMEOUT_MS = 5000
+const SESSION_INFO_RESEND_TIMEOUT_MS = 3000
+const SESSION_INFO_RESENDS_PER_CONNECT = 2
+const SESSION_INFO_MAX_CONNECTS = 2
+// Idle gap between tearing down the link and reconnecting on a Tier-1 recycle.
 // Lets the native BLE stack drain queued RX (stale notification fragments) while
 // nothing is attached — a back-to-back reconnect reuses that dirty state.
 const RECYCLE_SETTLE_MS = 600
@@ -61,7 +70,8 @@ class TeslaSession {
       clearTimeout(this._secondResponseTimer)
       this._secondResponseTimer = null
     }
-    this._sessionInfoAttempts = 0
+    this._sessionInfoResends = 0  // Tier-0 resends done on the current connection
+    this._sessionInfoConnects = 0 // connections established this requestSessionInfo
     this._clearSessionInfoTimer()
   }
   _clearSessionInfoTimer() {
@@ -77,7 +87,8 @@ class TeslaSession {
   requestSessionInfo(callback) {
     // No table check here anymore — _ensureTableForVehiclePub will build it
     // on the fly from the SessionInfo response if missing or stale.
-    this._sessionInfoAttempts = 0
+    this._sessionInfoResends = 0
+    this._sessionInfoConnects = 0
     this._ensureConnected(callback)
   }
   _ensureConnected(callback) {
@@ -158,6 +169,9 @@ class TeslaSession {
     if (!this.vehiclePublicKey && store.vehicleEcPublicKey) {
       this.vehiclePublicKey = store.vehicleEcPublicKey
     }
+    // Each (re)connect is one connection; reset the per-connection resend count.
+    this._sessionInfoConnects++
+    this._sessionInfoResends = 0
     this._doSessionInfoRequest(callback)
   }
   _doSessionInfoRequest(callback) {
@@ -179,7 +193,6 @@ class TeslaSession {
     this.ephemeralPublicKey = watchPub
     this.routingAddress = generateRoutingAddress()
     this._lastRequestUuid = generateUUID()
-    this._sessionInfoAttempts = (this._sessionInfoAttempts || 0) + 1
 
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
@@ -189,36 +202,50 @@ class TeslaSession {
       sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
       uuid: this._lastRequestUuid,
     })
-    console.log(`[SESSION] TX request (attempt ${this._sessionInfoAttempts}/${SESSION_INFO_MAX_ATTEMPTS}, first 64 bytes of ${message.length} total bytes)`)
+    // First send of a connection gets the longer window; a resend (we already
+    // know the link is slow) gets the shorter one.
+    const timeout = this._sessionInfoResends === 0 ? SESSION_INFO_AMBIENT_TIMEOUT_MS : SESSION_INFO_RESEND_TIMEOUT_MS
+    console.log(`[SESSION] TX request (connect ${this._sessionInfoConnects}/${SESSION_INFO_MAX_CONNECTS}, resend ${this._sessionInfoResends}/${SESSION_INFO_RESENDS_PER_CONNECT}, ${message.length}B, ${timeout}ms window)`)
 
     const handler = (result) => this._handleSessionInfoResponse(result, callback, handler)
     // Watchdog: if only ambient broadcasts arrive (no real SessionInfo) within
-    // the window, the native BLE link is wedged — recycle it and resend.
+    // the window, the request was likely lost — resend, or recycle the link.
     this._clearSessionInfoTimer()
-    this._sessionInfoTimer = setTimeout(() => this._onSessionInfoTimeout(callback), SESSION_INFO_AMBIENT_TIMEOUT_MS)
+    this._sessionInfoTimer = setTimeout(() => this._onSessionInfoTimeout(callback), timeout)
     teslaBLE.send(message, handler)
   }
   _onSessionInfoTimeout(callback) {
     this._sessionInfoTimer = null
-    if (this._sessionInfoAttempts >= SESSION_INFO_MAX_ATTEMPTS) {
-      console.log('[SESSION] ❌ Only ambient frames after all attempts — giving up')
-      try { teslaBLE.disconnect() } catch (_e) {}
-      callback({ success: false, error: 'Vehicle not responding to session request. Wake the car and retry.' })
+
+    // Tier 0: cheap resend on the still-open link. A dropped request chunk just
+    // needs another complete copy — no teardown, no scan/reconnect cost (~hundreds
+    // of ms vs several seconds). Only safe once the link is quiet of in-flight
+    // replies, which the timeout window guarantees.
+    if (teslaBLE.isConnected() && this._sessionInfoResends < SESSION_INFO_RESENDS_PER_CONNECT) {
+      this._sessionInfoResends++
+      console.log(`[SESSION] ⟳ No SessionInfo — resending on same link (resend ${this._sessionInfoResends}/${SESSION_INFO_RESENDS_PER_CONNECT})`)
+      this._doSessionInfoRequest(callback)
       return
     }
-    console.log('[SESSION] ⟳ Only ambient frames, no SessionInfo — recycling BLE link and retrying')
-    // Mirrors an app relaunch as closely as we can in-process:
-    //   1. disconnect() → _cleanup() runs ble.quit() (native disconnect of the
-    //      wedged link) and nulls this.ble. (Not reset() — keeps the BLE page's
-    //      onDisconnect handler intact.)
+
+    // Tier 1: recycle the link, mirroring an app relaunch as closely as we can:
+    //   1. disconnect() → _cleanup() runs ble.quit() (native disconnect) + nulls
+    //      this.ble. (Not reset() — keeps the BLE page's onDisconnect handler.)
     //   2. flushNative() drops stale native callbacks / queued RX so the next
     //      connection doesn't inherit orphan notification fragments.
-    //   3. A short idle settle before reconnecting lets the native stack drain
-    //      while nothing is attached. A bare back-to-back reconnect reuses the
-    //      dirty native state and tends to land in ambient-only again.
+    //   3. A short idle settle lets the native stack drain before reconnecting;
+    //      a back-to-back reconnect reuses dirty state and re-lands ambient-only.
+    if (this._sessionInfoConnects < SESSION_INFO_MAX_CONNECTS) {
+      console.log('[SESSION] ⟳ Resends exhausted — recycling BLE link and reconnecting')
+      try { teslaBLE.disconnect() } catch (_e) {}
+      try { teslaBLE.flushNative() } catch (_e) {}
+      setTimeout(() => this._ensureConnected(callback), RECYCLE_SETTLE_MS)
+      return
+    }
+
+    console.log('[SESSION] ❌ No SessionInfo after resends + reconnects — giving up')
     try { teslaBLE.disconnect() } catch (_e) {}
-    try { teslaBLE.flushNative() } catch (_e) {}
-    setTimeout(() => this._ensureConnected(callback), RECYCLE_SETTLE_MS)
+    callback({ success: false, error: 'Vehicle not responding to session request. Wake the car and retry.' })
   }
   _handleSessionInfoResponse(result, callback, handler) {
     if (!result.success) {

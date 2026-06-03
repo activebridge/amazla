@@ -6,6 +6,14 @@ const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_READ_UUID = '00000213-b2d1-43f0-9b88-960cebf8b91e'
 const BLE_CHUNK_SIZE = 20
+// Delay between successive WRITE_WITHOUT_RESPONSE chunks of one request. These
+// writes are unacked, so if we outrun the link they silently drop and the car
+// receives a truncated request → it never replies, just keeps broadcasting
+// ambient frames (the intermittent "ambient-only" failure). Observed link
+// cadence in device logs is ~one 20-byte packet per ~90ms, so pacing our writes
+// near that avoids over-queueing. Tunable — lower if reliability holds, raise if
+// drops persist. Costs ~(chunks × this) ms per request (e.g. 6×90 ≈ 540ms).
+const BLE_CHUNK_INTERVAL_MS = 90
 // Upper bound on a reassembled Tesla response frame. The largest we ever see is
 // SessionInfo (~177B); commands/status are <60B. A declared length above this
 // means the chunk is an orphan fragment (e.g. the tail of a frame whose head
@@ -100,6 +108,9 @@ class TeslaBLE {
     this._rxExpected = 0
     this._rxLastChunkTime = 0
     this._mtu = 20
+    // Inter-chunk write delay (see BLE_CHUNK_INTERVAL_MS). Instance-level so tests
+    // can set it to 0 (pacing-agnostic) and so it can be tuned at runtime.
+    this.chunkIntervalMs = BLE_CHUNK_INTERVAL_MS
     this.services = {
       [TESLA_SERVICE_UUID]: {
         [TESLA_WRITE_UUID]: [],
@@ -438,7 +449,7 @@ class TeslaBLE {
       this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, message.buffer, true)
     } else {
       const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-      console.log(`[BLE]   → ${total} chunks of ${BLE_CHUNK_SIZE}B (20ms paced)`)
+      console.log(`[BLE]   → ${total} chunks of ${BLE_CHUNK_SIZE}B (${this.chunkIntervalMs}ms paced)`)
       this._sendChunk(message, 0)
     }
   }
@@ -447,7 +458,7 @@ class TeslaBLE {
     const chunk = message.slice(offset, end)
     console.log(`[BLE]   TX chunk [${offset}..${end}]: hex=${_hex(chunk)}`)
     this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
-    if (end < message.length) setTimeout(() => this._sendChunk(message, end), 20)
+    if (end < message.length) setTimeout(() => this._sendChunk(message, end), this.chunkIntervalMs)
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)

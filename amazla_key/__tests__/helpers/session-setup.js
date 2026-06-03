@@ -86,6 +86,7 @@ export const bootSessionEnv = () => {
   bleHarness.reset()
   bleHarness.setSimulator(sim)
   teslaBLE.reset()
+  teslaBLE.chunkIntervalMs = 0 // pacing-agnostic: don't couple test timing to prod chunk delay
   setupStore(sim)
   return { sim }
 }
