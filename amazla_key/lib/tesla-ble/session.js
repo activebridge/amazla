@@ -21,6 +21,7 @@ import {
   parseVehicleStatus,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
+  RKE_ACTION_REMOTE_DRIVE,
 } from './protocol/vcsec.js'
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
@@ -655,6 +656,12 @@ class TeslaSession {
   }
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
+  }
+  remoteDrive(callback) {
+    // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless
+    // drive over the authenticated BLE session — the workaround for "configure phone
+    // key" when no phone key is passively present. Same RKEAction path as lock/unlock.
+    this.sendCommand(RKE_ACTION_REMOTE_DRIVE, callback)
   }
   ensureSessionEstablished(callback) {
     // If session already established, call callback immediately

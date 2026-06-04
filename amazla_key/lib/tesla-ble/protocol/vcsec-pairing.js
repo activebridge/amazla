@@ -4,7 +4,7 @@ import { parseVehicleStatus } from './vcsec.js'
 
 const SIGNATURE_TYPE_PRESENT_KEY = 2  // Used for pairing (no HMAC needed)
 const KEY_ROLE_OWNER = 2  // ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3
-const KEY_FORM_FACTOR_ANDROID_DEVICE = 7  // Triggers NFC keycard tap UI on car touchscreen
+const KEY_FORM_FACTOR_ANDROID_DEVICE = 7  // vcsec.proto KeyFormFactor (sparse enum): NFC_CARD=1, IOS_DEVICE=6, ANDROID_DEVICE=7, CLOUD_KEY=9. Verified against tesla/vehicle-command SDK.
 const OPERATIONSTATUS_OK = 0
 const OPERATIONSTATUS_WAIT = 1
 const OPERATIONSTATUS_ERROR = 2

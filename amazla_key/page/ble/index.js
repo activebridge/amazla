@@ -168,6 +168,19 @@ function onUnlock() {
     }
   })
 }
+function onDrive() {
+  addLog('Remote drive...', 0xffcc00)
+  teslaSession.remoteDrive((result) => {
+    if (result._requeue) return // Internal requeue - don't show UI feedback yet
+    if (result.success) {
+      updateStatus('DRIVE OK', 0x00cc44)
+      addLog('✓ Drive enabled', 0x44ff44)
+    } else {
+      updateStatus('DRIVE FAIL', 0xff4444)
+      addLog(`✗ ${result.error || 'failed'}`, 0xff4444)
+    }
+  })
+}
 function onClear() {
   BLE.clear()
   teslaSession.reset()
@@ -373,6 +386,20 @@ Page({
         press_color: 0x0d2d15,
         radius: 8,
         click_func: onUnlock,
+        centered: false,
+      })
+      uiButton({
+        x: 20,
+        y: 420,
+        w: 440,
+        h: 42,
+        text: 'DRIVE',
+        text_size: 16,
+        color: 0xffffff,
+        normal_color: 0x1a3c6c,
+        press_color: 0x0d1e36,
+        radius: 8,
+        click_func: onDrive,
         centered: false,
       })
       BLE.onDisconnect = () => {

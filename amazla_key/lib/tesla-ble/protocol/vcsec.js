@@ -8,6 +8,7 @@ const RKE_ACTION_UNLOCK = 0
 const RKE_ACTION_LOCK = 1
 const RKE_ACTION_OPEN_TRUNK = 2
 const RKE_ACTION_OPEN_FRUNK = 3
+const RKE_ACTION_REMOTE_DRIVE = 20 // vcsec.proto RKEAction_E. Tesla SDK "drive"/"Remote start vehicle" — authorizes keyless drive over BLE without a passively-present phone key.
 const INFO_REQUEST_GET_STATUS = 0
 const INFO_REQUEST_GET_WHITELIST_ENTRY_INFO = 6
 const buildUnsignedMessage = ({ informationRequest, rkeAction, closureMoveRequest }) => {
@@ -298,6 +299,7 @@ export {
   parseVehicleStatus,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_LOCK,
+  RKE_ACTION_REMOTE_DRIVE,
   RKE_ACTION_OPEN_TRUNK,
   RKE_ACTION_OPEN_FRUNK,
   buildRoutableMessage,

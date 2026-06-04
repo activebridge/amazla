@@ -6,6 +6,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Lock / Unlock / Trunk / Frunk** - HMAC-signed RKE commands; **device-confirmed actuating the vehicle (2026-06-02)**
+- **Drive (Remote Start)** - `RKE_ACTION_REMOTE_DRIVE`; **device-confirmed shifting to Drive (2026-06-04)**. Passive/silent keyless drive is **not** achievable on the watch — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive--findings)
 - **Vehicle Status** - Door/closure states, lock state, sleep status
 - **Offline session** - The session key (derived once via phone ECDH) is cached on the watch, so session establishment needs no phone after pairing
 
@@ -293,61 +294,67 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Passive Entry Flow
+## Passive Entry & Keyless Drive — Findings
 
-> ⚠️ **Aspirational / not verified.** The Tesla `vehicle-command` Go SDK has **no**
-> passive-entry mechanism — no RSSI, proximity, or auto-unlock anywhere in the SDK,
-> the protobufs, or its BLE connector (it's a command-only library). Passive entry
-> is **vehicle firmware behavior** for first-party phone keys; whether a third-party
-> enrolled key can trigger it is unconfirmed. This app does **not** implement the
-> flow below — it's kept as a description of how the feature works on the vehicle
-> side, not something the watch drives. Treat as a research note, not a spec.
+> ❌ **Not achievable on this watch. Investigated and device-tested 2026-06-04.**
+> The silent, do-nothing experience of the official Tesla app (walk up → auto-unlock,
+> sit → drive with no prompt) **cannot be replicated** from a ZeppOS watch. What *is*
+> achievable — and device-validated — is the **commander model**: open app → connect →
+> issue commands (Lock / Unlock / **Drive**). See the verdict below.
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           PASSIVE ENTRY FLOW                                 │
-│              (Auto-unlock when approaching car with app open)                │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│      Watch                                              Tesla                │
-│        │                                                  │                  │
-│   ┌────┴────┐                                             │                  │
-│   │ App     │                                             │                  │
-│   │ opened  │                                             │                  │
-│   └────┬────┘                                             │                  │
-│        │                                                  │                  │
-│        │  ─── BLE Connect ─────────────────────────────►  │                  │
-│        │                                                  │                  │
-│        │  ─── Session Establishment ───────────────────►  │                  │
-│        │      (see Session Flow above)                    │                  │
-│        │                                                  │                  │
-│        │  ◄── Session OK ─────────────────────────────    │                  │
-│        │                                                  │                  │
-│        │                                                  │                  │
-│        │  ════ Authenticated BLE Connection ════════════  │                  │
-│        │                                                  │                  │
-│        │                                    ┌─────────────┴─────────────┐    │
-│        │                                    │ Tesla monitors RSSI       │    │
-│        │                                    │ (signal strength)         │    │
-│        │                                    │                           │    │
-│        │                                    │ RSSI weak = far away      │    │
-│        │                                    │ RSSI strong = nearby      │    │
-│        │                                    └─────────────┬─────────────┘    │
-│        │                                                  │                  │
-│        │             ┌────────────────────────────────────┤                  │
-│        │             │ User approaches car                │                  │
-│        │             │ RSSI increases                     │                  │
-│        │             ▼                                    │                  │
-│        │                                    ┌─────────────┴─────────────┐    │
-│        │                                    │ RSSI > threshold          │    │
-│        │                                    │ → AUTO UNLOCK!            │    │
-│        │                                    └───────────────────────────┘    │
-│        │                                                  │                  │
-│        ▼                                                  ▼                  │
-│   Car unlocks automatically when you approach!                               │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+### What works (device-validated)
+
+Driving **is** possible. The car refuses to shift to Drive ("configure phone key")
+when no phone key is passively present — but the Tesla Go SDK's answer for a
+command-only client is **Remote Start**, i.e. `RKE_ACTION_REMOTE_DRIVE = 20`
+(SDK `Vehicle.RemoteDrive` / `tesla-control drive`, "Remote start vehicle",
+`requiresAuth:true`, `requiresFleetAPI:false`). It rides the **same** authenticated
+RKE path as Lock/Unlock. Sending it over our existing session lets you shift to Drive.
+
+Confirmed on a real Model 3 (2026-06-04): connect → **DRIVE** → "✓ Drive enabled" →
+shifted to Drive successfully. The car shows a **"keyless driving enabled"** banner —
+this is expected and **inherent** to Remote Start (an explicit, time-boxed grant the
+car announces). The official app stays silent because it uses passive presence, not
+Remote Start. The banner is cosmetic and cannot be removed (see below).
+
+### Why passive entry / silent drive is impossible
+
+Passive operation requires the **car** to continuously sense and **localize** the key
+(near → unlock; in-cabin → drive). Two independent walls, either fatal alone:
+
+1. **No background presence (ZeppOS app lifecycle).** Passive = key present 24/7 with
+   the app closed, in your pocket. ZeppOS kills the app when you leave it — there is no
+   persistent background BLE service. (The user accepts this: opening the app via a
+   watch button is fine. So this wall is waived for our use case — but the next one is not.)
+
+2. **No ranging (ZeppOS BLE API + protocol + physics).** Even with the app **open and
+   connected**, the car authorizes keyless drive only when it **localizes a phone key in
+   the cabin** via **link-layer BLE ranging** (connection RSSI / channel sounding) done in
+   the car's radio + firmware, *below* the GATT/protobuf layer. We cannot supply or fake
+   this:
+   - **Wrong direction.** The only RSSI ZeppOS exposes is `ScanResult.rssi` — the *watch*
+     measuring the *car's* advertisement. The car decides from *its* measurement of *us*;
+     nothing watch-side changes that. No connection-RSSI or ranging API exists in `@zos/ble`.
+   - **No channel to report presence.** The key→car `vcsec.UnsignedMessage` carries only
+     `InformationRequest`, `RKEAction`, `ClosureMoveRequest`, `WhitelistOperation` — there
+     is **no** "I am present / at distance X" field. Nowhere to put a self-measured distance.
+   - **Anti-relay by design.** Tesla deliberately makes the *car* do the ranging so a key
+     **cannot claim** proximity. A self-asserted distance is the exact relay attack the
+     design prevents — the car ignores it.
+   - **Not a missing response.** Those `VehicleStatus` frames the car pushes while connected
+     are one-way telemetry (`userPresence` there is the car's seat/cabin occupancy, not key
+     localization). The Go SDK's receive loop reads and **discards** non-terminal frames and
+     never replies; there is no periodic/keepalive/presence exchange to implement.
+
+**Device proof:** with a live authenticated session, connected, pressing the brake still
+showed "configure phone key" — the car ran its own presence check, did not localize our
+key, and refused. Exactly as the above predicts. Hence Remote Start is the only path.
+
+### Closest achievable UX
+
+A one-tap **"arrive & go"** macro (open app → auto-connect → unlock → Remote Drive),
+mappable to a watch button. Functionally equal to the app for driving — the sole residual
+difference is the cosmetic "keyless driving enabled" banner. (Not yet implemented.)
 
 ## Tesla BLE Command Reference
 
@@ -361,6 +368,7 @@ Core lock/unlock commands are sent via `UnsignedMessage.rkeAction` (field 2).
 |----------|-------|--------|-------------|
 | `RKE_ACTION_UNLOCK` | 0 | `session.unlock(cb)` | Unlock all doors |
 | `RKE_ACTION_LOCK` | 1 | `session.lock(cb)` | Lock all doors |
+| `RKE_ACTION_REMOTE_DRIVE` | 20 | `session.remoteDrive(cb)` | Remote Start — authorizes keyless drive (car shows "keyless driving enabled"). SDK `RemoteDrive` / `tesla-control drive`. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive--findings). |
 
 **Usage:**
 ```javascript
@@ -369,6 +377,7 @@ import teslaSession from './lib/tesla-ble/session.js'
 // Convenience methods (session auto-establishes if needed):
 teslaSession.lock(result => { ... })
 teslaSession.unlock(result => { ... })
+teslaSession.remoteDrive(result => { ... }) // shift-to-Drive enabler
 ```
 
 ### Closure Move Commands (Trunk/Frunk)

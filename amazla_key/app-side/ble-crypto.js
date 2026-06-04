@@ -107,8 +107,8 @@ import { buildSignedMessage, buildToVCSECMessage } from '../lib/tesla-ble/protoc
 
 const SIGNATURE_TYPE_PRESENT_KEY = 2 // No HMAC needed for pairing
 
-// Key form factors (vcsec.proto KeyFormFactor enum — DO NOT CHANGE)
-const KEY_FORM_FACTOR_ANDROID_DEVICE = 7 // Triggers NFC keycard tap UI on car touchscreen
+// Key form factors (vcsec.proto KeyFormFactor sparse enum): NFC_CARD=1, IOS_DEVICE=6, ANDROID_DEVICE=7, CLOUD_KEY=9
+const KEY_FORM_FACTOR_ANDROID_DEVICE = 7 // Verified against tesla/vehicle-command SDK
 
 // Key roles (keys.proto Role enum — DO NOT CHANGE)
 const ROLE_OWNER = 2 // ROLE_SERVICE=1, ROLE_OWNER=2, ROLE_DRIVER=3

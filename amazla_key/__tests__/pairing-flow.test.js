@@ -439,10 +439,8 @@ describe('WhitelistOperation Structure', () => {
 })
 
 describe('Key Form Factor', () => {
-  test('uses ANDROID_DEVICE form factor to trigger NFC tap UI on car screen', () => {
-    // KEY_FORM_FACTOR_ANDROID_DEVICE = 7
-    // This triggers the key-card-tap confirmation UI on the car's touchscreen.
-    // CLOUD_KEY (9) bypasses the UI and uses Tesla cloud verification instead.
+  test('enrolls as ANDROID_DEVICE form factor', () => {
+    // KEY_FORM_FACTOR_ANDROID_DEVICE = 7 (vcsec.proto KeyFormFactor sparse enum)
     const result = bleCryptoSession.buildPairMessage(TEST_PUBLIC_KEY_BINARY)
     const messageHex = binaryToHexString(result.message)
 

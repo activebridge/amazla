@@ -12,8 +12,9 @@ const BLE_CHUNK_SIZE = 20
 // ambient frames (the intermittent "ambient-only" failure). Observed link
 // cadence in device logs is ~one 20-byte packet per ~90ms, so pacing our writes
 // near that avoids over-queueing. Tunable — lower if reliability holds, raise if
-// drops persist. Costs ~(chunks × this) ms per request (e.g. 6×90 ≈ 540ms).
-const BLE_CHUNK_INTERVAL_MS = 90
+// drops persist. Costs ~(chunks × this) ms per request (e.g. 10×50 ≈ 450ms).
+// Trying 50ms (was 90) to cut command latency; watch for ambient-only failures.
+const BLE_CHUNK_INTERVAL_MS = 50
 // Upper bound on a reassembled Tesla response frame. The largest we ever see is
 // SessionInfo (~177B); commands/status are <60B. A declared length above this
 // means the chunk is an orphan fragment (e.g. the tail of a frame whose head

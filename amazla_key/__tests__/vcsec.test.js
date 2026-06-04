@@ -7,6 +7,9 @@ import {
   buildSignedMessage,
   buildToVCSECMessage,
   generateUUID,
+  RKE_ACTION_LOCK,
+  RKE_ACTION_UNLOCK,
+  RKE_ACTION_REMOTE_DRIVE,
 } from '../lib/tesla-ble/protocol/vcsec.js'
 import {
   SIGNATURE_TYPE_PRESENT_KEY,
@@ -39,8 +42,16 @@ describe('VCSEC Protocol', () => {
     })
 
     test('key form factor constants are defined', () => {
-      // vcsec.proto KeyFormFactor enum — DO NOT CHANGE
+      // vcsec.proto KeyFormFactor sparse enum (tesla/vehicle-command SDK):
+      // NFC_CARD=1, IOS_DEVICE=6, ANDROID_DEVICE=7, CLOUD_KEY=9 — DO NOT CHANGE
       expect(KEY_FORM_FACTOR_ANDROID_DEVICE).toBe(7)
+    })
+
+    test('RKE action constants match vcsec.proto RKEAction_E', () => {
+      // tesla/vehicle-command vcsec.proto — DO NOT CHANGE
+      expect(RKE_ACTION_UNLOCK).toBe(0)
+      expect(RKE_ACTION_LOCK).toBe(1)
+      expect(RKE_ACTION_REMOTE_DRIVE).toBe(20) // SDK RemoteDrive / "drive" command
     })
   })
 
