@@ -8,6 +8,7 @@ import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
 import UI, { button, img, page, rect } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
+
 import Phone from '../lib/phone.js'
 import tesla from '../lib/tesla.js'
 import BLE from '../lib/tesla-ble/index.js'
@@ -16,6 +17,12 @@ import teslaSession from '../lib/tesla-ble/session.js'
 const { height } = getDeviceInfo()
 
 var phone = null
+// Tracks the scroll-view page count we last configured (1 = offline single
+// screen, 2 = online car + debug). render() runs on every state change incl.
+// live status pushes; we only (re)configure scroll — and snap to page 0 — when
+// this count actually changes, so a push never yanks the user off the debug
+// screen they scrolled to.
+var scrollPages = 0
 
 const render = () => {
   UI.reset()
@@ -31,8 +38,12 @@ const render = () => {
   tesla.df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' }, slide1)
   tesla.dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' }, slide1)
 
-  // Offline overlay
+  // Offline overlay — single screen, no scroll.
   if (tesla.connection.status !== 'online') {
+    if (scrollPages !== 1) {
+      hmUI.setScrollView(false)
+      scrollPages = 1
+    }
     rect({ w: 352, h: 460, color: 0x000000, alpha: 0.6 }, slide1)
 
     const statusText = tesla.connection.status === 'checking' ? 'Connecting...' : 'Connection Failed'
@@ -112,6 +123,24 @@ const render = () => {
       {
         centered: true,
         x: 0,
+        y: 375,
+        w: 280,
+        h: 50,
+        text: 'Pair',
+        text_size: 16,
+        color: 0xaaffaa,
+        normal_color: 0x113311,
+        press_color: 0x224422,
+        radius: 6,
+        click_func: () => push({ url: 'page/pairing/index' }),
+      },
+      slide1,
+    )
+
+    button(
+      {
+        centered: true,
+        x: 0,
         y: 435,
         w: 280,
         h: 50,
@@ -139,41 +168,70 @@ const render = () => {
 
   rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
 
+  // ── Screen 2: debug controls (scroll down from the car) ──────────────────
+  const slide2 = page(0, 1)
+
   button(
     {
-      centered: false,
-      x: 108,
-      y: 217,
-      w: 72,
+      centered: true,
+      x: 0,
+      y: -150,
+      w: 200,
       h: 36,
-      text: 'BLE',
-      text_size: 13,
-      color: 0x555555,
-      normal_color: 0x111111,
-      press_color: 0x222222,
-      radius: 6,
-      click_func: () => push({ url: 'page/ble/index' }),
+      text: 'Debug',
+      text_size: 18,
+      color: 0x666666,
+      normal_color: 0x000000,
+      press_color: 0x000000,
+      radius: 0,
     },
-    slide1,
+    slide2,
   )
 
   button(
     {
-      centered: false,
-      x: 188,
-      y: 217,
-      w: 84,
-      h: 36,
+      centered: true,
+      x: 0,
+      y: -80,
+      w: 280,
+      h: 56,
+      text: 'BLE',
+      text_size: 16,
+      color: 0x99ccff,
+      normal_color: 0x003366,
+      press_color: 0x004488,
+      radius: 8,
+      click_func: () => push({ url: 'page/ble/index' }),
+    },
+    slide2,
+  )
+
+  button(
+    {
+      centered: true,
+      x: 0,
+      y: 0,
+      w: 280,
+      h: 56,
       text: 'KPAY',
-      text_size: 13,
+      text_size: 16,
       color: 0xffcc66,
       normal_color: 0x332200,
       press_color: 0x443300,
-      radius: 6,
+      radius: 8,
       click_func: onTestPurchase,
     },
-    slide1,
+    slide2,
   )
+
+  // Two vertically-stacked, full-height pages; start on the car (page 0). Only
+  // reconfigure when we first go online (offline→online) — re-running this on
+  // every status push would snap the user back to the car off the debug screen.
+  if (scrollPages !== 2) {
+    hmUI.setScrollView(true, height, 2, true)
+    hmUI.scrollToPage(0, false)
+    scrollPages = 2
+  }
 }
 
 const onTestPurchase = () => {
@@ -233,6 +291,12 @@ Page({
 
     tesla.onChange(render)
 
+    // Auto-establish the BLE session on open and pull the live car state. If not
+    // paired/in range, refresh() lands the offline overlay (Retry / BLE Setup).
+    // Once online this also arms the live-push listener so opening a door, etc.
+    // repaints the page without any user action.
+    tesla.connect()
+
     onKey({
       callback: (key, keyEvent) => {
         if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
@@ -253,7 +317,11 @@ Page({
     // Free BLE so next launch doesn't inherit poisoned native state.
     // Without this, mstConnect on the next session-info attempt returns
     // status:"failed" after ~30s until the watch is rebooted.
-    try { teslaSession.reset() } catch (_e) {}
-    try { BLE.reset() } catch (_e) {}
+    try {
+      teslaSession.reset()
+    } catch (_e) {}
+    try {
+      BLE.reset()
+    } catch (_e) {}
   },
 })

@@ -1,2 +1,32 @@
 msgid "example"
 msgstr "This is an example in device"
+
+msgid "pairing_setup_title"
+msgstr "Open phone app settings to get started"
+
+msgid "pairing_car_title"
+msgstr "In the car, with your NFC key card ready, tap Car → Locks → Add Key on the Tesla screen"
+
+msgid "pairing_pair_title"
+msgstr "Now tap Pair to add your watch as a key"
+
+msgid "pairing_pairing_title"
+msgstr "Connecting to your Tesla"
+
+msgid "pairing_nfc_title"
+msgstr "Tap your key card on the center console to add this watch"
+
+msgid "pairing_success_title"
+msgstr "Watch paired!"
+
+msgid "pairing_error_title"
+msgstr "Pairing failed"
+
+msgid "pairing_btn_pair"
+msgstr "Pair"
+
+msgid "pairing_btn_done"
+msgstr "Done"
+
+msgid "pairing_btn_retry"
+msgstr "Retry"

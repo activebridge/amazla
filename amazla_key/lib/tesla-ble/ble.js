@@ -99,6 +99,12 @@ class TeslaBLE {
     this.mac = null
     this.profile = null
     this.responseCallback = null
+    // Persistent listener for UNSOLICITED vehicle pushes (periodic VehicleStatus
+    // the car streams when a door opens, it locks, etc.). responseCallback owns
+    // the link while a command/session request is in flight; when idle, frames
+    // fall through to this so live state changes still reach the app. Stays armed
+    // across pushes (never nulled by delivery) — only cleared on disconnect/reset.
+    this.idleCallback = null
     this.onDisconnect = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
@@ -163,6 +169,7 @@ class TeslaBLE {
     _writeSavedConnectId(null)
     this.profile = null
     this.responseCallback = null
+    this.idleCallback = null
     this.mac = null
     this._rxBuf = null
     this._rxExpected = 0
@@ -456,7 +463,7 @@ class TeslaBLE {
     const chunk = new Uint8Array(data)
     console.log(`[BLE] RX notification: ${chunk.length} bytes`)
 
-    if (!this.responseCallback) {
+    if (!this.responseCallback && !this.idleCallback) {
       console.log('[BLE] No response callback, ignoring')
       return
     }
@@ -476,9 +483,12 @@ class TeslaBLE {
       this._lastResponseTime = now
       if (chunk.length < 2) {
         console.log(`[BLE] First chunk too short: ${chunk.length} bytes`)
-        const cb = this.responseCallback
-        this.responseCallback = null
-        cb({ success: false, error: 'Response too short' })
+        // Only surface an error to an in-flight command; idle pushes ignore garbage.
+        if (this.responseCallback) {
+          const cb = this.responseCallback
+          this.responseCallback = null
+          cb({ success: false, error: 'Response too short' })
+        }
         return
       }
       this._rxExpected = (chunk[0] << 8) | chunk[1]
@@ -512,8 +522,11 @@ class TeslaBLE {
     const payload = this._rxBuf.slice(0, this._rxExpected)
     this._rxBuf = null
     this._rxExpected = 0
-    const cb = this.responseCallback
-    this.responseCallback = null
+    // An in-flight command/session responseCallback takes priority and is one-shot
+    // (nulled after delivery). When idle, the persistent idleCallback receives the
+    // frame and stays armed for the next unsolicited push.
+    const cb = this.responseCallback || this.idleCallback
+    if (this.responseCallback) this.responseCallback = null
     console.log('[BLE] Got complete response:', payload.length, 'bytes')
     cb({ success: true, data: payload })
   }

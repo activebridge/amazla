@@ -880,10 +880,15 @@ describe('sendCommand error paths', () => {
   })
 
   test('getVehicleStatus: parseVehicleStatus throws → catch reports error', async () => {
-    // data={} passes null guard, decodeMessage({}) returns empty, payload=null,
-    // parseVehicleStatus(null) throws → catch in getVehicleStatus (lines 354-355)
+    // An addressed reply (so it passes the addressedToUs + vehicleStatus guards)
+    // whose VehicleStatus bytes are malformed protobuf (field 1 claims 5 bytes but
+    // only 2 follow) → parseVehicleStatus → decodeMessage throws → catch reports it.
+    const badVehicleStatus = new Uint8Array([0x0a, 0x05, 0x01, 0x02])
+    const fromVcsec = encodeBytes(1, badVehicleStatus)              // FromVCSECMessage.vehicleStatus
+    const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
+    const responseBytes = concat(toDest, encodeBytes(10, fromVcsec))
     const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: true, data: {} })
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: responseBytes })
     const result = await p((cb) => session.getVehicleStatus(cb))
     teslaBLE.send = origSend
     expect(result.success).toBe(false)

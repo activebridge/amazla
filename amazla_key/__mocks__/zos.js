@@ -6,6 +6,9 @@ export class LocalStorage {
   removeItem(k) { delete this._data[k] }
 }
 
+// @zos/i18n stub — echo the msgid back (no .po compilation in tests)
+export const getText = (key) => key
+
 // @zos/fs stub — stateful in-memory store so tests can verify round-trips
 export const _fsStore = {}
 export const writeFileSync = ({ path, data }) => { _fsStore[path] = data }

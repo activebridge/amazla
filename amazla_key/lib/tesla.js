@@ -101,8 +101,9 @@ class Tesla {
           if (cb) cb(r2)
           return
         }
-        this._applyStatus(r2.status)
         this._setConnection({ status: 'online', error: null })
+        this._applyStatus(r2.status)
+        this._startLivePushes()
         if (cb) cb({ success: true })
       })
     })
@@ -125,15 +126,34 @@ class Tesla {
 
   _applyStatus(status) {
     var cs = status.closureStatuses || {}
-    this.locked = status.vehicleLockState === 1
-    this.df = cs.frontDriverDoor === 1
-    this.dr = cs.rearDriverDoor === 1
-    this.pf = cs.frontPassengerDoor === 1
-    this.pr = cs.rearPassengerDoor === 1
-    this.trunkOpen = cs.rearTrunk === 1
-    this.frunkOpen = cs.frontTrunk === 1
-    this.sleeping = status.vehicleSleepStatus === 1
-    this.userPresent = status.userPresence === 1
+    var next = {
+      locked: status.vehicleLockState === 1,
+      df: cs.frontDriverDoor === 1,
+      dr: cs.rearDriverDoor === 1,
+      pf: cs.frontPassengerDoor === 1,
+      pr: cs.rearPassengerDoor === 1,
+      trunkOpen: cs.rearTrunk === 1,
+      frunkOpen: cs.frontTrunk === 1,
+      sleeping: status.vehicleSleepStatus === 1,
+      userPresent: status.userPresence === 1,
+    }
+    // Re-render only when the car's reported state differs from what's on the
+    // watch — so a live VehicleStatus push (door opened) repaints, while a
+    // redundant snapshot is a no-op.
+    var changed = false
+    for (var k in next) {
+      if (this[k] !== next[k]) {
+        this[k] = next[k]
+        changed = true
+      }
+    }
+    if (changed) this._notify()
+  }
+
+  _startLivePushes() {
+    teslaSession.startStatusPushListener((status) => {
+      this._applyStatus(status)
+    })
   }
 
   _setConnection(patch) {

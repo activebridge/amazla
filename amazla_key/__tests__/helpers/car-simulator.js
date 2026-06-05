@@ -322,7 +322,9 @@ export class CarSimulator {
       encodeVarintField(4, s.userPresence),
     )
     // RoutableMessage.payload(10) = FromVCSECMessage { vehicleStatus(1) = VehicleStatus }
-    return encodeBytes(10, encodeBytes(1, vehicleStatus))
+    // Real cars address the status reply to the requestor's routing address (field 6);
+    // the client drops frames not addressed to it, so model that here too.
+    return this._addressed(encodeBytes(10, encodeBytes(1, vehicleStatus)))
   }
 
   _buildWhitelistEntryInfoResponse() {

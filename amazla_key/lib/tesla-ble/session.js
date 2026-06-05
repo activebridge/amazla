@@ -84,6 +84,7 @@ class TeslaSession {
     }
     this._sessionInfoResends = 0  // Tier-0 resends done on the current connection
     this._sessionInfoConnects = 0 // connections established this requestSessionInfo
+    this._statusPushHandler = null
     this._clearSessionInfoTimer()
     this._clearCommandTimer()
   }
@@ -632,22 +633,69 @@ class TeslaSession {
       informationRequest: buildInformationRequest(INFO_REQUEST_GET_STATUS),
     })
     const message = this._buildAuthMessage(unsignedMessage)
+
+    // Fire the terminal result exactly once and tear down command state.
+    let settled = false
+    let statusTimer = null
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
+      teslaBLE.responseCallback = null
+      callback(result)
+    }
+    // Overall deadline: covers "no response" and "only unsolicited pushes"
+    // (neither finishes below), so a dropped request can't hang the caller.
+    statusTimer = setTimeout(() => {
+      statusTimer = null
+      console.log('[SESSION] getVehicleStatus timeout — no addressed response')
+      finish({ success: false, error: 'Vehicle status timed out' })
+    }, this.commandTimeoutMs)
+
     teslaBLE.send(message, (result) => {
       if (!result.success) {
-        callback({ success: false, error: result.error })
+        finish({ success: false, error: result.error })
         return
       }
       try {
         if (!result.data) {
-          callback({ success: false, error: 'No data in vehicle status response' })
+          finish({ success: false, error: 'No data in vehicle status response' })
           return
         }
         const response = parseRoutableMessage(result.data)
+
+        // Tesla streams unsolicited pushes (periodic VehicleStatus/VCSEC frames)
+        // on the same characteristic. They're addressed to a domain, not our
+        // routing address, so without this filter the first one is consumed as
+        // our reply — and parseVehicleStatus(null) then throws. Drop them and
+        // keep listening (the deadline above still bounds an endless stream).
+        const ra = this.routingAddress
+        const dst = response.toRoutingAddress
+        const addressedToUs = ra && dst && dst.length === ra.length && (() => {
+          for (let i = 0; i < ra.length; i++) if (ra[i] !== dst[i]) return false
+          return true
+        })()
+        if (!addressedToUs) {
+          console.log('[SESSION] Ignoring unsolicited push (not a status reply)')
+          result._requeue = true
+          callback(result)
+          return
+        }
+
+        // Addressed to us, but a SessionInfo-only push (counter/epoch refresh)
+        // carries no VCSEC payload — non-terminal, keep waiting for the status.
+        if (!response.vehicleStatus) {
+          console.log('[SESSION] Addressed reply without vehicleStatus, waiting...')
+          result._requeue = true
+          callback(result)
+          return
+        }
+
         const vehicleStatus = parseVehicleStatus(response.vehicleStatus)
-        callback({ success: true, status: vehicleStatus })
+        finish({ success: true, status: vehicleStatus })
       } catch (e) {
         console.log(`[SESSION] getVehicleStatus error: ${e.message}`)
-        callback({ success: false, error: e.message })
+        finish({ success: false, error: e.message })
       }
     })
   }
@@ -662,6 +710,29 @@ class TeslaSession {
     // drive over the authenticated BLE session — the workaround for "configure phone
     // key" when no phone key is passively present. Same RKEAction path as lock/unlock.
     this.sendCommand(RKE_ACTION_REMOTE_DRIVE, callback)
+  }
+  // Live state: arm a persistent listener on the BLE layer for unsolicited
+  // VehicleStatus pushes the car streams while we stay connected (door opened,
+  // locked from the app/key, etc.). Each carries a full state snapshot; we hand
+  // it to onStatus so the UI can re-render when it differs from what's shown.
+  // Idle frames only reach this when no command/session request owns the link,
+  // so it never races an in-flight command's response.
+  startStatusPushListener(onStatus) {
+    this._statusPushHandler = onStatus
+    teslaBLE.idleCallback = (result) => {
+      if (!result || !result.success || !result.data) return
+      try {
+        const response = parseRoutableMessage(result.data)
+        if (response.vehicleStatus && response.vehicleStatus.length > 0) {
+          const status = parseVehicleStatus(response.vehicleStatus)
+          if (this._statusPushHandler) this._statusPushHandler(status)
+        }
+      } catch (_e) {}
+    }
+  }
+  stopStatusPushListener() {
+    this._statusPushHandler = null
+    try { teslaBLE.idleCallback = null } catch (_e) {}
   }
   ensureSessionEstablished(callback) {
     // If session already established, call callback immediately
