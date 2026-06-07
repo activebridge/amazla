@@ -4,6 +4,7 @@ import teslaBLE from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
 import { sha1 } from './crypto/sha256.js'
+import { hexDump } from './crypto/binary-utils.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
   buildHMACTagInput,
@@ -28,17 +29,12 @@ import {
 // car pushes is visible regardless of which path catches it — idle listener OR
 // mid-command (where unaddressed frames are otherwise silently dropped). Remove
 // once we know whether the car solicits the watch on handle-pull.
-const _hxDump = (b) => {
-  if (!b) return '<null>'
-  let s = ''
-  for (let i = 0; i < b.length; i++) { const h = (b[i] & 0xff).toString(16); s += h.length < 2 ? '0' + h : h }
-  return s
-}
+const hx = hexDump
 const dumpRxFrame = (tag, raw, response) => {
   try {
     const topKeys = Object.keys(decodeMessage(raw)).sort((a, b) => a - b).join(',')
-    console.log(`[RX-DUMP ${tag}] ${raw.length}B fields:[${topKeys}] hex=${_hxDump(raw)}`)
-    console.log(`[RX-DUMP ${tag}]   toRoutingAddress=${response.toRoutingAddress ? _hxDump(response.toRoutingAddress) : '<none>'} sessionInfo=${response.sessionInfo ? 'present' : '<none>'} payload=${response.payload ? response.payload.length + 'B' : '<none>'} vehicleStatus=${response.vehicleStatus ? response.vehicleStatus.length + 'B' : '<none>'} signedMsgStatus=${response.signedMessageStatus ? JSON.stringify(response.signedMessageStatus) : '<none>'} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : '<none>'}`)
+    console.log(`[RX-DUMP ${tag}] ${raw.length}B fields:[${topKeys}] hex=${hx(raw)}`)
+    console.log(`[RX-DUMP ${tag}]   toRoutingAddress=${response.toRoutingAddress ? hx(response.toRoutingAddress) : '<none>'} sessionInfo=${response.sessionInfo ? 'present' : '<none>'} payload=${response.payload ? response.payload.length + 'B' : '<none>'} vehicleStatus=${response.vehicleStatus ? response.vehicleStatus.length + 'B' : '<none>'} signedMsgStatus=${response.signedMessageStatus ? JSON.stringify(response.signedMessageStatus) : '<none>'} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : '<none>'}`)
     if (response.payload) {
       try {
         const inner = decodeMessage(response.payload)
@@ -229,7 +225,6 @@ class TeslaSession {
     // the enrolled key is in its whitelist.
     const watchPriv = store.watchPrivateKey
     const watchPub = store.watchPublicKey
-    const hx = (b) => { if (!b) return '<null>'; let s=''; for (let i=0;i<b.length;i++){ const h=(b[i]&0xff).toString(16); s += h.length<2?'0'+h:h } return s }
     console.log(`[SESSION.diag] watchPriv hex=${hx(watchPriv)}`)
     console.log(`[SESSION.diag] watchPub  hex=${hx(watchPub)}`)
     if (!watchPriv || watchPriv.length !== 32 || !watchPub || watchPub.length !== 65) {
@@ -450,13 +445,6 @@ class TeslaSession {
     callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
   }
   _verifySessionInfoTag(response, callback) {
-    const hx = (b, n) => {
-      if (!b) return '<null>'
-      const len = n === undefined ? b.length : Math.min(n, b.length)
-      let s = ''
-      for (let i = 0; i < len; i++) { const h = (b[i] & 0xff).toString(16); s += h.length < 2 ? '0' + h : h }
-      return s
-    }
     if (!response.sessionInfoTag) {
       console.log('[SESSION] ❌ Unauthenticated SessionInfo (no tag)')
       callback({ success: false, error: 'Unauthenticated SessionInfo response' })

@@ -34,4 +34,16 @@ function hexToBytes(hex) {
   return bytes
 }
 
-export { binaryStringToBytes, bytesToBinaryString, bytesToHex, hexToBytes }
+// Debug-only hex dump: null-safe ('<null>'), accepts a Uint8Array or ArrayBuffer,
+// and takes an optional byte cap that appends a …(+NB) elision marker. This is for
+// log/diagnostic output — use bytesToHex for logic paths (it has no null guard).
+function hexDump(buf, max) {
+  if (!buf) return '<null>'
+  const arr = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
+  const cap = max === undefined ? arr.length : Math.min(max, arr.length)
+  let s = ''
+  for (let i = 0; i < cap; i++) s += (arr[i] & 0xff).toString(16).padStart(2, '0')
+  return arr.length > cap ? s + '…(+' + (arr.length - cap) + 'B)' : s
+}
+
+export { binaryStringToBytes, bytesToBinaryString, bytesToHex, hexToBytes, hexDump }

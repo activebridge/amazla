@@ -1,6 +1,7 @@
 import { BLEMaster } from '@silver-zepp/easy-ble'
 import * as hmBle from '@zos/ble'
 import { LocalStorage } from '@zos/storage'
+import { hexDump } from './crypto/binary-utils.js'
 
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
@@ -66,14 +67,7 @@ const _writeSavedConnectId = (id) => {
 try {
   if (BLEMaster.SetDebugLevel) BLEMaster.SetDebugLevel(3)
 } catch (_e) {}
-const _hex = (buf) => {
-  if (!buf) return '<null>'
-  const arr = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf
-  let s = ''
-  const max = Math.min(arr.length, 128)
-  for (let i = 0; i < max; i++) s += (arr[i] < 16 ? '0' : '') + arr[i].toString(16)
-  return arr.length > max ? `${s}…(+${arr.length - max}B)` : s
-}
+const _hex = (buf) => hexDump(buf, 128)
 const _dumpDevice = (d) => {
   if (!d) return '<null>'
   const parts = [`mac=${d.dev_addr}`, `name=${d.dev_name || '?'}`, `rssi=${d.rssi}`]
