@@ -16,6 +16,7 @@ class Tesla {
     this.pr = false // rear passenger door
     this.trunkOpen = false
     this.frunkOpen = false
+    this.chargePortOpen = false
     this.sleeping = false
     this.userPresent = false
 
@@ -134,6 +135,7 @@ class Tesla {
       pr: cs.rearPassengerDoor === 1,
       trunkOpen: cs.rearTrunk === 1,
       frunkOpen: cs.frontTrunk === 1,
+      chargePortOpen: cs.chargePort === 1,
       sleeping: status.vehicleSleepStatus === 1,
       userPresent: status.userPresence === 1,
     }

@@ -5,7 +5,7 @@ import { push } from '@zos/router'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
 
-import UI, { button, img, page, rect } from '../../pages/ui'
+import UI, { button, circle, img, page, rect } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
 
@@ -165,6 +165,11 @@ const render = () => {
   !tesla.trunkOpen && button({ ...OPEN, y: 150, w: 200, h: 160, click_func: onTrunk }, slide1)
   tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock }, slide1)
   !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock }, slide1)
+
+  // Charge-port open indicator. No PNG overlay for Model Y, so a cyan dot at the
+  // rear driver-side port location. Status only — VCSEC actuation lives in the
+  // (not-yet-built) infotainment domain. Tweak x/y to match the car image.
+  tesla.chargePortOpen && circle({ centered: true, x: -110, y: 150, radius: 12, color: 0x00ccff }, slide1)
 
   rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
 

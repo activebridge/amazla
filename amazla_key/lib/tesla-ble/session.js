@@ -24,6 +24,32 @@ import {
   RKE_ACTION_REMOTE_DRIVE,
 } from './protocol/vcsec.js'
 
+// DIAGNOSTIC: dump a full RX frame so a handle-pull / proximity-auth frame the
+// car pushes is visible regardless of which path catches it — idle listener OR
+// mid-command (where unaddressed frames are otherwise silently dropped). Remove
+// once we know whether the car solicits the watch on handle-pull.
+const _hxDump = (b) => {
+  if (!b) return '<null>'
+  let s = ''
+  for (let i = 0; i < b.length; i++) { const h = (b[i] & 0xff).toString(16); s += h.length < 2 ? '0' + h : h }
+  return s
+}
+const dumpRxFrame = (tag, raw, response) => {
+  try {
+    const topKeys = Object.keys(decodeMessage(raw)).sort((a, b) => a - b).join(',')
+    console.log(`[RX-DUMP ${tag}] ${raw.length}B fields:[${topKeys}] hex=${_hxDump(raw)}`)
+    console.log(`[RX-DUMP ${tag}]   toRoutingAddress=${response.toRoutingAddress ? _hxDump(response.toRoutingAddress) : '<none>'} sessionInfo=${response.sessionInfo ? 'present' : '<none>'} payload=${response.payload ? response.payload.length + 'B' : '<none>'} vehicleStatus=${response.vehicleStatus ? response.vehicleStatus.length + 'B' : '<none>'} signedMsgStatus=${response.signedMessageStatus ? JSON.stringify(response.signedMessageStatus) : '<none>'} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : '<none>'}`)
+    if (response.payload) {
+      try {
+        const inner = decodeMessage(response.payload)
+        console.log(`[RX-DUMP ${tag}]   FromVCSECMessage inner fields:[${Object.keys(inner).sort((a, b) => a - b).join(',')}]`)
+      } catch (_e) {}
+    }
+  } catch (e) {
+    console.log(`[RX-DUMP ${tag}] dump error: ${e.message}`)
+  }
+}
+
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
 // and no real SessionInfo. Leading cause is a dropped request chunk (unacked
 // WRITE_WITHOUT_RESPONSE under notification congestion → car gets a truncated
@@ -556,6 +582,7 @@ class TeslaSession {
             })()
             if (!addressedToUs) {
               console.log('[SESSION] Ignoring unsolicited push (not addressed to this command)')
+              dumpRxFrame('CMD-UNSOL', result.data, response)
               result._requeue = true
               callback(result)
               return
@@ -677,6 +704,7 @@ class TeslaSession {
         })()
         if (!addressedToUs) {
           console.log('[SESSION] Ignoring unsolicited push (not a status reply)')
+          dumpRxFrame('STATUS-UNSOL', result.data, response)
           result._requeue = true
           callback(result)
           return
@@ -723,11 +751,16 @@ class TeslaSession {
       if (!result || !result.success || !result.data) return
       try {
         const response = parseRoutableMessage(result.data)
+        // DIAGNOSTIC: dump every idle frame in full so a handle-pull / proximity
+        // frame the car pushes is visible, not just periodic VehicleStatus.
+        dumpRxFrame('IDLE', result.data, response)
         if (response.vehicleStatus && response.vehicleStatus.length > 0) {
           const status = parseVehicleStatus(response.vehicleStatus)
           if (this._statusPushHandler) this._statusPushHandler(status)
         }
-      } catch (_e) {}
+      } catch (e) {
+        console.log(`[RX-DUMP IDLE] parse error: ${e.message}`)
+      }
     }
   }
   stopStatusPushListener() {
