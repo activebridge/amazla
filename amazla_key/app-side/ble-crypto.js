@@ -167,51 +167,10 @@ class BLECryptoSession {
     }
   }
 
-  // Precompute doublings table for vehicle's fixed public key.
-  // Returns ArrayBuffer: 256 entries × 64 bytes = 16384 bytes.
-  // Phone does this once during pairing; watch stores it as binary for fast fixed-base ECDH.
-  buildDoublingsTable(vehiclePublicKeyBinary) {
-    try {
-      if (vehiclePublicKeyBinary.length !== 65) {
-        return { success: false, error: 'Expected 65-byte uncompressed EC public key' }
-      }
-      // Debug: log first byte and length
-      // console.log('[DBG] buildDoublingsTable', vehiclePublicKeyBinary.length, vehiclePublicKeyBinary.charCodeAt(0), vehiclePublicKeyBinary.charCodeAt(1))
-      let x = 0n,
-        y = 0n
-      for (let i = 0; i < 32; i++) {
-        x = (x << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(1 + i) & 0xff)
-        y = (y << 8n) | BigInt(vehiclePublicKeyBinary.charCodeAt(33 + i) & 0xff)
-      }
-      let current = [x, y]
-
-      // table[i] = 2^i * Q: Q, 2Q, 4Q, ..., 2^255*Q
-      // Stored as Uint32Array(256×16): LSW-first uint32s, 8 words for x then 8 for y.
-      // Converted here (phone-side) so the watch can view the buffer directly without parsing.
-      const table = new Uint32Array(256 * 16)
-      for (let i = 0; i < 256; i++) {
-        const xb = bigIntToBytes32(current[0])
-        const yb = bigIntToBytes32(current[1])
-        const tbase = i * 16
-        for (let j = 0; j < 8; j++) {
-          const bo = 28 - j * 4
-          table[tbase + j] = ((xb[bo] << 24) | (xb[bo + 1] << 16) | (xb[bo + 2] << 8) | xb[bo + 3]) >>> 0
-          table[tbase + 8 + j] = ((yb[bo] << 24) | (yb[bo + 1] << 16) | (yb[bo + 2] << 8) | yb[bo + 3]) >>> 0
-        }
-        if (i < 255) current = p256PointAdd(current, current)
-      }
-
-      return { success: true, buffer: table.buffer }
-    } catch (e) {
-      return { success: false, error: e.message }
-    }
-  }
-
-  // Compute the raw ECDH shared secret on the phone so the 16 KB doublings table
-  // never has to be transferred to (or stored on) the watch. Returns the 32-byte
-  // big-endian X of (watchPriv × vehiclePub) as a binary string. The watch derives
-  // sessionKey = sha1(secret)[:16] — bit-identical to its old ecdhFixed(priv, table)
-  // path (same point, same X coordinate). Inputs are binary strings.
+  // Compute the raw ECDH shared secret on the phone (the watch no longer runs
+  // on-device ECDH). Returns the 32-byte big-endian X of (watchPriv × vehiclePub)
+  // as a binary string. The watch derives sessionKey = sha1(secret)[:16].
+  // Inputs are binary strings.
   computeSharedSecret(watchPrivateKeyBinary, vehiclePublicKeyBinary) {
     try {
       if (!watchPrivateKeyBinary || watchPrivateKeyBinary.length !== 32) {
@@ -274,8 +233,8 @@ class BLECryptoSession {
     return { success: true, watchPublicKey: publicKeyBinary, pairMsg: pair.message, verifyMsg: verify.message }
   }
 
-  // Parse raw Tesla BLE verify response, extract vehicle EC key, compute doublings table.
-  // Replaces watch-side decodeRawFields + BLE_PRECOMPUTE_TABLE round-trip.
+  // Parse raw Tesla BLE verify response and extract the vehicle's EC public key.
+  // The session key is derived later via phone-side ECDH (computeSharedSecret).
   completePairing(rawResponseBytes) {
     try {
       let fields = decodeMessage(rawResponseBytes)
@@ -293,14 +252,9 @@ class BLECryptoSession {
       if (!ecKey && wei[1] instanceof Uint8Array && wei[1].length === 65) ecKey = wei[1]
       if (!ecKey) return { success: false, error: 'Could not extract vehicle EC key' }
 
-      const tableResult = this.buildDoublingsTable(bytesToBinaryString(ecKey))
-      if (!tableResult.success) return { success: false, error: tableResult.error }
-
-      const tableBytes = new Uint8Array(tableResult.buffer)
       return {
         success: true,
         ecKey: bytesToBinaryString(ecKey),
-        table: bytesToBinaryString(tableBytes),
       }
     } catch (e) {
       return { success: false, error: e.message }

@@ -140,91 +140,6 @@ describe('BLECryptoSession', () => {
     })
   })
 
-  describe('buildDoublingsTable', () => {
-    test('returns ArrayBuffer of correct size (256 × 16 uint32s = 16384 bytes)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      expect(result.success).toBe(true)
-      expect(result.buffer.byteLength).toBe(16384)
-    })
-
-    test('accepts 65-byte binary string, not hex', () => {
-      expect(bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY).success).toBe(true)
-      expect(bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_HEX).success).toBe(false)
-    })
-
-    test('entry 0 encodes vehicle key x and y in LSW-first Uint32Array format', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const table = new Uint32Array(result.buffer)
-
-      // Reconstruct x and y from LSW-first uint32s and compare to original key bytes
-      const keyBytes = hexToBytes(TEST_PUBLIC_KEY_HEX)
-      const xBytes = new Uint8Array(32)
-      const yBytes = new Uint8Array(32)
-      for (let j = 0; j < 8; j++) {
-        const w = table[j]
-        const idx = 28 - j * 4
-        xBytes[idx]   = (w >>> 24) & 0xff; xBytes[idx+1] = (w >>> 16) & 0xff
-        xBytes[idx+2] = (w >>> 8)  & 0xff; xBytes[idx+3] = w & 0xff
-        const wy = table[8 + j]
-        yBytes[idx]   = (wy >>> 24) & 0xff; yBytes[idx+1] = (wy >>> 16) & 0xff
-        yBytes[idx+2] = (wy >>> 8)  & 0xff; yBytes[idx+3] = wy & 0xff
-      }
-      for (let i = 0; i < 32; i++) {
-        expect(xBytes[i]).toBe(keyBytes[1 + i])
-        expect(yBytes[i]).toBe(keyBytes[33 + i])
-      }
-    })
-
-    test('all 256 entries are distinct (no repeated points)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const table = new Uint32Array(result.buffer)
-      const seen = new Set()
-      for (let i = 0; i < 256; i++) {
-        // Use first 4 uint32s of each entry x as fingerprint
-        const key = Array.from(table.subarray(i * 16, i * 16 + 4)).join(',')
-        expect(seen.has(key)).toBe(false)
-        seen.add(key)
-      }
-    })
-
-    test('deterministic — same key produces same buffer', () => {
-      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const r2 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      expect(new Uint8Array(r1.buffer)).toEqual(new Uint8Array(r2.buffer))
-    })
-
-    test('different vehicle keys produce different tables', () => {
-      // Flip one coordinate byte to get a different (invalid but distinct) point
-      const altBytes = hexToBytes(TEST_PUBLIC_KEY_HEX)
-      altBytes[2] ^= 0xff
-      const altKey = bytesToBinaryString(altBytes)
-      const r1 = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      const r2 = bleCryptoSession.buildDoublingsTable(altKey)
-      // At least entry 0 x-bytes must differ
-      expect(new Uint8Array(r1.buffer, 0, 32)).not.toEqual(new Uint8Array(r2.buffer, 0, 32))
-    })
-
-    test('invalid key length returns error', () => {
-      const result = bleCryptoSession.buildDoublingsTable(bytesToBinaryString(new Uint8Array(32)))
-      expect(result.success).toBe(false)
-      expect(result.error).toBeDefined()
-    })
-
-    test('each entry is 64 bytes: 32-byte x then 32-byte y (big-endian)', () => {
-      const result = bleCryptoSession.buildDoublingsTable(TEST_PUBLIC_KEY_BINARY)
-      // Verify non-zero x and y for all entries (no point-at-infinity)
-      const bytes = new Uint8Array(result.buffer)
-      for (let i = 0; i < 256; i++) {
-        const xSlice = bytes.subarray(i * 64, i * 64 + 32)
-        const ySlice = bytes.subarray(i * 64 + 32, i * 64 + 64)
-        const xAllZero = xSlice.every(b => b === 0)
-        const yAllZero = ySlice.every(b => b === 0)
-        expect(xAllZero).toBe(false)
-        expect(yAllZero).toBe(false)
-      }
-    })
-  })
-
   describe('generateEnrolledKeyPair', () => {
     test('returns success with publicKeyBinary and privateKeyBinary', () => {
       const result = bleCryptoSession.generateEnrolledKeyPair()
@@ -261,11 +176,13 @@ describe('BLECryptoSession', () => {
       expect(r1.publicKeyBinary).not.toBe(r2.publicKeyBinary)
     })
 
-    test('public key can be fed into buildDoublingsTable', () => {
+    test('public key can be fed into computeSharedSecret', () => {
       const result = bleCryptoSession.generateEnrolledKeyPair()
-      const tableResult = bleCryptoSession.buildDoublingsTable(result.publicKeyBinary)
-      expect(tableResult.success).toBe(true)
-      expect(tableResult.buffer.byteLength).toBe(16384)
+      // A freshly generated key pair's public key is a valid 65-byte vehicle-key
+      // input; pairing the watch private key against it yields a 32-byte secret.
+      const secret = bleCryptoSession.computeSharedSecret(result.privateKeyBinary, result.publicKeyBinary)
+      expect(secret.success).toBe(true)
+      expect(secret.secret.length).toBe(32)
     })
   })
 

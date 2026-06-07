@@ -16,8 +16,8 @@ describe('coverage augment tests', () => {
     expect(gen.success).toBe(true)
     expect(typeof gen.publicKeyBinary).toBe('string')
 
-    // buildDoublingsTable fails on wrong length
-    const bad = session.buildDoublingsTable('\x01\x02')
+    // computeSharedSecret fails on wrong length
+    const bad = session.computeSharedSecret('\x01\x02', '\x03\x04')
     expect(bad.success).toBe(false)
 
     // buildWhitelistQueryMessage returns success

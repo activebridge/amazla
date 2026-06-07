@@ -1,11 +1,14 @@
 // P-256 ECDH correctness tests
-// Adapted from test-p256.js (which was a standalone script) into Jest format.
-// Public keys computed from known private keys using BigInt P-256 (phone-side).
+// Validates the live phone-side ECDH (bleCrypto.computeSharedSecret) against
+// known-answer vectors and a Node createECDH oracle. The old watch-side
+// fixed-base path (ecdhFixed + buildDoublingsTable) was removed as dead code;
+// the phone now computes the shared secret directly and the watch only derives
+// sessionKey = sha1(secret)[0:16].
 
-import { ecdhFixed, bytesToBigInt } from '../lib/tesla-ble/crypto/p256.js'
+import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
 import { sha1 } from '../lib/tesla-ble/crypto/sha256.js'
-
 import { hexToBytes, bytesToHex } from '../lib/tesla-ble/crypto/binary-utils.js'
+import { createECDH } from 'crypto'
 
 // Pre-computed test keypairs (private → public, derived with BigInt P-256)
 const ALICE_PRIV = 'c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721'
@@ -16,117 +19,64 @@ const BOB_PRIV = '00000000000000000000000000000000000000000000000000000000000000
 const BOB_PUB  = '047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978' +
                  '07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1'
 
-// Shared secret = x-coordinate of scalar * peer_pubkey
+// Shared secret = x-coordinate of scalar * peer_pubkey.
 // Both directions must yield the same 32-byte value.
 const SHARED_SECRET_HEX = 'ed3687f8bd593c3d260ead3cbf2d4ac102e1e845e1f58da14343c20e6b1a3d4b'
 
-
-// Build doublings table for a point given as hex (65-byte uncompressed, big-endian)
-// This mirrors what the phone does in buildDoublingsTable()
-function buildDoublingsTableJS(pubKeyHex) {
-  // Use BigInt P-256 to compute 2^i * Q for i = 0..255
-  const P = BigInt('0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff')
-  const A = BigInt('0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc')
-  function modInvBig(a, m) {
-    let [r, old_r] = [m, ((a % m) + m) % m], [s, old_s] = [0n, 1n]
-    while (old_r !== 0n) {
-      const q = r / old_r;
-      [r, old_r] = [old_r, r - q * old_r];
-      [s, old_s] = [old_s, s - q * old_s]
-    }
-    return ((s % m) + m) % m
-  }
-  function pointAdd([x1, y1], [x2, y2]) {
-    if (x1 === 0n && y1 === 0n) return [x2, y2]
-    if (x2 === 0n && y2 === 0n) return [x1, y1]
-    if (x1 === x2) {
-      if (y1 !== y2) return [0n, 0n]
-      const lam = ((3n * x1 * x1 + A) * modInvBig(2n * y1, P)) % P
-      const x3 = ((lam * lam - 2n * x1) % P + P) % P
-      return [x3, ((lam * (x1 - x3) - y1) % P + P) % P]
-    }
-    const lam = ((y2 - y1) * modInvBig(x2 - x1, P)) % P
-    const x3 = ((lam * lam - x1 - x2) % P + P) % P
-    return [x3, ((lam * (x1 - x3) - y1) % P + P) % P]
-  }
-  function bigToBytes(n) {
-    const hex = n.toString(16).padStart(64, '0')
-    const b = new Uint8Array(32)
-    for (let i = 0; i < 32; i++) b[i] = parseInt(hex.substr(i * 2, 2), 16)
-    return b
-  }
-  const xHex = pubKeyHex.slice(2, 66), yHex = pubKeyHex.slice(66, 130)
-  let cur = [BigInt('0x' + xHex), BigInt('0x' + yHex)]
-  // Flat Uint32Array(256×16): entry i has x at [i*16..i*16+7], y at [i*16+8..i*16+15], LSW-first
-  const table = new Uint32Array(256 * 16)
-  for (let i = 0; i < 256; i++) {
-    const xWords = bytesToBigInt(bigToBytes(cur[0]))
-    const yWords = bytesToBigInt(bigToBytes(cur[1]))
-    const b = i * 16
-    for (let j = 0; j < 8; j++) { table[b + j] = xWords[j]; table[b + 8 + j] = yWords[j] }
-    if (i < 255) cur = pointAdd(cur, cur)
-  }
-  return table
+// Run the live phone ECDH and return the 32-byte shared-secret X as bytes.
+function sharedSecret(privHex, pubHex) {
+  const r = bleCrypto.computeSharedSecret(
+    bytesToBinaryString(hexToBytes(privHex)),
+    bytesToBinaryString(hexToBytes(pubHex)),
+  )
+  expect(r.success).toBe(true)
+  return binaryStringToBytes(r.secret)
 }
 
-describe('ecdhFixed (fixed-base ECDH with doublings table)', () => {
-  test('ecdhFixed matches known shared secret for alice_priv × bob_pub', () => {
-    const table = buildDoublingsTableJS(BOB_PUB)
-    const fast = ecdhFixed(hexToBytes(ALICE_PRIV), table)
-    expect(bytesToHex(fast)).toBe(SHARED_SECRET_HEX)
+describe('computeSharedSecret (phone-side P-256 ECDH)', () => {
+  test('alice_priv × bob_pub matches known shared secret', () => {
+    expect(bytesToHex(sharedSecret(ALICE_PRIV, BOB_PUB))).toBe(SHARED_SECRET_HEX)
   })
 
-  test('ecdhFixed produces known shared secret', () => {
-    const table = buildDoublingsTableJS(BOB_PUB)
-    const shared = ecdhFixed(hexToBytes(ALICE_PRIV), table)
-    expect(bytesToHex(shared)).toBe(SHARED_SECRET_HEX)
+  test('symmetry: bob_priv × alice_pub equals alice_priv × bob_pub', () => {
+    const r1 = bytesToHex(sharedSecret(BOB_PRIV, ALICE_PUB))
+    const r2 = bytesToHex(sharedSecret(ALICE_PRIV, BOB_PUB))
+    expect(r1).toBe(r2)
   })
 
-  test('ecdhFixed symmetry: bob_priv × alice_pub table matches alice_priv × bob_pub', () => {
-    const tableAlice = buildDoublingsTableJS(ALICE_PUB)
-    const tableBob   = buildDoublingsTableJS(BOB_PUB)
-    const r1 = ecdhFixed(hexToBytes(BOB_PRIV), tableAlice)
-    const r2 = ecdhFixed(hexToBytes(ALICE_PRIV), tableBob)
-    expect(bytesToHex(r1)).toBe(bytesToHex(r2))
-  })
-
-  test('ecdhFixed returns 32 bytes', () => {
-    const table = buildDoublingsTableJS(BOB_PUB)
-    const shared = ecdhFixed(hexToBytes(ALICE_PRIV), table)
+  test('returns 32 bytes', () => {
+    const shared = sharedSecret(ALICE_PRIV, BOB_PUB)
     expect(shared).toBeInstanceOf(Uint8Array)
     expect(shared.length).toBe(32)
+  })
+
+  test('rejects malformed key lengths', () => {
+    expect(bleCrypto.computeSharedSecret('short', bytesToBinaryString(hexToBytes(BOB_PUB))).success).toBe(false)
+    expect(bleCrypto.computeSharedSecret(bytesToBinaryString(hexToBytes(ALICE_PRIV)), 'short').success).toBe(false)
   })
 })
 
 describe('Tesla session key derivation (ECDH → SHA1 → slice)', () => {
   test('session_key = SHA1(shared_x)[0:16] produces known 16-byte key', () => {
-    // This is the exact chain in session.js:
-    //   sharedSecret = ecdh(ephemeralPriv, vehiclePub)
-    //   keyMaterial  = sha1(sharedSecret)
-    //   sessionKey   = keyMaterial.slice(0, 16)
-    const sharedX  = hexToBytes(SHARED_SECRET_HEX)
-    const sessionKey = sha1(sharedX).slice(0, 16)
+    // The exact chain the watch runs after receiving the phone-computed secret:
+    //   keyMaterial = sha1(sharedSecret); sessionKey = keyMaterial.slice(0, 16)
+    const sessionKey = sha1(hexToBytes(SHARED_SECRET_HEX)).slice(0, 16)
     expect(sessionKey.length).toBe(16)
     expect(bytesToHex(sessionKey)).toBe('6f11b3c24c94b5faac2d2a6964339d9c')
   })
 
-  test('full chain: ecdhFixed → sha1 → slice matches precomputed value', () => {
-    const table      = buildDoublingsTableJS(BOB_PUB)
-    const sharedX    = ecdhFixed(hexToBytes(ALICE_PRIV), table)
-    const sessionKey = sha1(sharedX).slice(0, 16)
+  test('full chain: computeSharedSecret → sha1 → slice matches precomputed value', () => {
+    const sessionKey = sha1(sharedSecret(ALICE_PRIV, BOB_PUB)).slice(0, 16)
     expect(bytesToHex(sessionKey)).toBe('6f11b3c24c94b5faac2d2a6964339d9c')
   })
 })
 
-// ── Phone-computed shared secret must equal watch-side ecdhFixed(table) ────────
-// Drives the "drop the table" change: the phone computes the ECDH directly so the
-// 16 KB doublings table never crosses BLE. Proves both paths yield the same key.
-import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
-import { createECDH } from 'crypto'
-
+// ── Phone ECDH must agree with a trusted reference (Node createECDH) ───────────
+// Drives the "drop the doublings table" change: the phone computes ECDH directly
+// (no 16 KB table over BLE). Cross-check 5 random keypairs against Node's crypto.
 const pad32 = (b) => { b = new Uint8Array(b); if (b.length === 32) return b; const o = new Uint8Array(32); o.set(b, 32 - b.length); return o }
 
-describe('phone computeSharedSecret ≡ watch ecdhFixed(buildDoublingsTable)', () => {
+describe('phone computeSharedSecret ≡ Node createECDH', () => {
   for (let i = 0; i < 5; i++) {
     test(`random keypair #${i + 1}`, () => {
       const veh = createECDH('prime256v1'); veh.generateKeys()
@@ -134,20 +84,18 @@ describe('phone computeSharedSecret ≡ watch ecdhFixed(buildDoublingsTable)', (
       const w = createECDH('prime256v1'); w.generateKeys()
       const wPriv = pad32(w.getPrivateKey())
 
-      // Watch path: phone builds the table, watch runs fixed-base ECDH on it.
-      const tbl = bleCrypto.buildDoublingsTable(bytesToBinaryString(vehPub))
-      expect(tbl.success).toBe(true)
-      const secretWatch = ecdhFixed(wPriv, new Uint32Array(tbl.buffer))
-      const keyWatch = sha1(secretWatch).slice(0, 16)
+      // Reference: Node computes the shared secret (X coordinate) directly.
+      const secretRef = pad32(w.computeSecret(veh.getPublicKey()))
+      const keyRef = sha1(secretRef).slice(0, 16)
 
-      // Phone path: direct ECDH, returns the 32-byte shared secret X.
+      // Phone path: bleCrypto direct ECDH, returns the 32-byte shared secret X.
       const r = bleCrypto.computeSharedSecret(bytesToBinaryString(wPriv), bytesToBinaryString(vehPub))
       expect(r.success).toBe(true)
       const secretPhone = binaryStringToBytes(r.secret)
       const keyPhone = sha1(secretPhone).slice(0, 16)
 
-      expect(Array.from(secretPhone)).toEqual(Array.from(secretWatch))
-      expect(Array.from(keyPhone)).toEqual(Array.from(keyWatch))
+      expect(Array.from(secretPhone)).toEqual(Array.from(secretRef))
+      expect(Array.from(keyPhone)).toEqual(Array.from(keyRef))
     })
   }
 })
