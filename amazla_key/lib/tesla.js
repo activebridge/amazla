@@ -1,10 +1,5 @@
 import store from './store.js'
-import { buildClosureMoveRequest, RKE_ACTION_LOCK, RKE_ACTION_UNLOCK } from './tesla-ble/protocol/vcsec.js'
 import teslaSession from './tesla-ble/session.js'
-
-var CLOSURE_REAR_TRUNK = 5
-var CLOSURE_FRUNK = 6
-var MOVE_OPEN = 3
 
 class Tesla {
   constructor() {
@@ -64,29 +59,19 @@ class Tesla {
   // ── Car actions ───────────────────────────────────────────────────────
 
   lock(cb) {
-    this._runAction((done) => {
-      teslaSession.sendCommand(RKE_ACTION_LOCK, done)
-    }, cb)
+    this._runAction((done) => teslaSession.lock(done), cb)
   }
 
   unlock(cb) {
-    this._runAction((done) => {
-      teslaSession.sendCommand(RKE_ACTION_UNLOCK, done)
-    }, cb)
+    this._runAction((done) => teslaSession.unlock(done), cb)
   }
 
   trunk(cb) {
-    this._runAction((done) => {
-      var cmr = buildClosureMoveRequest(CLOSURE_REAR_TRUNK, MOVE_OPEN)
-      teslaSession.sendCommand({ closureMoveRequest: cmr }, done)
-    }, cb)
+    this._runAction((done) => teslaSession.trunk(done), cb)
   }
 
   frunk(cb) {
-    this._runAction((done) => {
-      var cmr = buildClosureMoveRequest(CLOSURE_FRUNK, MOVE_OPEN)
-      teslaSession.sendCommand({ closureMoveRequest: cmr }, done)
-    }, cb)
+    this._runAction((done) => teslaSession.frunk(done), cb)
   }
 
   refresh(cb) {

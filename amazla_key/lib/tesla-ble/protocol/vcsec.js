@@ -68,6 +68,9 @@ const buildHMACPersonalizedData = (epoch, counter, expiresAt, tag) => {
 // ClosureMoveRequest { frontDriverDoor(1), frontPassengerDoor(2), rearDriverDoor(3),
 // rearPassengerDoor(4), rearTrunk(5), frontTrunk(6), chargePort(7), tonneau(8) }
 // Each field carries a ClosureMoveType_E value (NONE=0, MOVE=1, STOP=2, OPEN=3, CLOSE=4).
+const CLOSURE_REAR_TRUNK = 5
+const CLOSURE_FRUNK = 6
+const CLOSURE_MOVE_OPEN = 3 // ClosureMoveType_E.OPEN
 const buildClosureMoveRequest = (closureId, moveType) => encodeEnum(closureId, moveType)
 // SignatureData { signer_identity(1 KeyIdentity), HMAC_Personalized_data(8) }
 // Placed in RoutableMessage.signature_data (field 13) for authenticated commands.
@@ -313,6 +316,9 @@ export {
   buildKeyIdentity,
   buildHMACPersonalizedData,
   buildClosureMoveRequest,
+  CLOSURE_REAR_TRUNK,
+  CLOSURE_FRUNK,
+  CLOSURE_MOVE_OPEN,
   buildSignatureData,
   parseSessionInfo,
   parseRoutableMessage,

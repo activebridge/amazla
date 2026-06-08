@@ -7,10 +7,14 @@ import { sha1 } from './crypto/sha256.js'
 import { hexDump } from './crypto/binary-utils.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
+  buildClosureMoveRequest,
   buildHMACTagInput,
   buildInformationRequest,
   buildRoutableMessage,
   buildSessionInfoHmacInput,
+  CLOSURE_FRUNK,
+  CLOSURE_MOVE_OPEN,
+  CLOSURE_REAR_TRUNK,
   buildSessionInfoRequest,
   buildSignatureData,
   buildUnsignedMessage,
@@ -720,6 +724,12 @@ class TeslaSession {
   }
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
+  }
+  trunk(callback) {
+    this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_REAR_TRUNK, CLOSURE_MOVE_OPEN) }, callback)
+  }
+  frunk(callback) {
+    this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_FRUNK, CLOSURE_MOVE_OPEN) }, callback)
   }
   remoteDrive(callback) {
     // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless
