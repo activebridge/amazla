@@ -300,21 +300,24 @@ Page({
     // Once online this also arms the live-push listener so opening a door, etc.
     // repaints the page without any user action.
     //
-    // Settings sync (vehicle name/VIN from the companion) is a phone RPC that shares
-    // the single BLE radio with the car connection. We only NEED the VIN up front to
-    // derive the scan name — so if it's already cached, connect first and sync after the
-    // session settles (no contention during the connect window); if not, sync first.
-    if (tesla.vin) {
+    // Settings sync (vehicle name/VIN from the companion) is a phone RPC that shares the
+    // single BLE radio with the car connection. When PAIRED, connect() does a real BLE
+    // scan/GATT/session, so defer the sync until that settles to avoid contention. When
+    // not paired, connect() fast-fails on the enrollment gate (no BLE) and lands the
+    // offline overlay (Retry / BLE Setup) — no contention, so sync immediately.
+    // Gate auto-connect on isPaired, not just a cached VIN: a VIN can be synced without
+    // the enrolled keypair/session, and that can't establish a session.
+    if (tesla.isPaired) {
       let synced = false
       tesla.onChange(() => {
         if (synced || tesla.connection.status === 'checking') return
         synced = true
         phone.syncSettings()
       })
-      tesla.connect()
     } else {
-      phone.syncSettings().then(() => tesla.connect())
+      phone.syncSettings()
     }
+    tesla.connect()
 
     onKey({
       callback: (key, keyEvent) => {
