@@ -292,7 +292,6 @@ Page({
     setPageBrightTime(300)
 
     phone = new Phone()
-    phone.syncSettings()
 
     tesla.onChange(render)
 
@@ -300,7 +299,22 @@ Page({
     // paired/in range, refresh() lands the offline overlay (Retry / BLE Setup).
     // Once online this also arms the live-push listener so opening a door, etc.
     // repaints the page without any user action.
-    tesla.connect()
+    //
+    // Settings sync (vehicle name/VIN from the companion) is a phone RPC that shares
+    // the single BLE radio with the car connection. We only NEED the VIN up front to
+    // derive the scan name — so if it's already cached, connect first and sync after the
+    // session settles (no contention during the connect window); if not, sync first.
+    if (tesla.vin) {
+      let synced = false
+      tesla.onChange(() => {
+        if (synced || tesla.connection.status === 'checking') return
+        synced = true
+        phone.syncSettings()
+      })
+      tesla.connect()
+    } else {
+      phone.syncSettings().then(() => tesla.connect())
+    }
 
     onKey({
       callback: (key, keyEvent) => {
