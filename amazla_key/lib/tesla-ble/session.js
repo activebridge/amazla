@@ -4,7 +4,6 @@ import teslaBLE from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
 import { sha1, sha256 } from './crypto/sha256.js'
-import { hexDump } from './crypto/binary-utils.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
   buildClosureMoveRequest,
@@ -34,30 +33,6 @@ import {
   RKE_ACTION_REMOTE_DRIVE,
 } from './protocol/vcsec.js'
 
-// DIAGNOSTIC: dump a full RX frame so a handle-pull / proximity-auth frame the
-// car pushes is visible regardless of which path catches it — idle listener OR
-// mid-command (where unaddressed frames are otherwise silently dropped). Remove
-// once we know whether the car solicits the watch on handle-pull.
-const hx = hexDump
-const dumpRxFrame = (tag, raw, response) => {
-  try {
-    const topKeys = Object.keys(decodeMessage(raw)).sort((a, b) => a - b).join(',')
-    console.log(`[RX-DUMP ${tag}] ${raw.length}B fields:[${topKeys}] hex=${hx(raw)}`)
-    console.log(`[RX-DUMP ${tag}]   toRoutingAddress=${response.toRoutingAddress ? hx(response.toRoutingAddress) : '<none>'} sessionInfo=${response.sessionInfo ? 'present' : '<none>'} payload=${response.payload ? response.payload.length + 'B' : '<none>'} vehicleStatus=${response.vehicleStatus ? response.vehicleStatus.length + 'B' : '<none>'} signedMsgStatus=${response.signedMessageStatus ? JSON.stringify(response.signedMessageStatus) : '<none>'} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : '<none>'}`)
-    if (response.payload) {
-      try {
-        const inner = decodeMessage(response.payload)
-        console.log(`[RX-DUMP ${tag}]   FromVCSECMessage inner fields:[${Object.keys(inner).sort((a, b) => a - b).join(',')}]`)
-      } catch (_e) {}
-    }
-    if (response.authenticationRequest) {
-      const a = response.authenticationRequest
-      console.log(`[RX-DUMP ${tag}]   AuthenticationRequest level=${a.requestedLevel} reasons=[${a.reasonsForAuth}] token=${a.token ? hx(a.token) : '<none>'}`)
-    }
-  } catch (e) {
-    console.log(`[RX-DUMP ${tag}] dump error: ${e.message}`)
-  }
-}
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
 // and no real SessionInfo. Leading cause is a dropped request chunk (unacked
@@ -238,8 +213,6 @@ class TeslaSession {
     // the enrolled key is in its whitelist.
     const watchPriv = store.watchPrivateKey
     const watchPub = store.watchPublicKey
-    console.log(`[SESSION.diag] watchPriv hex=${hx(watchPriv)}`)
-    console.log(`[SESSION.diag] watchPub  hex=${hx(watchPub)}`)
     if (!watchPriv || watchPriv.length !== 32 || !watchPub || watchPub.length !== 65) {
       callback({ success: false, error: 'Watch keypair missing — re-pair from phone' })
       return
@@ -471,22 +444,21 @@ class TeslaSession {
     const infoBytes = response.sessionInfoBytes
     const infoHmac = createSessionInfoHmac(this.sessionKey)
     const expectedTag = infoHmac(buildSessionInfoHmacInput(vin, challenge, infoBytes))
-    console.log(`[SESSION.diag] sessionKey[0..4]=${hx(this.sessionKey, 4)} vinLen=${vin.length} challengeLen=${challenge.length} infoLen=${infoBytes ? infoBytes.length : 0}`)
-    console.log(`[SESSION.diag] expectedTag[0..4]=${hx(expectedTag, 4)} got=${hx(response.sessionInfoTag, 4)} lens exp=${expectedTag.length} got=${response.sessionInfoTag.length}`)
     if (expectedTag.length !== response.sessionInfoTag.length) {
-      console.log('[SESSION] ❌ SessionInfo HMAC length mismatch')
+      console.log(`[SESSION] ❌ SessionInfo HMAC length mismatch — exp=${expectedTag.length} got=${response.sessionInfoTag.length}`)
       callback({ success: false, error: 'Invalid SessionInfo HMAC' })
       return false
     }
     let diff = 0
     for (let i = 0; i < expectedTag.length; i++) diff |= expectedTag[i] ^ response.sessionInfoTag[i]
     if (diff !== 0) {
-      console.log('[SESSION] ❌ SessionInfo HMAC mismatch')
-      console.log(`[SESSION.diag] challenge=${hx(challenge)}`)
-      console.log(`[SESSION.diag] vin=${hx(vin)}`)
-      console.log(`[SESSION.diag] infoBytes=${hx(infoBytes)}`)
-      console.log(`[SESSION.diag] expectedTag=${hx(expectedTag)}`)
-      console.log(`[SESSION.diag] gotTag=${hx(response.sessionInfoTag)}`)
+      // Hex-free diagnostic: the structural failures (e.g. the field-51 uuid bug, which
+      // hit challengeLen=0) show up in the INPUT LENGTHS; tagsDifferAtByte distinguishes
+      // "completely wrong key/inputs" (0) from a near-miss. Full-byte hex dump removed —
+      // re-add a temp one from git only if lengths all look right but bytes still diverge.
+      let firstDiff = 0
+      while (firstDiff < expectedTag.length && expectedTag[firstDiff] === response.sessionInfoTag[firstDiff]) firstDiff++
+      console.log(`[SESSION] ❌ SessionInfo HMAC mismatch — vinLen=${vin.length} challengeLen=${challenge.length} infoLen=${infoBytes ? infoBytes.length : 0} tagLen=${expectedTag.length} tagsDifferAtByte=${firstDiff}`)
       callback({ success: false, error: 'Invalid SessionInfo HMAC' })
       return false
     }
@@ -594,9 +566,7 @@ class TeslaSession {
               return true
             })()
             if (!addressedToUs) {
-              console.log('[SESSION] Ignoring unsolicited push (not addressed to this command)')
-              dumpRxFrame('CMD-UNSOL', result.data, response)
-              result._requeue = true
+              result._requeue = true // unsolicited push (not addressed to this command) — keep waiting
               callback(result)
               return
             }
@@ -727,9 +697,7 @@ class TeslaSession {
             finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
             return
           }
-          console.log('[SESSION] Ignoring unsolicited push (not a status reply)')
-          dumpRxFrame('STATUS-UNSOL', result.data, response)
-          result._requeue = true
+          result._requeue = true // unsolicited push (not a status reply) — keep waiting
           callback(result)
           return
         }
@@ -781,9 +749,6 @@ class TeslaSession {
       if (!result || !result.success || !result.data) return
       try {
         const response = parseRoutableMessage(result.data)
-        // DIAGNOSTIC: dump every idle frame in full so a handle-pull / proximity
-        // frame the car pushes is visible, not just periodic VehicleStatus.
-        dumpRxFrame('IDLE', result.data, response)
         // Passive-entry handshake: the car streams VCSEC requests (AuthenticationRequest,
         // AppDeviceInfoRequest) the key must answer. Respond and stop — a status snapshot
         // and a request never share a frame.
@@ -793,7 +758,7 @@ class TeslaSession {
           if (this._statusPushHandler) this._statusPushHandler(status)
         }
       } catch (e) {
-        console.log(`[RX-DUMP IDLE] parse error: ${e.message}`)
+        console.log(`[SESSION] idle frame parse error: ${e.message}`)
       }
     }
   }
@@ -823,7 +788,6 @@ class TeslaSession {
       }
       try {
         const resp = parseRoutableMessage(result.data)
-        dumpRxFrame(`${tag}-REPLY`, result.data, resp)
         // The car often answers a VCSEC reply with a fresh VehicleStatus — surface it so
         // the UI tracks state even when the handshake (not getVehicleStatus) carries it.
         if (resp.vehicleStatus && resp.vehicleStatus.length > 0 && this._statusPushHandler) {
@@ -842,10 +806,15 @@ class TeslaSession {
   // Dedupe by token (not time) so we sign once per token, not per ~1Hz repeat. The
   // token is not echoed back (AuthenticationResponse has no token field).
   _handleAuthenticationRequest(req) {
-    const tokenHex = req.token ? hexDump(req.token) : ''
-    if (tokenHex && tokenHex === this._lastAuthToken) return false // already answered
-    this._lastAuthToken = tokenHex
-    console.log(`[SESSION] AuthenticationRequest reasons=[${req.reasonsForAuth}] level=${req.requestedLevel} token=${tokenHex} — responding`)
+    const token = req.token
+    const prev = this._lastAuthToken
+    if (token && prev && token.length === prev.length) {
+      let same = true
+      for (let i = 0; i < token.length; i++) { if (token[i] !== prev[i]) { same = false; break } }
+      if (same) return false // already answered this token (deduped by bytes, not hex)
+    }
+    this._lastAuthToken = token
+    console.log(`[SESSION] AuthenticationRequest reasons=[${req.reasonsForAuth}] level=${req.requestedLevel} — responding`)
     try {
       const unsigned = buildUnsignedMessage({
         authenticationResponse: buildAuthenticationResponse({

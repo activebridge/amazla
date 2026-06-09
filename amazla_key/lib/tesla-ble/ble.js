@@ -1,7 +1,6 @@
 import { BLEMaster } from '@silver-zepp/easy-ble'
 import * as hmBle from '@zos/ble'
 import { LocalStorage } from '@zos/storage'
-import { hexDump } from './crypto/binary-utils.js'
 
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
@@ -65,9 +64,10 @@ const _writeSavedConnectId = (id) => {
   } catch (_e) {}
 }
 try {
-  if (BLEMaster.SetDebugLevel) BLEMaster.SetDebugLevel(3)
+  // easy-ble verbosity: 1 = errors only. Level 3 logged an `EXEC: …` line per chunk
+  // write plus full profile-object dumps — the bulk of the BLE side-channel traffic.
+  if (BLEMaster.SetDebugLevel) BLEMaster.SetDebugLevel(1)
 } catch (_e) {}
-const _hex = (buf) => hexDump(buf, 128)
 const _dumpDevice = (d) => {
   if (!d) return '<null>'
   const parts = [`mac=${d.dev_addr}`, `name=${d.dev_name || '?'}`, `rssi=${d.rssi}`]
@@ -182,12 +182,7 @@ class TeslaBLE {
       callback({ type: 'complete', devices })
     }
     const onDevice = (device) => {
-      // Log EVERY advertisement once per address (so we can see exactly what's
-      // on the air, including non-Tesla devices and Teslas not matching VIN).
-      if (!seenAll.has(device.dev_addr)) {
-        seenAll.add(device.dev_addr)
-        console.log(`[BLE] adv: ${_dumpDevice(device)}`)
-      }
+      seenAll.add(device.dev_addr) // unique-device count for scan() complete
       if (!device.dev_name) return
       // When expectedName is given, require exact (case-insensitive) match — the
       // VIN-derived local name pins us to the right vehicle even with multiple
@@ -233,12 +228,7 @@ class TeslaBLE {
     const timeoutMs = CONNECTION_CONFIG.timeoutMs
     const dialStart = Date.now()
 
-    console.log(`[BLE] connect() params:`)
-    console.log(`[BLE]   target MAC = ${mac}`)
-    console.log(`[BLE]   timeout    = ${timeoutMs}ms`)
-    console.log(`[BLE]   service    = ${TESLA_SERVICE_UUID}`)
-    console.log(`[BLE]   write char = ${TESLA_WRITE_UUID} (WRITE_WITHOUT_RESPONSE, perm=0x04)`)
-    console.log(`[BLE]   read char  = ${TESLA_READ_UUID} (CCCD=2902)`)
+    console.log(`[BLE] connect() → ${mac} (timeout ${timeoutMs}ms)`)
     const timeout = setTimeout(() => {
       if (done) return
       done = true
@@ -302,19 +292,10 @@ class TeslaBLE {
         settle({ success: false, error: 'Connection lost during setup' })
         return
       }
-      console.log('[BLE] Generating profile...')
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 }, // WRITE_WITHOUT_RESPONSE
       })
-      try {
-        console.log(`[BLE] Profile object: ${JSON.stringify(this.profile)}`)
-      } catch (_e) {
-        console.log('[BLE] Profile object (non-serializable):', this.profile)
-      }
-
-      console.log('[BLE] Starting listener...')
       this._ensureBLE().startListener(this.profile, (response) => {
-        console.log('[BLE] Listener response:', JSON.stringify(response))
         if (done) return
         if (!response.success) {
           this.connected = false
@@ -331,17 +312,14 @@ class TeslaBLE {
           if (ble.off.descWriteComplete) ble.off.descWriteComplete()
         }
         this.charaValueHandler = (uuid, data, len) => {
-          console.log(`[BLE] charaValueArrived: uuid=${uuid} len=${len} hex=${_hex(data)}`)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
         ble.on.charaValueArrived(this.charaValueHandler)
         this.charaNotificationHandler = (uuid, data, len) => {
-          console.log(`[BLE] charaNotification: uuid=${uuid} len=${len} hex=${_hex(data)}`)
           if (uuid.toUpperCase() === TESLA_READ_UUID.toUpperCase()) this._handleResponse(data, len)
         }
         ble.on.charaNotification(this.charaNotificationHandler)
-        this.writeCompleteHandler = (chara, desc, status) => {
-          console.log(`[BLE] descWriteComplete: chara=${chara} desc=${desc} status=${status}`)
+        this.writeCompleteHandler = () => {
           if (done) return
           // No MTU step: ZeppOS @zos/ble exposes no MTU-exchange or connection-param
           // API (mstConnect takes no options; there is no mstSetMTU — it was never a
@@ -353,7 +331,6 @@ class TeslaBLE {
           settle({ success: true, mac })
         }
         ble.on.descWriteComplete(this.writeCompleteHandler)
-        console.log(`[BLE] Enabling indications: CCCD write → chara=${TESLA_READ_UUID} desc=2902 data=0200 (indications)`)
         ble.write.descriptor(TESLA_READ_UUID, '2902', '0200')
         setTimeout(() => {
           if (!done) {
@@ -441,26 +418,19 @@ class TeslaBLE {
     // Always chunk at BLE_CHUNK_SIZE (20). The link is fixed at ATT MTU 23 = 20-byte
     // payload with no API to raise it (see connect()'s writeCompleteHandler), so every
     // write — even a sub-20B frame, which is just a single chunk — goes this path.
-    console.log(`[BLE] TX framed (${message.length}B) hex=${_hex(message)}`)
     const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-    console.log(`[BLE]   → ${total} chunk(s) of ${BLE_CHUNK_SIZE}B (${this.chunkIntervalMs}ms paced)`)
+    console.log(`[BLE] TX ${message.length}B (${total} chunk(s) @ ${this.chunkIntervalMs}ms)`)
     this._sendChunk(message, 0)
   }
   _sendChunk(message, offset) {
     const end = Math.min(offset + BLE_CHUNK_SIZE, message.length)
     const chunk = message.slice(offset, end)
-    console.log(`[BLE]   TX chunk [${offset}..${end}]: hex=${_hex(chunk)}`)
     this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
     if (end < message.length) setTimeout(() => this._sendChunk(message, end), this.chunkIntervalMs)
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)
-    console.log(`[BLE] RX notification: ${chunk.length} bytes`)
-
-    if (!this.responseCallback && !this.idleCallback) {
-      console.log('[BLE] No response callback, ignoring')
-      return
-    }
+    if (!this.responseCallback && !this.idleCallback) return
     if (this._rxBuf === null) {
       const now = Date.now()
       // Dedup guard for genuinely repeated indications. chunk[0]/chunk[1] are just
@@ -470,13 +440,11 @@ class TeslaBLE {
       const last = chunk[chunk.length - 1] || 0
       const sig = `${chunk.length}_${chunk[2] || 0}_${chunk[3] || 0}_${last}`
       if (sig === this._lastResponseData && now - this._lastResponseTime < 200) {
-        console.log('[BLE] Duplicate first chunk ignored')
-        return
+        return // duplicate first chunk
       }
       this._lastResponseData = sig
       this._lastResponseTime = now
       if (chunk.length < 2) {
-        console.log(`[BLE] First chunk too short: ${chunk.length} bytes`)
         // Only surface an error to an in-flight command; idle pushes ignore garbage.
         if (this.responseCallback) {
           const cb = this.responseCallback
@@ -497,7 +465,6 @@ class TeslaBLE {
       }
       this._rxBuf = chunk.slice(2)
       this._rxLastChunkTime = Date.now()
-      console.log(`[BLE] Starting reassembly: expect ${this._rxExpected} bytes, first chunk has ${this._rxBuf.length}`)
     } else {
       if (Date.now() - this._rxLastChunkTime > 1000) {
         console.log('[BLE] Stale reassembly buffer reset')
@@ -510,7 +477,6 @@ class TeslaBLE {
       combined.set(this._rxBuf)
       combined.set(chunk, this._rxBuf.length)
       this._rxBuf = combined
-      console.log(`[BLE] Continuing reassembly: got ${combined.length} / ${this._rxExpected} bytes`)
     }
     if (this._rxBuf.length < this._rxExpected) return
     const payload = this._rxBuf.slice(0, this._rxExpected)
