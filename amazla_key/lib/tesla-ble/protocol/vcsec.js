@@ -1,5 +1,5 @@
 
-import { encodeBytes, encodeEnum, encodeVarintField, encodeFixed32, concat, decodeMessage } from './protobuf.js'
+import { encodeBytes, encodeEnum, encodeVarintField, encodeFixed32, concat, decodeMessage, decodeVarint } from './protobuf.js'
 const DOMAIN_VEHICLE_SECURITY = 2
 // HMAC_PERSONALIZED (=8) per signatures.proto SignatureType enum.
 // Auth data goes in RoutableMessage.signature_data (field 13), NOT in vcsec.proto SignedMessage.
@@ -11,12 +11,89 @@ const RKE_ACTION_OPEN_FRUNK = 3
 const RKE_ACTION_REMOTE_DRIVE = 20 // vcsec.proto RKEAction_E. Tesla SDK "drive"/"Remote start vehicle" — authorizes keyless drive over BLE without a passively-present phone key.
 const INFO_REQUEST_GET_STATUS = 0
 const INFO_REQUEST_GET_WHITELIST_ENTRY_INFO = 6
-const buildUnsignedMessage = ({ informationRequest, rkeAction, closureMoveRequest }) => {
+const buildUnsignedMessage = ({ informationRequest, rkeAction, closureMoveRequest, authenticationResponse, appDeviceInfo }) => {
   const parts = []
   if (informationRequest) parts.push(encodeBytes(1, informationRequest))
   if (rkeAction !== undefined) parts.push(encodeEnum(2, rkeAction))
+  if (authenticationResponse) parts.push(encodeBytes(3, authenticationResponse))
   if (closureMoveRequest) parts.push(encodeBytes(4, closureMoveRequest))
+  if (appDeviceInfo) parts.push(encodeBytes(40, appDeviceInfo)) // UnsignedMessage.appDeviceInfo
   return concat(...parts)
+}
+// AppOperatingSystem: UNKNOWN=0, ANDROID=1, IOS=2. The watch enrolled via the Android
+// companion app, so it presents as ANDROID.
+const APP_OS_ANDROID = 1
+// UWBAvailability: ...UNAVAILABLE_UNSUPPORTED_DEVICE=2 (the watch has no UWB radio).
+const UWB_UNSUPPORTED = 2
+// AppDeviceInfo { hardware_model_sha256(1 bytes), os(2 AppOperatingSystem),
+// UWBAvailable(3 UWBAvailability), phoneVersion(4 PhoneVersionInfo) }. Sent as
+// UnsignedMessage.appDeviceInfo (field 40) in reply to FromVCSECMessage.appDeviceInfoRequest
+// (field 44 = APP_DEVICE_INFO_REQUEST_GET_MODEL_NUMBER). Informational — the car stores
+// it for the key's device-type display; only the model hash is actually requested.
+const buildAppDeviceInfo = ({ hardwareModelSha256, os, uwb }) => {
+  const parts = []
+  if (hardwareModelSha256) parts.push(encodeBytes(1, hardwareModelSha256))
+  if (os !== undefined) parts.push(encodeEnum(2, os))
+  if (uwb !== undefined) parts.push(encodeEnum(3, uwb))
+  return concat(...parts)
+}
+// AuthenticationLevel_E: NONE=0, UNLOCK=1, DRIVE=2.
+const AUTH_LEVEL_UNLOCK = 1
+// AuthenticationReason_E values the vehicle puts in AuthenticationRequest.reasonsForAuth.
+// 1=IDENTIFICATION is the idle ~1Hz beacon; 5/9 mean the driver acted (respond to those).
+const AUTH_REASON_EXTERIOR_HANDLE_PULL = 5
+const AUTH_REASON_WALK_UP_UNLOCK = 9
+// AuthenticationResponse { authenticationLevel(1), estimatedDistance(2 uint32), authenticationRejection(3) }
+// The key's passive-entry reply. Wrapped as UnsignedMessage.authenticationResponse (field 3)
+// and signed on the session exactly like an RKE action — no extra crypto, no token echo.
+const buildAuthenticationResponse = ({ authenticationLevel, estimatedDistance, rejection }) => {
+  const parts = [encodeEnum(1, authenticationLevel)]
+  parts.push(encodeVarintField(2, estimatedDistance || 0))
+  if (rejection) parts.push(encodeEnum(3, rejection))
+  return concat(...parts)
+}
+// AuthenticationRequest { sessionInfo(2 AuthenticationRequestToken{token=1}), requestedLevel(3),
+// reasonsForAuth(4 repeated) }. Carried at FromVCSECMessage.authenticationRequest (field 3). The
+// 20-byte token is an ephemeral nonce (rotates); it is NOT echoed in the response.
+const parseAuthenticationRequest = (data) => {
+  const fields = decodeMessage(data)
+  let token = null
+  if (fields[2] instanceof Uint8Array) {
+    try {
+      const tok = decodeMessage(fields[2])
+      if (tok[1] instanceof Uint8Array) token = tok[1]
+    } catch (_e) {}
+  }
+  return {
+    token: token,
+    requestedLevel: typeof fields[3] === 'number' ? fields[3] : 0,
+    // reasonsForAuth (field 4) is a repeated enum: the vehicle PACKS it (wire type 2,
+    // e.g. 22 01 05), so the decoder hands back the raw bytes — unpack them as varints.
+    // Tolerate the unpacked forms too (scalar or array of numbers).
+    reasonsForAuth: decodeReasons(fields[4]),
+  }
+}
+// Normalize a repeated-varint field that may arrive packed (Uint8Array of varints),
+// as a single number, or as an array of numbers.
+const decodeReasons = (v) => {
+  if (v === undefined) return []
+  if (typeof v === 'number') return [v]
+  if (Array.isArray(v)) return v.filter((r) => typeof r === 'number')
+  if (v instanceof Uint8Array) {
+    const out = []
+    let off = 0
+    while (off < v.length) {
+      try {
+        const { value, bytesRead } = decodeVarint(v, off)
+        out.push(value)
+        off += bytesRead
+      } catch (_e) {
+        break
+      }
+    }
+    return out
+  }
+  return []
 }
 const buildInformationRequest = (requestType, keyId, publicKey, slot) => {
   const parts = [encodeEnum(1, requestType)]
@@ -219,7 +296,10 @@ const parseFromVCSECMessage = (data) => {
   const fields = decodeMessage(data)
   return {
     vehicleStatus: fields[1] instanceof Uint8Array ? fields[1] : null,
+    authenticationRequest: fields[3] instanceof Uint8Array ? parseAuthenticationRequest(fields[3]) : null,
     commandStatus: fields[4] instanceof Uint8Array ? parseCommandStatus(fields[4]) : null,
+    // appDeviceInfoRequest (field 44) is a varint AppDeviceInfoRequest_E (1=GET_MODEL_NUMBER).
+    appDeviceInfoRequest: typeof fields[44] === 'number' ? fields[44] : null,
   }
 }
 const parseRoutableMessage = (data) => {
@@ -266,11 +346,15 @@ const parseRoutableMessage = (data) => {
   const payload = fields[10] instanceof Uint8Array ? fields[10] : null
   let vehicleStatus = null
   let commandStatus = null
+  let authenticationRequest = null
+  let appDeviceInfoRequest = null
   if (payload) {
     try {
       const vcsec = parseFromVCSECMessage(payload)
       vehicleStatus = vcsec.vehicleStatus
       commandStatus = vcsec.commandStatus
+      authenticationRequest = vcsec.authenticationRequest
+      appDeviceInfoRequest = vcsec.appDeviceInfoRequest
     } catch (_e) {}
   }
   let signedMessageStatus = null
@@ -286,6 +370,8 @@ const parseRoutableMessage = (data) => {
     payload:             payload,
     vehicleStatus:       vehicleStatus,
     commandStatus:       commandStatus,
+    authenticationRequest: authenticationRequest,
+    appDeviceInfoRequest:  appDeviceInfoRequest,
     signedMessageStatus: signedMessageStatus,
   }
 }
@@ -308,6 +394,14 @@ export {
   buildRoutableMessage,
   buildSessionInfoRequest,
   buildUnsignedMessage,
+  buildAuthenticationResponse,
+  buildAppDeviceInfo,
+  parseAuthenticationRequest,
+  AUTH_LEVEL_UNLOCK,
+  AUTH_REASON_EXTERIOR_HANDLE_PULL,
+  AUTH_REASON_WALK_UP_UNLOCK,
+  APP_OS_ANDROID,
+  UWB_UNSUPPORTED,
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,

@@ -6,11 +6,12 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Lock / Unlock / Trunk / Frunk** - HMAC-signed RKE commands; **device-confirmed actuating the vehicle (2026-06-02)**
-- **Drive (Remote Start)** - `RKE_ACTION_REMOTE_DRIVE`; **device-confirmed shifting to Drive (2026-06-04)**. Passive/silent keyless drive is **not** achievable on the watch — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive--findings)
+- **Passive Entry & Keyless Drive** - walk up → unlock → drive → walk away → auto-lock, with **no command** (the car unlocks/authorizes from its own ranging once the watch is a present key); **device-validated full drive cycle (2026-06-09)**, while the app is open + connected — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive)
+- **Drive (Remote Start)** - `RKE_ACTION_REMOTE_DRIVE`; explicit command-path "shift to Drive", **device-confirmed (2026-06-04)**. Now largely superseded by passive keyless drive above.
 - **Vehicle Status** - Door/closure states, lock state, sleep status
 - **Offline session** - The session key (derived once via phone ECDH) is cached on the watch, so session establishment needs no phone after pairing
 
-> **Status (2026-06-02):** Pairing, session establishment, and lock/unlock are working end-to-end on real hardware. Getting commands to actuate required six fixes to the command/response path — see [Command path fixes](#command-path-fixes-2026-06-02).
+> **Status (2026-06-09):** Pairing, session, lock/unlock/trunk/frunk, **and passive entry + keyless drive** are working end-to-end on real hardware. Passive entry reverses an earlier "not achievable" verdict — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). Getting commands to actuate required six fixes to the command/response path — see [Command path fixes](#command-path-fixes-2026-06-02).
 
 ## Architecture Overview
 
@@ -294,67 +295,148 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Passive Entry & Keyless Drive — Findings
+## Passive Entry & Keyless Drive
 
-> ❌ **Not achievable on this watch. Investigated and device-tested 2026-06-04.**
-> The silent, do-nothing experience of the official Tesla app (walk up → auto-unlock,
-> sit → drive with no prompt) **cannot be replicated** from a ZeppOS watch. What *is*
-> achievable — and device-validated — is the **commander model**: open app → connect →
-> issue commands (Lock / Unlock / **Drive**). See the verdict below.
+> ✅ **Working and device-validated 2026-06-09 — full cycle: walk up → unlock → drive → walk away → auto-lock, with no command and no banner.**
+> This **reverses** the earlier "not achievable" verdict in this repo. That conclusion was
+> reasoned from the **official Tesla Go SDK, which deliberately omits the passive-entry
+> handshake** — so it looked impossible. The fuller VCSEC proto (decompiled from the Tesla
+> Android app, [`acvigue/TeslaProtobufs`](https://github.com/acvigue/TeslaProtobufs)) defines
+> it, and it works on the watch. The old reasoning is preserved as superseded history below.
 
-### What works (device-validated)
+### How it actually works
 
-Driving **is** possible. The car refuses to shift to Drive ("configure phone key")
-when no phone key is passively present — but the Tesla Go SDK's answer for a
-command-only client is **Remote Start**, i.e. `RKE_ACTION_REMOTE_DRIVE = 20`
-(SDK `Vehicle.RemoteDrive` / `tesla-control drive`, "Remote start vehicle",
-`requiresAuth:true`, `requiresFleetAPI:false`). It rides the **same** authenticated
-RKE path as Lock/Unlock. Sending it over our existing session lets you shift to Drive.
+Passive entry is a **request/response handshake the car drives** — the key never initiates.
+While the app is open and the session is established, the car streams `AuthenticationRequest`
+beacons (~1 Hz). The watch answers each with a **session-signed `AuthenticationResponse`**,
+which registers it as a **present, authenticated key**. The car then does its own BLE ranging
+(it measures *our* connection) and, on a handle pull / approach, unlocks and authorizes keyless
+drive — no command, no "keyless driving enabled" banner.
 
-Confirmed on a real Model 3 (2026-06-04): connect → **DRIVE** → "✓ Drive enabled" →
-shifted to Drive successfully. The car shows a **"keyless driving enabled"** banner —
-this is expected and **inherent** to Remote Start (an explicit, time-boxed grant the
-car announces). The official app stays silent because it uses passive presence, not
-Remote Start. The banner is cosmetic and cannot be removed (see below).
+Key point on the old "ranging wall": the key does **not** self-report distance — the car
+relies on *its* measurement of us (the anti-relay design holds). What the old analysis missed
+is that **you don't need to report distance; you need to answer the car's identification
+beacons** so it counts you as a present key. The `estimatedDistance` field exists in
+`AuthenticationResponse` (we send `0`) but the car ignores it in favor of its own ranging.
 
-### Why passive entry / silent drive is impossible
+Frames involved (all VCSEC; **defined in the fuller proto, absent from the public Go SDK**):
 
-Passive operation requires the **car** to continuously sense and **localize** the key
-(near → unlock; in-cabin → drive). Two independent walls, either fatal alone:
+| Direction | Message | Field | Contents |
+|---|---|---|---|
+| Car → key | `FromVCSECMessage.authenticationRequest` | **3** | `{ token (20B nonce, rotates ~5s), requestedLevel, reasonsForAuth[] }` |
+| Key → car | `UnsignedMessage.authenticationResponse` | **3** | `{ authenticationLevel, estimatedDistance=0, authenticationRejection=NONE }` — session-signed, **no new crypto**, token **not** echoed |
+| Car → key | `FromVCSECMessage.appDeviceInfoRequest` | **44** | `GET_MODEL_NUMBER` — car asks the key to describe itself |
+| Key → car | `UnsignedMessage.appDeviceInfo` | **40** | `{ hardware_model_sha256, os=ANDROID, UWBAvailable=UNSUPPORTED }` |
+| Car → key | `FromVCSECMessage.alert` | **45** | `alertHandlePulledWithoutAuth` — emitted if a handle is pulled with **no** present key (i.e. we failed to answer) |
 
-1. **No background presence (ZeppOS app lifecycle).** Passive = key present 24/7 with
-   the app closed, in your pocket. ZeppOS kills the app when you leave it — there is no
-   persistent background BLE service. (The user accepts this: opening the app via a
-   watch button is fine. So this wall is waived for our use case — but the next one is not.)
+`reasonsForAuth` enum (observed): `1 IDENTIFICATION` (idle beacon), `5 PASSIVE_UNLOCK_EXTERIOR_HANDLE_PULL`,
+`8 ENTERED_HIGHER_AUTH_ZONE`, `9 WALK_UP_UNLOCK`. The car stays on `[1]` as a steady heartbeat and
+flips to `[8]`/`[5]`/`[9]` as you approach and act — **we answer all of them the same way.**
 
-2. **No ranging (ZeppOS BLE API + protocol + physics).** Even with the app **open and
-   connected**, the car authorizes keyless drive only when it **localizes a phone key in
-   the cabin** via **link-layer BLE ranging** (connection RSSI / channel sounding) done in
-   the car's radio + firmware, *below* the GATT/protobuf layer. We cannot supply or fake
-   this:
-   - **Wrong direction.** The only RSSI ZeppOS exposes is `ScanResult.rssi` — the *watch*
-     measuring the *car's* advertisement. The car decides from *its* measurement of *us*;
-     nothing watch-side changes that. No connection-RSSI or ranging API exists in `@zos/ble`.
-   - **No channel to report presence.** The key→car `vcsec.UnsignedMessage` carries only
-     `InformationRequest`, `RKEAction`, `ClosureMoveRequest`, `WhitelistOperation` — there
-     is **no** "I am present / at distance X" field. Nowhere to put a self-measured distance.
-   - **Anti-relay by design.** Tesla deliberately makes the *car* do the ranging so a key
-     **cannot claim** proximity. A self-asserted distance is the exact relay attack the
-     design prevents — the car ignores it.
-   - **Not a missing response.** Those `VehicleStatus` frames the car pushes while connected
-     are one-way telemetry (`userPresence` there is the car's seat/cabin occupancy, not key
-     localization). The Go SDK's receive loop reads and **discards** non-terminal frames and
-     never replies; there is no periodic/keepalive/presence exchange to implement.
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          PASSIVE ENTRY HANDSHAKE                             │
+│              (app open + connected; session already established)             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│      Watch (key)                                        Tesla                │
+│        │                                                  │                  │
+│        │   … authenticated session established …          │                  │
+│        │                                                  │                  │
+│        │  ◄── AuthenticationRequest (FromVCSEC f3) ──────  │  ~1 Hz beacon    │
+│        │      { token(20B, rotates), requestedLevel,       │                  │
+│        │        reasonsForAuth:[1 IDENTIFICATION] }         │                  │
+│        │                                                  │                  │
+│   ┌────┴───────────────────────────┐                      │                  │
+│   │ Answer EVERY fresh token →     │                      │                  │
+│   │ register as a PRESENT key      │                      │                  │
+│   │ (dedupe by token; gated off    │                      │                  │
+│   │  while a command owns the slot)│                      │                  │
+│   └────┬───────────────────────────┘                      │                  │
+│        │  ── AuthenticationResponse (Unsigned f3) ──────►  │  session-signed  │
+│        │      { level, estimatedDistance:0, rej:NONE }      │                  │
+│        │  ◄── empty ACK (addressed, request_uuid f50) ───   │  accepted ✓      │
+│        │                                                  │                  │
+│        │  ◄── AppDeviceInfoRequest (FromVCSEC f44) ──────   │  GET_MODEL       │
+│        │  ── AppDeviceInfo (Unsigned f40) ──────────────►   │  {model,OS,UWB}  │
+│        │  ◄── empty ACK ─────────────────────────────────   │  accepted ✓      │
+│        │                                                  │                  │
+│        │        [ watch is now a registered PRESENT key ]   │                  │
+│        │                                                  │                  │
+│        │  ~~ driver approaches / pulls handle ~~            │  car ranges the  │
+│        │       reasonsForAuth → [8]/[9]/[5]; we keep        │  connection (its │
+│        │       answering with signed AuthenticationResponse │  own RSSI of us) │
+│        │                                                  │                  │
+│        │  ◄══ UNLOCK / keyless DRIVE authorized ═════════   │  car decides     │
+│        │      (no command sent, no banner)                 │  from ITS ranging│
+│        ▼                                                  ▼                  │
+│   Walk away → car auto-locks (Walk-Away Lock).                                │
+│   Miss the beacons (key not present) → car emits alertHandlePulledWithoutAuth │
+│   on a handle pull and does NOT unlock.                                       │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
 
-**Device proof:** with a live authenticated session, connected, pressing the brake still
-showed "configure phone key" — the car ran its own presence check, did not localize our
-key, and refused. Exactly as the above predicts. Hence Remote Start is the only path.
+### The one hard limit (still true)
 
-### Closest achievable UX
+**Background presence is impossible.** The official app keeps the key present 24/7 with the
+phone in your pocket, app closed. ZeppOS kills the app when you leave it — there is no
+persistent background BLE service. So our passive entry works **only while the app is open and
+connected**. In practice: press a watch button to open the app as you walk up; the handshake
+completes in ~1–2 s and the car unlocks on the handle pull. The user accepts this trade-off.
 
-A one-tap **"arrive & go"** macro (open app → auto-connect → unlock → Remote Drive),
-mappable to a watch button. Functionally equal to the app for driving — the sole residual
-difference is the cosmetic "keyless driving enabled" banner. (Not yet implemented.)
+### What it took (device iterations, 2026-06-09)
+
+- **Answer the IDENTIFICATION beacons** (`session.js` `_handleAuthenticationRequest`, deduped by
+  rotating token). Two wrong turns first: the initial guess was "only answer the handle-pull
+  (reason 5) frame", but on device the car **never escalated to reason 5 while the key was
+  unregistered** — it fired `alertHandlePulledWithoutAuth` instead. Answering the steady reason-1
+  beacons to register presence is the fix.
+- **Don't steal the command slot.** The passive responder shares the single BLE `responseCallback`;
+  firing it mid-command starved connect/lock into timeouts. Gated behind `_commandInFlight` so it
+  only fires when no user command owns the link.
+- **Keep the session clock fresh.** `expiresAt` was `clockTime + 60` using the clock captured at
+  connect; ~60 s into a connection the vehicle's clock had advanced past it → every signed message
+  (commands **and** passive-auth replies) rejected `MESSAGEFAULT_ERROR_TIME_EXPIRED` (fault 17) → the
+  trunk stopped auto-unlocking and the link looked "dropped". Now
+  `expiresAt = clockTime + elapsedSinceCapture + 60`, tracking the vehicle's clock in real time.
+- **Resilient connect.** Report `online` on session-established (initial state loads from the live
+  status pushes, not gated on a `getVehicleStatus` that times out under the auth-beacon flood);
+  auto-retry once on the transient "disconnected during setup" GATT drop.
+
+### Remote Drive (explicit command path — still available)
+
+Before passive keyless drive worked, the command-only path to driving was **Remote Start**:
+`RKE_ACTION_REMOTE_DRIVE = 20` (SDK `Vehicle.RemoteDrive` / `tesla-control drive`), which rides the
+same authenticated RKE path as Lock/Unlock. Device-confirmed shifting to Drive on a Model 3
+(2026-06-04). It works, but the car shows a cosmetic **"keyless driving enabled"** banner (inherent
+to Remote Start — an explicit, time-boxed grant). Passive keyless drive above produces **no** banner,
+so Remote Drive is now a fallback rather than the primary path.
+
+<details>
+<summary>Superseded reasoning: why this was believed impossible (2026-06-04)</summary>
+
+The earlier verdict concluded passive entry / silent drive **could not** be replicated, on two
+walls. Wall #1 (no background presence) is **still true** and stands above. Wall #2 turned out to be
+**wrong** — reproduced here for the record:
+
+> **No ranging.** The car authorizes keyless drive only when it localizes a phone key via link-layer
+> BLE ranging done in the car's radio/firmware. We can't supply or fake it: the only RSSI ZeppOS
+> exposes is `ScanResult.rssi` (watch measuring the car, wrong direction); the key→car `UnsignedMessage`
+> "carries no 'I am present / at distance X' field"; anti-relay design means the car ignores any
+> self-asserted distance; and the Go SDK's receive loop discards non-terminal frames and never replies.
+
+**Why it was wrong:** the conclusion ("therefore impossible") didn't follow from the (correct) premise
+that we can't self-report distance. The car **does** range us — and that's *sufficient*. The missing
+piece was the `AuthenticationRequest`/`AuthenticationResponse` handshake (absent from the Go SDK the
+analysis was based on, present in the fuller proto): you don't report distance, you **answer the car's
+identification beacons** to be counted as present, and the car's own ranging does the rest. The
+"`UnsignedMessage` has no presence field" claim was also literally inaccurate — `authenticationResponse`
+(Unsigned field 3) carries `estimatedDistance`; the car just prefers its own measurement. The "device
+proof" (brake press still showed *configure phone key*) was a session that **never answered the auth
+beacons**, so the car correctly saw no present key — not evidence the path is closed.
+
+</details>
 
 ## Tesla BLE Command Reference
 
@@ -368,7 +450,7 @@ Core lock/unlock commands are sent via `UnsignedMessage.rkeAction` (field 2).
 |----------|-------|--------|-------------|
 | `RKE_ACTION_UNLOCK` | 0 | `session.unlock(cb)` | Unlock all doors |
 | `RKE_ACTION_LOCK` | 1 | `session.lock(cb)` | Lock all doors |
-| `RKE_ACTION_REMOTE_DRIVE` | 20 | `session.remoteDrive(cb)` | Remote Start — authorizes keyless drive (car shows "keyless driving enabled"). SDK `RemoteDrive` / `tesla-control drive`. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive--findings). |
+| `RKE_ACTION_REMOTE_DRIVE` | 20 | `session.remoteDrive(cb)` | Remote Start — explicit command-path keyless drive (car shows "keyless driving enabled"). SDK `RemoteDrive` / `tesla-control drive`. Now a fallback — passive keyless drive needs no command and no banner. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). |
 
 **Usage:**
 ```javascript
@@ -396,6 +478,30 @@ teslaSession.sendCommand({ closureMoveRequest: rearTrunk }, result => { ... })
 const frontTrunk = buildClosureMoveRequest(6, 0)
 teslaSession.sendCommand({ closureMoveRequest: frontTrunk }, result => { ... })
 ```
+
+### Passive Entry (AuthenticationResponse / AppDeviceInfo)
+
+These are **car-initiated**: the watch does not call them directly. While connected, the idle
+listener (`session.js` `startStatusPushListener` → `_respondToVcsecRequest`) auto-answers the
+car's `AuthenticationRequest` (FromVCSEC field 3) and `AppDeviceInfoRequest` (field 44) to keep
+the watch registered as a present key. The builders live in `vcsec.js`. See
+[Passive Entry & Keyless Drive](#passive-entry--keyless-drive) for the full handshake.
+
+```javascript
+import { buildAuthenticationResponse, buildAppDeviceInfo, buildUnsignedMessage,
+         AUTH_LEVEL_UNLOCK, APP_OS_ANDROID, UWB_UNSUPPORTED } from './lib/tesla-ble/protocol/vcsec.js'
+
+// Reply to AuthenticationRequest — UnsignedMessage.authenticationResponse (field 3), signed on session:
+const authResp = buildAuthenticationResponse({ authenticationLevel: AUTH_LEVEL_UNLOCK, estimatedDistance: 0, rejection: 0 })
+const msg = buildUnsignedMessage({ authenticationResponse: authResp })
+
+// Reply to AppDeviceInfoRequest — UnsignedMessage.appDeviceInfo (field 40):
+const info = buildAppDeviceInfo({ hardwareModelSha256: sha256(...), os: APP_OS_ANDROID, uwb: UWB_UNSUPPORTED })
+const msg2 = buildUnsignedMessage({ appDeviceInfo: info })
+```
+
+`parseAuthenticationRequest` (vcsec.js) decodes the incoming request `{ token, requestedLevel,
+reasonsForAuth[] }`; `reasonsForAuth` is a **packed** repeated enum, so it's unpacked from raw bytes.
 
 ### Information Requests
 
@@ -682,6 +788,9 @@ Notes:
 | Item | Status | Notes |
 |------|--------|-------|
 | Lock / Unlock / Trunk / Frunk actuation | ✅ Device-confirmed 2026-06-02 | See [Command path fixes](#command-path-fixes-2026-06-02). Six fixes on the command/response path; car actuates and watch shows success. |
+| Passive entry + keyless drive | ✅ Device-validated 2026-06-09 | Walk up → unlock → drive → walk away → auto-lock, no command. Answer the car's `AuthenticationRequest` beacons with a signed `AuthenticationResponse` (+ `AppDeviceInfo`) to register as a present key; the car's own ranging does the rest. Works only while the app is open + connected. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). |
+| Session clock staleness (fault 17) | ✅ Fixed 2026-06-09 | `_buildAuthMessage` used a static `clockTime + 60`; ~60 s into a connection the vehicle's clock had advanced past it → every signed message rejected `TIME_EXPIRED` (fault 17), killing commands and passive-auth replies. Now `expiresAt = clockTime + elapsedSinceCapture + 60` (tracks `_clockCapturedAtMs`). |
+| Connect auto-retry on setup drop | ✅ Fixed 2026-06-09 | The car occasionally drops the link mid-GATT-setup ("Vehicle disconnected during setup"); `tesla.js` `refresh` now auto-retries once after 800 ms before reporting offline. Also: `refresh` reports `online` on session-established (state from live pushes) so a `getVehicleStatus` timeout under the beacon flood no longer reads as "connection failed". |
 | VIN entry | ✅ Complete | Settings page (`setting/index.js`) — TextInput for vehicle name + VIN, synced to watch via `BLE_SYNC_SETTINGS` on app open |
 | MTU chunk writer | ❌ Impossible (not just blocked) | ZeppOS `@zos/ble` exposes **no** MTU or connection-parameter API — `mstSetMTU` was never a real function (device logs: `mstSetMTU not available: not a function`), `mstConnect(addr, cb)` takes no options, and the official `@zeppos/device-types` surface lists no MTU/conn-param call. Empirically the link sits at the BLE default ATT MTU 23 = 20-byte payload in **both** directions: 2026-06-03 the vehicle returned its 177-byte SessionInfo as nine 20-byte notifications. Fixed 20-byte chunking is mandatory; the dead MTU-negotiation code in `ble.js` was removed. |
 | Scan-by-name on every connect | ✅ Applied | `lib/tesla-ble/ble-name.js` + scan-by-VIN in both `session.js` and `pairing.js`. See "Scan-by-name on every connect" above. Note: scan-by-name was originally hypothesized as the fix for connect-time-out-after-pair, but the actual cause turned out to be native BLE state poisoning across app sessions — see "Native BLE crash recovery". |

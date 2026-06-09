@@ -3,7 +3,7 @@ import store from '../store.js'
 import teslaBLE from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
-import { sha1 } from './crypto/sha256.js'
+import { sha1, sha256 } from './crypto/sha256.js'
 import { hexDump } from './crypto/binary-utils.js'
 import { decodeMessage } from './protocol/protobuf.js'
 import {
@@ -18,6 +18,11 @@ import {
   buildSessionInfoRequest,
   buildSignatureData,
   buildUnsignedMessage,
+  buildAuthenticationResponse,
+  buildAppDeviceInfo,
+  AUTH_LEVEL_UNLOCK,
+  APP_OS_ANDROID,
+  UWB_UNSUPPORTED,
   DOMAIN_VEHICLE_SECURITY,
   generateRoutingAddress,
   generateUUID,
@@ -44,6 +49,10 @@ const dumpRxFrame = (tag, raw, response) => {
         const inner = decodeMessage(response.payload)
         console.log(`[RX-DUMP ${tag}]   FromVCSECMessage inner fields:[${Object.keys(inner).sort((a, b) => a - b).join(',')}]`)
       } catch (_e) {}
+    }
+    if (response.authenticationRequest) {
+      const a = response.authenticationRequest
+      console.log(`[RX-DUMP ${tag}]   AuthenticationRequest level=${a.requestedLevel} reasons=[${a.reasonsForAuth}] token=${a.token ? hx(a.token) : '<none>'}`)
     }
   } catch (e) {
     console.log(`[RX-DUMP ${tag}] dump error: ${e.message}`)
@@ -371,6 +380,9 @@ class TeslaSession {
     this.epoch = response.sessionInfo.epoch
     this.counter = response.sessionInfo.counter
     this.clockTime = response.sessionInfo.clockTime
+    // Wall-clock instant we captured the vehicle's clock. expiresAt must track the
+    // vehicle's clock as it advances in real time — see _buildAuthMessage.
+    this._clockCapturedAtMs = Date.now()
 
     if (this.epoch && this.epoch.length > 0) {
       console.log(`[SESSION] Epoch loaded: ${this.epoch.length} bytes`)
@@ -485,7 +497,14 @@ class TeslaSession {
   // Takes a pre-built UnsignedMessage; returns the RoutableMessage bytes ready to send.
   _buildAuthMessage(unsignedMessage) {
     this.counter++
-    const expiresAt = this.clockTime + 60
+    // The vehicle validates expiresAt against ITS clock, which keeps ticking after we
+    // captured clockTime at connect. Using a static `clockTime + 60` means that ~60s
+    // into a connection every message is already in the vehicle's past → it rejects
+    // with MESSAGEFAULT_ERROR_TIME_EXPIRED (17), killing commands AND passive-entry
+    // auth replies (→ alertHandlePulledWithoutAuth). Advance the estimate by the real
+    // time elapsed since capture so the 60s window stays ahead of the vehicle's clock.
+    const elapsedSec = Math.floor((Date.now() - (this._clockCapturedAtMs || Date.now())) / 1000)
+    const expiresAt = this.clockTime + elapsedSec + 60
     // RoutableMessage.protobuf_message_as_bytes for a VCSEC HMAC command IS the
     // vcsec.UnsignedMessage itself — NOT wrapped in ToVCSECMessage/SignedMessage.
     // (Tesla SDK executeRKEAction marshals UnsignedMessage directly and passes it
@@ -523,9 +542,11 @@ class TeslaSession {
       // after a timeout can't double-deliver). Non-terminal requeues do NOT go
       // through here — they call callback(result) directly and keep listening.
       let settled = false
+      this._commandInFlight = true // gate the passive-entry responder off the shared slot
       const finish = (result) => {
         if (settled) return
         settled = true
+        this._commandInFlight = false
         this._clearCommandTimer()
         if (this._secondResponseTimer) {
           clearTimeout(this._secondResponseTimer)
@@ -656,9 +677,11 @@ class TeslaSession {
     // Fire the terminal result exactly once and tear down command state.
     let settled = false
     let statusTimer = null
+    this._commandInFlight = true // gate the passive-entry responder off the shared slot
     const finish = (result) => {
       if (settled) return
       settled = true
+      this._commandInFlight = false
       if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
       teslaBLE.responseCallback = null
       callback(result)
@@ -695,6 +718,15 @@ class TeslaSession {
           return true
         })()
         if (!addressedToUs) {
+          // The car answers GET_STATUS by PUSHING VehicleStatus unsolicited (addressed
+          // to a domain, not our routing address) rather than as an addressed reply, and
+          // meanwhile floods auth beacons. Accept any frame that actually carries a status
+          // snapshot so the initial load resolves instead of timing out on the flood;
+          // only genuinely status-less pushes (auth beacons etc.) are ignored.
+          if (response.vehicleStatus) {
+            finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
+            return
+          }
           console.log('[SESSION] Ignoring unsolicited push (not a status reply)')
           dumpRxFrame('STATUS-UNSOL', result.data, response)
           result._requeue = true
@@ -752,6 +784,10 @@ class TeslaSession {
         // DIAGNOSTIC: dump every idle frame in full so a handle-pull / proximity
         // frame the car pushes is visible, not just periodic VehicleStatus.
         dumpRxFrame('IDLE', result.data, response)
+        // Passive-entry handshake: the car streams VCSEC requests (AuthenticationRequest,
+        // AppDeviceInfoRequest) the key must answer. Respond and stop — a status snapshot
+        // and a request never share a frame.
+        if (this._respondToVcsecRequest(response)) return
         if (response.vehicleStatus && response.vehicleStatus.length > 0) {
           const status = parseVehicleStatus(response.vehicleStatus)
           if (this._statusPushHandler) this._statusPushHandler(status)
@@ -759,6 +795,95 @@ class TeslaSession {
       } catch (e) {
         console.log(`[RX-DUMP IDLE] parse error: ${e.message}`)
       }
+    }
+  }
+  // Dispatch a parsed RoutableMessage to the right passive-entry responder. Returns
+  // true if it sent a reply. Shared by the idle listener and the reply-chain (the car
+  // answers each response with the NEXT request, so every reply is re-dispatched).
+  _respondToVcsecRequest(response) {
+    if (!this.established) return false
+    // Never fire while a user command (connect/getVehicleStatus/lock/...) owns the BLE
+    // response slot — a signed reply here would seize that slot and steal the frame the
+    // command is waiting for, starving it into a timeout. Skip WITHOUT marking the token
+    // answered, so we still respond on the next beacon once the command finishes.
+    if (this._commandInFlight) return false
+    if (response.authenticationRequest) return this._handleAuthenticationRequest(response.authenticationRequest)
+    if (response.appDeviceInfoRequest) return this._handleAppDeviceInfoRequest(response.appDeviceInfoRequest)
+    return false
+  }
+  // Sign a bare UnsignedMessage on the session and send it, dumping the car's reply
+  // (under `tag`-REPLY) and re-dispatching it through the handshake. One-shot: the
+  // idle listener resumes after (no _requeue).
+  _signSendVcsec(unsigned, tag) {
+    const message = this._buildAuthMessage(unsigned)
+    teslaBLE.send(message, (result) => {
+      if (!result || !result.success) {
+        console.log(`[SESSION] ${tag} send failed: ${result && result.error}`)
+        return
+      }
+      try {
+        const resp = parseRoutableMessage(result.data)
+        dumpRxFrame(`${tag}-REPLY`, result.data, resp)
+        // The car often answers a VCSEC reply with a fresh VehicleStatus — surface it so
+        // the UI tracks state even when the handshake (not getVehicleStatus) carries it.
+        if (resp.vehicleStatus && resp.vehicleStatus.length > 0 && this._statusPushHandler) {
+          try { this._statusPushHandler(parseVehicleStatus(resp.vehicleStatus)) } catch (_e) {}
+        }
+        this._respondToVcsecRequest(resp)
+      } catch (e) {
+        console.log(`[SESSION] ${tag} reply parse error: ${e.message}`)
+      }
+    })
+  }
+  // Passive-entry presence. The vehicle streams AuthenticationRequest beacons ~1Hz,
+  // reasonsForAuth=[1 IDENTIFICATION] (or [8] on approach), rotating a 20-byte token
+  // ~every 5s. Answering registers the watch as a PRESENT, authenticated key — device-
+  // observed: without a reply a handle pull yields Alert.alertHandlePulledWithoutAuth.
+  // Dedupe by token (not time) so we sign once per token, not per ~1Hz repeat. The
+  // token is not echoed back (AuthenticationResponse has no token field).
+  _handleAuthenticationRequest(req) {
+    const tokenHex = req.token ? hexDump(req.token) : ''
+    if (tokenHex && tokenHex === this._lastAuthToken) return false // already answered
+    this._lastAuthToken = tokenHex
+    console.log(`[SESSION] AuthenticationRequest reasons=[${req.reasonsForAuth}] level=${req.requestedLevel} token=${tokenHex} — responding`)
+    try {
+      const unsigned = buildUnsignedMessage({
+        authenticationResponse: buildAuthenticationResponse({
+          authenticationLevel: req.requestedLevel || AUTH_LEVEL_UNLOCK, // echo requested level
+          estimatedDistance: 0, // watch is the key — claim closest; ZeppOS gives no RSSI
+          rejection: 0,         // AUTHENTICATIONREJECTION_NONE — we authorize
+        }),
+      })
+      this._signSendVcsec(unsigned, 'AUTH')
+      return true
+    } catch (e) {
+      console.log(`[SESSION] AuthenticationRequest handling error: ${e.message}`)
+      return false
+    }
+  }
+  // The car follows an accepted AuthenticationResponse with AppDeviceInfoRequest
+  // (field 44 = GET_MODEL_NUMBER), asking the key to describe itself. Reply with a
+  // minimal AppDeviceInfo (model hash + OS + no UWB). Debounced — the car re-asks while
+  // it waits, but one signed reply per second is plenty.
+  _handleAppDeviceInfoRequest(_request) {
+    const now = Date.now()
+    if (this._lastDeviceInfoTime && now - this._lastDeviceInfoTime < 1000) return false
+    this._lastDeviceInfoTime = now
+    console.log('[SESSION] AppDeviceInfoRequest — responding with AppDeviceInfo')
+    try {
+      const modelHash = sha256(new Uint8Array([0x61, 0x6d, 0x61, 0x7a, 0x6c, 0x61])) // sha256("amazla")
+      const unsigned = buildUnsignedMessage({
+        appDeviceInfo: buildAppDeviceInfo({
+          hardwareModelSha256: modelHash,
+          os: APP_OS_ANDROID,   // enrolled via the Android companion app
+          uwb: UWB_UNSUPPORTED, // watch has no UWB radio
+        }),
+      })
+      this._signSendVcsec(unsigned, 'DEVINFO')
+      return true
+    } catch (e) {
+      console.log(`[SESSION] AppDeviceInfoRequest handling error: ${e.message}`)
+      return false
     }
   }
   stopStatusPushListener() {

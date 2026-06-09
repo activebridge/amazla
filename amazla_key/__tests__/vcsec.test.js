@@ -6,6 +6,12 @@ import {
   buildInformationRequest,
   buildSignedMessage,
   buildToVCSECMessage,
+  buildAuthenticationResponse,
+  buildAppDeviceInfo,
+  parseAuthenticationRequest,
+  parseRoutableMessage,
+  AUTH_LEVEL_UNLOCK,
+  AUTH_REASON_EXTERIOR_HANDLE_PULL,
   generateUUID,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
@@ -120,6 +126,85 @@ describe('VCSEC Protocol', () => {
       // Verify the informationRequest type is preserved inside
       const infoDecoded = decodeMessage(decoded[1])
       expect(infoDecoded[1]).toBe(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO)
+    })
+  })
+
+  describe('passive entry — AuthenticationRequest/Response', () => {
+    // Real device frame (FromVCSECMessage field 3 = AuthenticationRequest), handle pull:
+    //   12 16 0a14<20B token> 18 02   22 01 05
+    //   field2=AuthenticationRequestToken{token}, field3(requestedLevel)=2, field4(reason)=[5]
+    const HANDLE_PULL = new Uint8Array([
+      0x12, 0x16, 0x0a, 0x14,
+      0xa7, 0xb4, 0x91, 0x47, 0x77, 0xee, 0x32, 0x59, 0x69, 0x6d,
+      0x3a, 0x2c, 0x0c, 0x56, 0xca, 0x0e, 0xb9, 0x71, 0xf2, 0xc3,
+      0x18, 0x02, 0x22, 0x01, 0x05,
+    ])
+
+    test('parseAuthenticationRequest decodes token, level, reasons', () => {
+      const req = parseAuthenticationRequest(HANDLE_PULL)
+      expect(req.token).toBeInstanceOf(Uint8Array)
+      expect(req.token.length).toBe(20)
+      expect(req.requestedLevel).toBe(2)
+      expect(req.reasonsForAuth).toEqual([AUTH_REASON_EXTERIOR_HANDLE_PULL])
+    })
+
+    test('parseAuthenticationRequest collapses single reason to a one-element array', () => {
+      // field4 appears once → decoder hands back a scalar, not an array.
+      const idle = new Uint8Array([0x18, 0x01, 0x22, 0x01, 0x01]) // level=1, reasons=[1]
+      const req = parseAuthenticationRequest(idle)
+      expect(req.reasonsForAuth).toEqual([1])
+    })
+
+    test('parseRoutableMessage surfaces authenticationRequest from FromVCSECMessage field 3', () => {
+      // RoutableMessage: f10 = FromVCSECMessage{ f3 = HANDLE_PULL }
+      const fromVcsec = new Uint8Array([0x1a, HANDLE_PULL.length, ...HANDLE_PULL])
+      const routable = new Uint8Array([0x52, fromVcsec.length, ...fromVcsec])
+      const parsed = parseRoutableMessage(routable)
+      expect(parsed.authenticationRequest).not.toBeNull()
+      expect(parsed.authenticationRequest.reasonsForAuth).toEqual([AUTH_REASON_EXTERIOR_HANDLE_PULL])
+      expect(parsed.vehicleStatus).toBeNull()
+    })
+
+    test('buildAuthenticationResponse encodes level/distance, omits rejection=0', () => {
+      const resp = buildAuthenticationResponse({
+        authenticationLevel: 2,
+        estimatedDistance: 0,
+        rejection: 0,
+      })
+      const d = decodeMessage(resp)
+      expect(d[1]).toBe(2) // authenticationLevel
+      expect(d[2]).toBe(0) // estimatedDistance
+      expect(d[3]).toBeUndefined() // rejection omitted when 0
+    })
+
+    test('buildUnsignedMessage wraps authenticationResponse at field 3', () => {
+      const resp = buildAuthenticationResponse({ authenticationLevel: AUTH_LEVEL_UNLOCK, estimatedDistance: 0 })
+      const msg = buildUnsignedMessage({ authenticationResponse: resp })
+      const d = decodeMessage(msg)
+      // authenticationResponse is UnsignedMessage field 3 (NOT 1/2/4)
+      expect(d[3]).toBeDefined()
+      expect(d[1]).toBeUndefined()
+      expect(d[2]).toBeUndefined()
+      expect(decodeMessage(d[3])[1]).toBe(AUTH_LEVEL_UNLOCK)
+    })
+
+    test('parseRoutableMessage surfaces appDeviceInfoRequest from FromVCSECMessage field 44', () => {
+      // FromVCSECMessage{ f44 = 1 } at RoutableMessage field 10. f44 varint tag = e0 02.
+      const fromVcsec = new Uint8Array([0xe0, 0x02, 0x01])
+      const routable = new Uint8Array([0x52, fromVcsec.length, ...fromVcsec])
+      const parsed = parseRoutableMessage(routable)
+      expect(parsed.appDeviceInfoRequest).toBe(1)
+    })
+
+    test('buildAppDeviceInfo + buildUnsignedMessage wrap at field 40', () => {
+      const info = buildAppDeviceInfo({ hardwareModelSha256: new Uint8Array(32).fill(0x11), os: 1, uwb: 2 })
+      const msg = buildUnsignedMessage({ appDeviceInfo: info })
+      const d = decodeMessage(msg)
+      expect(d[40]).toBeDefined()
+      const inner = decodeMessage(d[40])
+      expect(inner[1].length).toBe(32) // hardware_model_sha256
+      expect(inner[2]).toBe(1)         // os
+      expect(inner[3]).toBe(2)         // UWBAvailable
     })
   })
 

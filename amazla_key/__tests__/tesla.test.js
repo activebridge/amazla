@@ -178,6 +178,13 @@ describe('_applyStatus', () => {
     expect(tesla.locked).toBe(true)
   })
 
+  test('absent snapshot is a no-op, not a throw', () => {
+    // Field-3 VCSEC proximity/auth pushes decode to no usable snapshot.
+    tesla.locked = true
+    expect(() => tesla._applyStatus(undefined)).not.toThrow()
+    expect(tesla.locked).toBe(true)
+  })
+
   test('locked=false when vehicleLockState=0', () => {
     tesla.locked = true
     tesla._applyStatus(makeStatus({ vehicleLockState: 0 }))
@@ -271,15 +278,59 @@ describe('refresh()', () => {
     expect(tesla.connection.error).toBe('BLE timeout')
   })
 
-  test('status fail → connection offline with error', () => {
+  test('"disconnected during setup" → auto-retries once and connects', () => {
+    jest.useFakeTimers()
+    try {
+      let calls = 0
+      jest.spyOn(teslaSession, 'ensureSessionEstablished').mockImplementation((cb) => {
+        calls++
+        if (calls === 1) cb({ success: false, error: 'Vehicle disconnected during setup' })
+        else cb({ success: true })
+      })
+      mockGetStatus()
+
+      tesla.refresh()
+      // First attempt failed transiently → stays in "checking", not "offline".
+      expect(tesla.connection.status).toBe('checking')
+
+      jest.advanceTimersByTime(800) // fire the retry
+      expect(calls).toBe(2)
+      expect(tesla.connection.status).toBe('online')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('"disconnected during setup" twice → gives up after one retry (offline)', () => {
+    jest.useFakeTimers()
+    try {
+      jest.spyOn(teslaSession, 'ensureSessionEstablished')
+        .mockImplementation((cb) => cb({ success: false, error: 'Vehicle disconnected during setup' }))
+
+      tesla.refresh()
+      jest.advanceTimersByTime(800)
+      // Only one retry; the second failure is terminal.
+      expect(tesla.connection.status).toBe('offline')
+      expect(tesla.connection.error).toMatch(/during setup/)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('status fail stays ONLINE (session up) — state loads from live pushes', () => {
+    // Once the session is established the link works; a getVehicleStatus timeout on the
+    // passive-entry beacon flood must NOT read as "connection failed". Live pushes carry
+    // the initial state instead.
     mockEstablished()
     jest.spyOn(teslaSession, 'getVehicleStatus')
       .mockImplementation(cb => cb({ success: false, error: 'No response' }))
+    const liveSpy = jest.spyOn(teslaSession, 'startStatusPushListener')
 
     tesla.refresh()
 
-    expect(tesla.connection.status).toBe('offline')
-    expect(tesla.connection.error).toBe('No response')
+    expect(tesla.connection.status).toBe('online')
+    expect(tesla.connection.error).toBe(null)
+    expect(liveSpy).toHaveBeenCalled()
   })
 
   test('calls optional callback with success', () => {

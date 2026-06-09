@@ -74,22 +74,29 @@ class Tesla {
     this._runAction((done) => teslaSession.frunk(done), cb)
   }
 
-  refresh(cb) {
+  refresh(cb, _isRetry) {
     teslaSession.ensureSessionEstablished((r) => {
       if (!r.success) {
+        // The car occasionally drops the BLE link mid-GATT-setup ("disconnected
+        // during setup") — pure transient flakiness that clears on a fresh dial.
+        // Auto-retry once after a short delay so the user doesn't have to tap again.
+        if (!_isRetry && r.error && r.error.indexOf('during setup') !== -1) {
+          this._setConnection({ status: 'checking', error: null })
+          setTimeout(() => this.refresh(cb, true), 800)
+          return
+        }
         this._setConnection({ status: 'offline', error: r.error || 'Could not connect' })
         if (cb) cb(r)
         return
       }
+      // Session is established here — the link works. Report online and arm live
+      // pushes BEFORE the status fetch, so a getVehicleStatus that times out on the
+      // auth-beacon flood (passive entry ON) doesn't read as "connection failed".
+      // Initial state then loads from the first status push the car streams.
+      this._setConnection({ status: 'online', error: null })
+      this._startLivePushes()
       teslaSession.getVehicleStatus((r2) => {
-        if (!r2.success) {
-          this._setConnection({ status: 'offline', error: r2.error || 'Status failed' })
-          if (cb) cb(r2)
-          return
-        }
-        this._setConnection({ status: 'online', error: null })
-        this._applyStatus(r2.status)
-        this._startLivePushes()
+        if (r2.success) this._applyStatus(r2.status)
         if (cb) cb({ success: true })
       })
     })
@@ -111,6 +118,11 @@ class Tesla {
   }
 
   _applyStatus(status) {
+    // Field-3 VCSEC frames (proximity/auth pushes) decode to no usable snapshot,
+    // so status can be absent. Skip rather than throw — a missing snapshot is a
+    // no-op, not an error, and throwing here surfaced as a bogus
+    // "getVehicleStatus error: closureStatuses of undefined" up the callback.
+    if (!status) return
     var cs = status.closureStatuses || {}
     var next = {
       locked: status.vehicleLockState === 1,

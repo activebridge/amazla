@@ -678,6 +678,20 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     expect(hmacData[4].length).toBe(32)   // tag (32-byte HMAC-SHA256)
   })
 
+  test('expiresAt advances with real elapsed time since clock capture (no TIME_EXPIRED)', () => {
+    // Vehicle validates expiresAt against its own ticking clock. ~30s into a connection
+    // the window must be ~30s further out, not frozen at clockTime+60.
+    const s = makeSession()
+    s._clockCapturedAtMs = Date.now() - 30000 // captured 30s ago
+    s.getVehicleStatus(() => {})
+    const hmacData = decodeMessage(decodeMessage(decodeMessage(capturedMsg)[13])[8])
+    const le = hmacData[3] // expires_at fixed32 LE
+    const expiresAt = (le[0] | (le[1] << 8) | (le[2] << 16) | (le[3] << 24)) >>> 0
+    // clockTime(1000) + ~30s elapsed + 60s window ≈ 1090 (allow a little timing slack).
+    expect(expiresAt).toBeGreaterThanOrEqual(1088)
+    expect(expiresAt).toBeLessThanOrEqual(1092)
+  })
+
   test('UnsignedMessage has InformationRequest with GET_STATUS (0)', () => {
     makeSession().getVehicleStatus(() => {})
     const unsignedMsg = decodeMessage(decodeMessage(capturedMsg)[10])
@@ -688,6 +702,20 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
   test('includes 16-byte UUID at field 51', () => {
     makeSession().getVehicleStatus(() => {})
     expect(decodeMessage(capturedMsg)[51].length).toBe(16)
+  })
+
+  test('accepts an UNADDRESSED VehicleStatus push as the reply (initial-load fix)', () => {
+    // The car pushes VehicleStatus addressed to a domain, not our routing address, and
+    // floods auth beacons; the wait must resolve on the status push, not time out.
+    const statusBytes = new Uint8Array([0x10, 0x01]) // VehicleStatus{ vehicleLockState=1 }
+    const fromVcsec = encodeBytes(1, statusBytes)    // FromVCSECMessage.vehicleStatus=1
+    const frame = encodeBytes(10, fromVcsec)         // no field-6 routing address → unaddressed
+    let result
+    const s = makeSession()
+    teslaBLE.send = (_msg, cb) => cb({ success: true, data: frame })
+    s.getVehicleStatus((r) => { result = r })
+    expect(result.success).toBe(true)
+    expect(result.status.vehicleLockState).toBe(1)
   })
 })
 
@@ -820,5 +848,129 @@ describe('TeslaSession._buildHMACTag — session wiring', () => {
     store.vehicleVin = 'XYZ'
     const t2 = s._buildHMACTag(epoch, 1, 100, payload)
     expect(Array.from(t1)).not.toEqual(Array.from(t2))
+  })
+})
+
+describe('passive entry — _handleAuthenticationRequest responder', () => {
+  let sent
+
+  function makeSession() {
+    store.vehicleVin = null
+    const s = new TeslaSession()
+    s.established  = true
+    s.sessionKey   = new Uint8Array(16).fill(0x0b)
+    s.epoch        = new Uint8Array(16).fill(0xee)
+    s.counter      = 5
+    s.clockTime    = 1000
+    s.routingAddress = new Uint8Array(16).fill(0x01)
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    initSessionHmacs(s)
+    return s
+  }
+
+  // RoutableMessage{ f10 = FromVCSECMessage{ f3 = AuthenticationRequest } }.
+  // tokenByte distinguishes tokens for the dedupe tests; reason defaults to 1 (IDENTIFICATION).
+  function authFrame(tokenByte = 0xab, reason = 1) {
+    const token = new Uint8Array(20).fill(tokenByte)
+    const reqToken = encodeBytes(1, token)              // AuthenticationRequestToken{ token=1 }
+    const authReq = new Uint8Array([
+      ...encodeBytes(2, reqToken),                       // sessionInfo=2
+      0x18, 0x02,                                        // requestedLevel(3)=2
+      0x22, 0x01, reason,                                // reasonsForAuth(4) packed=[reason]
+    ])
+    const fromVcsec = encodeBytes(3, authReq)            // FromVCSECMessage.authenticationRequest=3
+    return encodeBytes(10, fromVcsec)                    // RoutableMessage.protobuf_message_as_bytes=10
+  }
+
+  beforeEach(() => {
+    sent = []
+    teslaBLE.connected = true
+    teslaBLE.send = (msg) => { sent.push(msg) }
+  })
+  afterEach(() => {
+    teslaBLE.connected = false
+    delete teslaBLE.send
+    teslaBLE.idleCallback = null
+  })
+
+  test('IDENTIFICATION beacon (reason 1) → signed AuthenticationResponse sent (presence)', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab, 1) })
+    expect(sent.length).toBe(1)
+    // Payload (field 10) is a bare UnsignedMessage carrying authenticationResponse (field 3),
+    // and the message is session-signed (SignatureData at field 13).
+    const outer = decodeMessage(sent[0])
+    expect(outer[13]).toBeDefined()
+    const unsigned = decodeMessage(outer[10])
+    expect(unsigned[3]).toBeDefined()
+    expect(decodeMessage(unsigned[3])[1]).toBe(2) // echoed requestedLevel=2
+    expect(s.counter).toBe(6)                      // counter advanced (signed once)
+  })
+
+  test('dedupe by token: same token repeated → only one response', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    expect(sent.length).toBe(1)
+  })
+
+  test('fresh token → new response', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xcd) }) // token rotated
+    expect(sent.length).toBe(2)
+  })
+
+  test('no response when session not established', () => {
+    const s = makeSession()
+    s.established = false
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: authFrame() })
+    expect(sent.length).toBe(0)
+  })
+
+  // RoutableMessage{ f10 = FromVCSECMessage{ f44 = AppDeviceInfoRequest (varint) } }
+  function deviceInfoFrame(value = 1) {
+    const fromVcsec = new Uint8Array([0xe0, 0x02, value]) // field 44 varint = value
+    return encodeBytes(10, fromVcsec)
+  }
+
+  test('AppDeviceInfoRequest → signed AppDeviceInfo (UnsignedMessage field 40) sent', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: deviceInfoFrame(1) })
+    expect(sent.length).toBe(1)
+    const outer = decodeMessage(sent[0])
+    expect(outer[13]).toBeDefined()                 // session-signed
+    const unsigned = decodeMessage(outer[10])
+    expect(unsigned[40]).toBeDefined()              // appDeviceInfo at field 40
+    const info = decodeMessage(unsigned[40])
+    expect(info[1]).toBeInstanceOf(Uint8Array)      // hardware_model_sha256
+    expect(info[1].length).toBe(32)
+    expect(info[2]).toBe(1)                          // os = ANDROID
+  })
+
+  test('AppDeviceInfoRequest debounced within 1s → only one response', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    teslaBLE.idleCallback({ success: true, data: deviceInfoFrame(1) })
+    teslaBLE.idleCallback({ success: true, data: deviceInfoFrame(1) })
+    expect(sent.length).toBe(1)
+  })
+
+  test('does NOT respond while a command is in flight (no slot-stealing)', () => {
+    const s = makeSession()
+    s.startStatusPushListener(() => {})
+    s._commandInFlight = true
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    expect(sent.length).toBe(0)
+    // token NOT marked answered: once the command finishes, the next beacon is answered
+    s._commandInFlight = false
+    teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
+    expect(sent.length).toBe(1)
   })
 })
