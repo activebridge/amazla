@@ -11,6 +11,7 @@ import {
   buildInformationRequest,
   buildRoutableMessage,
   buildSessionInfoHmacInput,
+  CLOSURE_CHARGE_PORT,
   CLOSURE_FRUNK,
   CLOSURE_MOVE_OPEN,
   CLOSURE_REAR_TRUNK,
@@ -23,6 +24,7 @@ import {
   APP_OS_ANDROID,
   UWB_UNSUPPORTED,
   DOMAIN_VEHICLE_SECURITY,
+  DOMAIN_INFOTAINMENT,
   generateRoutingAddress,
   generateUUID,
   INFO_REQUEST_GET_STATUS,
@@ -32,6 +34,8 @@ import {
   RKE_ACTION_UNLOCK,
   RKE_ACTION_REMOTE_DRIVE,
 } from './protocol/vcsec.js'
+import { buildAesGcmCommand } from './infotainment.js'
+import { buildChargePortOpenAction } from './protocol/carserver.js'
 
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
@@ -730,6 +734,92 @@ class TeslaSession {
   }
   frunk(callback) {
     this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_FRUNK, CLOSURE_MOVE_OPEN) }, callback)
+  }
+  chargePort(callback) {
+    // EXPERIMENTAL / unverified on device. The Tesla Go SDK opens the charge port via
+    // the infotainment domain (carserver VehicleAction_ChargePortDoorOpen, AES-GCM), NOT
+    // VCSEC — its executeClosureAction only moves Trunk/Frunk/Tonneau. The chargePort
+    // field exists in the VCSEC ClosureMoveRequest proto, so this may work on some
+    // firmware; if the car ignores it, charge port belongs with the infotainment work.
+    this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_CHARGE_PORT, CLOSURE_MOVE_OPEN) }, callback)
+  }
+
+  // ── Infotainment domain (AES-GCM) — EXPERIMENTAL, for first car capture ──────
+  // Heavily logged, NOT integrated with the command watchdog/slot machinery. Sends
+  // a SessionInfo request to DOMAIN_INFOTAINMENT to get its epoch/counter/clock,
+  // then an AES-GCM-encrypted car-server command. Diagnostic v1: logs raw TX/RX so
+  // byte-exactness can be reconciled against the vehicle the way the HMAC path was.
+  _infotainmentCommand(plaintext, label, callback) {
+    const hx = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : '<none>')
+    if (!this.established || !this.sessionKey || !this.ephemeralPublicKey) {
+      callback({ success: false, error: 'VCSEC session not established — connect first' })
+      return
+    }
+    console.log(`[INF] ${label}: requesting infotainment session (domain 3)…`)
+    const sessReq = buildRoutableMessage({
+      toDomain: DOMAIN_INFOTAINMENT,
+      routingAddress: generateRoutingAddress(),
+      sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
+      uuid: generateUUID(),
+    })
+    console.log(`[INF] TX SessionInfo(d3) ${sessReq.length}B: ${hx(sessReq)}`)
+    teslaBLE.send(sessReq, (r) => {
+      if (!r.success || !r.data) {
+        console.log(`[INF] ✗ SessionInfo(d3) no response: ${r.error || 'no data'}`)
+        callback({ success: false, error: 'infotainment session request failed' })
+        return
+      }
+      console.log(`[INF] RX SessionInfo(d3) ${r.data.length}B: ${hx(r.data)}`)
+      let si
+      try {
+        si = parseRoutableMessage(r.data).sessionInfo
+      } catch (e) {
+        console.log(`[INF] ✗ parse error: ${e && e.message}`)
+        callback({ success: false, error: 'infotainment session parse error' })
+        return
+      }
+      if (!si) {
+        console.log(`[INF] ✗ no sessionInfo (fields ${Object.keys(decodeMessage(r.data)).join(',')})`)
+        callback({ success: false, error: 'no infotainment sessionInfo in response' })
+        return
+      }
+      const epoch = si.epoch
+      const counter = si.counter || 0
+      const clockTime = si.clockTime || 0
+      console.log(`[INF] session: epoch=${epoch ? epoch.length + 'B' : '<none>'} counter=${counter} clock=${clockTime} status=${si.status}`)
+
+      const cmdCounter = counter + 1
+      const expiresAt = clockTime + 60
+      const { message, nonce } = buildAesGcmCommand({
+        sessionKey: this.sessionKey,
+        vin: store.vehicleVin || new Uint8Array(0),
+        signerPublicKey: this.ephemeralPublicKey,
+        domain: DOMAIN_INFOTAINMENT,
+        epoch,
+        counter: cmdCounter,
+        expiresAt,
+        routingAddress: generateRoutingAddress(),
+        uuid: generateUUID(),
+        plaintext,
+      })
+      console.log(`[INF] TX ${label} ${message.length}B nonce=${hx(nonce)} ct+sig=${hx(message)}`)
+      teslaBLE.send(message, (r2) => {
+        if (!r2.success || !r2.data) {
+          console.log(`[INF] ✗ ${label} no response: ${r2.error || 'no data'}`)
+          callback({ success: false, error: 'no command response' })
+          return
+        }
+        console.log(`[INF] RX ${label} ${r2.data.length}B: ${hx(r2.data)}`)
+        // Log decoded top-level fields to spot a fault vs an ack.
+        try {
+          console.log(`[INF] ${label} response fields: ${Object.keys(decodeMessage(r2.data)).join(',')}`)
+        } catch (_e) {}
+        callback({ success: true, data: r2.data })
+      })
+    })
+  }
+  chargePortInfotainment(callback) {
+    this._infotainmentCommand(buildChargePortOpenAction(), 'ChargePortOpen', callback)
   }
   remoteDrive(callback) {
     // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless

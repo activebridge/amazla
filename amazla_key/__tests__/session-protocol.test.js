@@ -202,6 +202,14 @@ describe('buildSessionInfoRequest', () => {
     expect(cmrFields[5]).toBe(3)
   })
 
+  test('charge port closure encodes at ClosureMoveRequest field 7 = OPEN', () => {
+    const cmr = buildClosureMoveRequest(7, 3) // chargePort = OPEN
+    const um = buildUnsignedMessage({ closureMoveRequest: cmr })
+    const cmrFields = decodeMessage(decodeMessage(um)[4])
+    // ClosureMoveRequest.chargePort (field 7) = CLOSURE_MOVE_TYPE_OPEN (3)
+    expect(cmrFields[7]).toBe(3)
+  })
+
   test('places publicKey at field 1, challenge at field 2', () => {
     const pub       = new Uint8Array(65).fill(0x04)
     const challenge = new Uint8Array(16).fill(0x77)

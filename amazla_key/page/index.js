@@ -166,9 +166,10 @@ const render = () => {
   tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock }, slide1)
   !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock }, slide1)
 
-  // Charge-port open indicator. No PNG overlay for Model Y, so a cyan dot at the
-  // rear driver-side port location. Status only — VCSEC actuation lives in the
-  // (not-yet-built) infotainment domain. Tweak x/y to match the car image.
+  // Charge port (rear driver-side). VCSEC ClosureMoveRequest.chargePort (field 7) —
+  // same authenticated closure path as trunk/frunk. When closed, an OPEN button at
+  // the port location; when open, a cyan status dot (no PNG overlay for Model Y).
+  !tesla.chargePortOpen && button({ ...OPEN, x: -130, y: 40, w: 100, h: 100, click_func: onChargePort }, slide1)
   tesla.chargePortOpen && circle({ centered: true, x: -110, y: 150, radius: 12, color: 0x00ccff }, slide1)
 
   rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
@@ -281,6 +282,15 @@ const onFrunk = () => {
   hmUI.updateStatusBarTitle('Frunk…')
   tesla.frunk((r) => {
     hmUI.updateStatusBarTitle(r.success ? '✓ Frunk' : '✗ Error')
+    if (r.success) vibrate(24)
+    else hmUI.showToast({ text: r.error || 'Error' })
+  })
+}
+
+const onChargePort = () => {
+  hmUI.updateStatusBarTitle('Charge port…')
+  tesla.chargePort((r) => {
+    hmUI.updateStatusBarTitle(r.success ? '✓ Charge port' : '✗ Error')
     if (r.success) vibrate(24)
     else hmUI.showToast({ text: r.error || 'Error' })
   })

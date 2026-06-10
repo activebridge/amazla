@@ -74,6 +74,13 @@ class Tesla {
     this._runAction((done) => teslaSession.frunk(done), cb)
   }
 
+  chargePort(cb) {
+    // Routes to the infotainment (AES-GCM) path — the SDK-correct domain for charge
+    // port. teslaSession.chargePort (VCSEC closure) is kept for comparison but the
+    // button uses this. EXPERIMENTAL: needs car capture to validate.
+    this._runAction((done) => teslaSession.chargePortInfotainment(done), cb)
+  }
+
   refresh(cb, _isRetry) {
     teslaSession.ensureSessionEstablished((r) => {
       if (!r.success) {

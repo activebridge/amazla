@@ -491,6 +491,19 @@ describe('frunk()', () => {
   })
 })
 
+describe('chargePort()', () => {
+  test('delegates to the infotainment (AES-GCM) path, not the VCSEC closure', () => {
+    tesla.connection.status = 'online'
+    const inf = jest.spyOn(teslaSession, 'chargePortInfotainment').mockImplementation((cb) => cb({ success: true }))
+    mockEstablished()
+    mockGetStatus()
+
+    tesla.chargePort()
+
+    expect(inf).toHaveBeenCalledTimes(1)
+  })
+})
+
 // ─── guards ───────────────────────────────────────────────────────────────────
 
 describe('busy guard', () => {

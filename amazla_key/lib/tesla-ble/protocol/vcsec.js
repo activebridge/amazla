@@ -1,9 +1,13 @@
 
 import { encodeBytes, encodeEnum, encodeVarintField, encodeFixed32, concat, decodeMessage, decodeVarint } from './protobuf.js'
 const DOMAIN_VEHICLE_SECURITY = 2
+// Infotainment / "car server" domain — climate, charging, charge-port, vehicle data.
+// Authenticated with AES-GCM (see aes-gcm.js) instead of HMAC.
+const DOMAIN_INFOTAINMENT = 3
 // HMAC_PERSONALIZED (=8) per signatures.proto SignatureType enum.
 // Auth data goes in RoutableMessage.signature_data (field 13), NOT in vcsec.proto SignedMessage.
 const SIGNATURE_TYPE_HMAC_PERSONALIZED = 8
+const SIGNATURE_TYPE_AES_GCM_PERSONALIZED = 5
 const RKE_ACTION_UNLOCK = 0
 const RKE_ACTION_LOCK = 1
 const RKE_ACTION_OPEN_TRUNK = 2
@@ -147,6 +151,7 @@ const buildHMACPersonalizedData = (epoch, counter, expiresAt, tag) => {
 // Each field carries a ClosureMoveType_E value (NONE=0, MOVE=1, STOP=2, OPEN=3, CLOSE=4).
 const CLOSURE_REAR_TRUNK = 5
 const CLOSURE_FRUNK = 6
+const CLOSURE_CHARGE_PORT = 7 // ClosureMoveRequest.chargePort field (matches ClosureStatuses[7])
 const CLOSURE_MOVE_OPEN = 3 // ClosureMoveType_E.OPEN
 const buildClosureMoveRequest = (closureId, moveType) => encodeEnum(closureId, moveType)
 // SignatureData { signer_identity(1 KeyIdentity), HMAC_Personalized_data(8) }
@@ -190,6 +195,49 @@ const buildHMACTagInput = (vin, epoch, counter, expiresAt, payloadBytes) => {
   wb(0x05); wb(0x04); wBytes(counterBytes)            // TAG_COUNTER
   wb(0xff); wBytes(payloadBytes)                      // TAG_END + payload
   return buf
+}
+
+// AES-GCM associated-data input (infotainment domain). Same TLV scheme as the HMAC
+// metadata, but the result is SHA-256'd by the caller and used as the GCM AAD — the
+// payload is ENCRYPTED, not appended here (Tesla SDK: aad = sha256(TLV || TAG_END)).
+// Tesla `extractMetadata` order: SIGNATURE_TYPE(0)=AES_GCM_PERSONALIZED, DOMAIN(1),
+// PERSONALIZATION(2)=VIN, EPOCH(3), EXPIRES_AT(4) uint32 BE, COUNTER(5) uint32 BE, END.
+// (TAG_FLAGS(7) is only added when message flags are set; our commands send none.)
+const buildAesGcmMetadataInput = (vin, domain, epoch, counter, expiresAt) => {
+  const vinBytes = vin instanceof Uint8Array ? vin : new Uint8Array(0)
+  const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
+  const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
+  const totalLen = 3 + 3 + 2 + vinBytes.length + 2 + epochBytes.length + 6 + 6 + 1
+  const buf = new Uint8Array(totalLen)
+  let off = 0
+  const wb = (byte) => { buf[off++] = byte }
+  const wBytes = (bytes) => { buf.set(bytes, off); off += bytes.length }
+  wb(0x00); wb(0x01); wb(SIGNATURE_TYPE_AES_GCM_PERSONALIZED) // TAG_SIGNATURE_TYPE=5
+  wb(0x01); wb(0x01); wb(domain & 0xff)                       // TAG_DOMAIN
+  wb(0x02); wb(vinBytes.length); wBytes(vinBytes)             // TAG_PERSONALIZATION: VIN
+  wb(0x03); wb(epochBytes.length); wBytes(epochBytes)         // TAG_EPOCH
+  wb(0x04); wb(0x04); wBytes(u32be(expiresAt))               // TAG_EXPIRES_AT (BE)
+  wb(0x05); wb(0x04); wBytes(u32be(counter))                 // TAG_COUNTER (BE)
+  wb(0xff)                                                     // TAG_END (no payload — it's encrypted)
+  return buf
+}
+
+// AES_GCM_Personalized_Signature_Data { epoch(1), nonce(2), counter(3 uint32),
+// expires_at(4 fixed32 LE), tag(5) } wrapped in SignatureData { signer_identity(1),
+// AES_GCM_Personalized_data(5) }.
+const buildAesGcmPersonalizedData = (epoch, nonce, counter, expiresAt, tag) => {
+  const parts = []
+  if (epoch) parts.push(encodeBytes(1, epoch))
+  if (nonce) parts.push(encodeBytes(2, nonce))
+  parts.push(encodeVarintField(3, counter))
+  parts.push(encodeFixed32(4, expiresAt))
+  if (tag) parts.push(encodeBytes(5, tag))
+  return concat(...parts)
+}
+const buildAesGcmSignatureData = (signerPublicKey, epoch, nonce, counter, expiresAt, tag) => {
+  const keyIdentity = buildKeyIdentity(signerPublicKey)
+  const gcmData = buildAesGcmPersonalizedData(epoch, nonce, counter, expiresAt, tag)
+  return concat(encodeBytes(1, keyIdentity), encodeBytes(5, gcmData))
 }
 // Builds the HMAC input buffer for SessionInfo tag verification per Tesla SDK.
 // Layout: TLV metadata fields || 0xFF || encodedSessionInfoBytes
@@ -406,12 +454,17 @@ export {
   buildSignedMessage,
   buildToVCSECMessage,
   buildHMACTagInput,
+  buildAesGcmMetadataInput,
+  buildAesGcmSignatureData,
+  DOMAIN_INFOTAINMENT,
+  SIGNATURE_TYPE_AES_GCM_PERSONALIZED,
   buildSessionInfoHmacInput,
   buildKeyIdentity,
   buildHMACPersonalizedData,
   buildClosureMoveRequest,
   CLOSURE_REAR_TRUNK,
   CLOSURE_FRUNK,
+  CLOSURE_CHARGE_PORT,
   CLOSURE_MOVE_OPEN,
   buildSignatureData,
   parseSessionInfo,
