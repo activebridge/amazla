@@ -7,11 +7,14 @@ Pure JavaScript implementation of Tesla BLE protocol for ZeppOS smartwatches.
 The session key is a **constant** for a paired watch+vehicle:
 
 ```
-sessionKey = sha1( ECDH(watchPrivateKey, vehiclePublicKey) )[:16]
+sessionKey = sha1( ECDH(enrolledPrivateKey, vehiclePublicKey) )[:16]
 ```
 
-Both inputs are long-term, static keys — the watch's enrolled keypair and the vehicle's VCSEC
-identity key. The vehicle's public key Q never changes between sessions; the official
+Both inputs are long-term, static keys — the enrolled key and the vehicle's VCSEC identity key.
+**Key custody:** the enrolled *private* key lives only on the phone (companion `settingsStorage`).
+The watch stores just the enrolled *public* key (`watchPublicKey`) — all it needs for the
+`SessionInfoRequest` identity — and never holds, receives, or uses a private key. The vehicle's
+public key Q never changes between sessions; the official
 [vehicle-command Go SDK](https://github.com/teslamotors/vehicle-command) enforces this by
 rejecting any `SessionInfo` whose `publicKey` differs from the value used at initialization
 (`signer.go: UpdateSessionInfo`). Per-session freshness (epoch / counter / clock_time) rides in
@@ -20,9 +23,9 @@ each message's HMAC, **not** in the key — so the key has no expiry.
 Because the key is constant, the watch **never runs ECDH at runtime**:
 
 - **At pairing / first connect** (phone present), the phone computes the ECDH directly with its
-  BigInt P-256 (`app-side/ble-crypto.js → computeSharedSecret`, IPC `BLE_COMPUTE_SHARED_SECRET`)
-  and returns just the **32-byte shared secret**. The watch does `sha1(...)[:16]` and persists the
-  16-byte key (`session_key.dat`).
+  BigInt P-256 — using the enrolled private key it holds — (`app-side/ble-crypto.js → computeSharedSecret`,
+  IPC `BLE_COMPUTE_SHARED_SECRET`) and returns just the **32-byte shared secret**. The watch does
+  `sha1(...)[:16]` and persists the 16-byte key (`session_key.dat`).
 - **Every later connect** reuses the cached key — no phone, no ECDH, no table. The fast path is
   guarded by the stored vehicle pubkey matching the live `SessionInfo` pubkey; a mismatch (vehicle
   re-key) falls back to re-derivation via the phone. The SessionInfo HMAC is verified on every

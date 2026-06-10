@@ -22,7 +22,6 @@ var __pageBuilt = false // Prevent duplicate builds
 var statusDotWidget = null
 var statusTextWidget = null
 var chkKeyWidget = null
-var chkPrivWidget = null
 var chkECWidget = null
 var chkTableWidget = null
 var chkMacWidget = null
@@ -58,7 +57,6 @@ function clearAllTimers() {
 }
 function updateChecklist() {
   var watchKey = store.watchPublicKey
-  var watchPriv = store.watchPrivateKey
   var ecKey = store.vehicleEcPublicKey
   var hasSessionKey = !!store.sessionKey
   var mac = store.vehicleMac
@@ -67,8 +65,6 @@ function updateChecklist() {
   var vehicleVin = vehicleVinBytes ? String.fromCharCode.apply(null, vehicleVinBytes) : null
   if (chkKeyWidget)
     chkKeyWidget.setProperty(hmUI.prop.TEXT, `${watchKey ? '✓' : '✗'} KEY:${watchKey ? watchKey.length : '---'}b`)
-  if (chkPrivWidget)
-    chkPrivWidget.setProperty(hmUI.prop.TEXT, `${watchPriv ? '✓' : '✗'} PRIV:${watchPriv ? watchPriv.length : '---'}b`)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.TEXT, `${ecKey ? '✓' : '✗'} EC:${ecKey ? ecKey.length : '---'}b`)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.TEXT, `${hasSessionKey ? '✓' : '✗'} SKEY`)
   if (chkMacWidget) {
@@ -82,7 +78,6 @@ function updateChecklist() {
     chkMacWidget.setProperty(hmUI.prop.COLOR, hasVehicle ? 0x44cc66 : 0xff5555)
   }
   if (chkKeyWidget) chkKeyWidget.setProperty(hmUI.prop.COLOR, watchKey ? 0x44cc66 : 0xff5555)
-  if (chkPrivWidget) chkPrivWidget.setProperty(hmUI.prop.COLOR, watchPriv ? 0x44cc66 : 0xff5555)
   if (chkECWidget) chkECWidget.setProperty(hmUI.prop.COLOR, ecKey ? 0x44cc66 : 0xff5555)
   if (chkTableWidget) chkTableWidget.setProperty(hmUI.prop.COLOR, hasSessionKey ? 0x44cc66 : 0xff5555)
 }
@@ -259,19 +254,8 @@ Page({
         align_h: hmUI.align.LEFT,
         centered: false,
       })
-      chkPrivWidget = uiText({
-        x: 170,
-        y: 80,
-        w: 140,
-        h: 22,
-        text: '? PRIV',
-        text_size: 18,
-        color: 0x888888,
-        align_h: hmUI.align.LEFT,
-        centered: false,
-      })
       chkECWidget = uiText({
-        x: 320,
+        x: 170,
         y: 80,
         w: 140,
         h: 22,
@@ -437,7 +421,6 @@ Page({
       statusDotWidget = null
       statusTextWidget = null
       chkKeyWidget = null
-      chkPrivWidget = null
       chkECWidget = null
       chkTableWidget = null
       chkMacWidget = null

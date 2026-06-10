@@ -30,11 +30,12 @@ import { encodeBytes, encodeVarintField, concat } from '../lib/tesla-ble/protoco
 import { createECDH } from 'crypto'
 import Phone from '../lib/phone.js'
 
-// Stub Phone.computeSharedSecret so session.js's slow path derives a real session
-// key without a working messageBuilder — runs the same bleCrypto ECDH the
-// companion would, against the watch private key in the store.
+// The phone owns the enrolled private key (the watch never holds it). The
+// fixture stashes it here so the Phone.computeSharedSecret stub can run the same
+// bleCrypto ECDH the companion would — without a working messageBuilder.
+let _phonePrivateKey = null
 Phone.prototype.computeSharedSecret = function (vehiclePubBytes) {
-  const r = bleCrypto.computeSharedSecret(bytesToBinaryString(store.watchPrivateKey), bytesToBinaryString(vehiclePubBytes))
+  const r = bleCrypto.computeSharedSecret(_phonePrivateKey, bytesToBinaryString(vehiclePubBytes))
   if (!r.success) return Promise.reject(new Error(r.error))
   return Promise.resolve(binaryStringToBytes(r.secret))
 }
@@ -66,18 +67,18 @@ function setupStore(sim) {
   store.vehicleEcPublicKey = sim.vehiclePubKey
   store.vehicleVin         = bytesToBinaryString(sim.vin)
   // Tesla protocol: ONE long-term keypair for both SessionInfoRequest identity
-  // AND ECDH. Generate a real P-256 keypair, store both halves on watch, and
-  // tell the simulator which pubkey is "enrolled" so its whitelist check passes.
+  // AND ECDH. Generate a real P-256 keypair, store the PUBLIC half on the watch,
+  // keep the private half phone-side (for the ECDH stub), and tell the simulator
+  // which pubkey is "enrolled" so its whitelist check passes.
   const watchEcdh = createECDH('prime256v1')
   watchEcdh.generateKeys()
   // Left-pad to a fixed 32 bytes: Node returns the scalar minimally, so ~0.4% of
-  // keys are 31 bytes (leading zero) and session.js would reject them as "Watch
-  // keypair missing" — a pre-existing ~1-in-5 harness flake.
+  // keys are 31 bytes (leading zero) and the phone-side ECDH would reject them.
   const rawPriv = new Uint8Array(watchEcdh.getPrivateKey())
   const watchPriv = rawPriv.length === 32 ? rawPriv : (() => { const o = new Uint8Array(32); o.set(rawPriv, 32 - rawPriv.length); return o })()
   const watchPub = new Uint8Array(watchEcdh.getPublicKey())
   store.watchPublicKey = bytesToBinaryString(watchPub)
-  store.watchPrivateKey = bytesToBinaryString(watchPriv)
+  _phonePrivateKey = bytesToBinaryString(watchPriv) // phone holds the private key, not the watch
   sim._enrolledPublicKey = watchPub
   // No cached sessionKey seeded — first establish runs the slow path (phone
   // computeSharedSecret → derive → cache), mirroring a fresh pairing.

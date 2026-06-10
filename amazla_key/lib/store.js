@@ -43,22 +43,6 @@ const store = {
     set('watchPublicKey', value)
   },
 
-  // Long-term enrolled private key. Tesla protocol uses ONE keypair for both
-  // SessionInfoRequest identity AND ECDH (mirrors vehicle-command Go SDK
-  // `Session.localKey`). Stored as a file: persisting it as a binary string in
-  // LocalStorage corrupted later LS writes (vehicleEcPublicKey + the
-  // hasDoublingsTable flag went null on next launch) — null bytes in the
-  // 32-byte key break LS persistence of entries set after it.
-  get watchPrivateKey() {
-    return readBinary('watch_private_key')
-  },
-
-  set watchPrivateKey(value) {
-    if (typeof value === 'string') value = binaryStringToBytes(value)
-    if (value) writeBinary('watch_private_key', value)
-    else this.removeBinary('watch_private_key')
-  },
-
   // Cached 16-byte ECDH-derived session key. The key is a constant for a paired
   // watch+vehicle (static watchPrivateKey × static vehicle EC pubkey), so it's
   // computed once (at pair time, or first connect after this cache was added)
@@ -117,13 +101,14 @@ const store = {
   get isReady() {
     return !!this.vehicleVin
   },
-  // Enrolled = has the long-term keypair (both halves) + VIN. This is everything
-  // needed to ATTEMPT a connect and derive the session key — it gates connects
-  // (session.js). The session key itself is NOT required here: it's produced by
-  // the connect this gate allows (deriving it requires connecting), so requiring
-  // it would deadlock the bootstrap.
+  // Enrolled = has the enrolled public key + VIN. This is everything the watch
+  // needs to ATTEMPT a connect and derive the session key — it gates connects
+  // (session.js). The private key lives only on the phone (it does the ECDH); the
+  // session key itself is NOT required here: it's produced by the connect this
+  // gate allows (deriving it requires connecting), so requiring it would deadlock
+  // the bootstrap.
   get isEnrolled() {
-    return !!(this.watchPublicKey && this.watchPrivateKey && this.vehicleVin)
+    return !!(this.watchPublicKey && this.vehicleVin)
   },
   // Fully paired = enrolled AND the session key is cached, i.e. ready to unlock
   // without the phone. Use for UI/status, NOT as the connect gate.
@@ -176,7 +161,6 @@ const store = {
       }
     }
     console.log(`[STORE.diag] watchPublicKey:      ${lsLen('watchPublicKey')}`)
-    console.log(`[STORE.diag] watchPrivateKey:     ${lsLen('watchPrivateKey')}`)
     console.log(
       `[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`,
     )
@@ -192,7 +176,8 @@ const store = {
     localStorage.removeItem('vehicleMac')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
-    // Legacy: clear any doublings-table artifacts left by older builds.
+    // Legacy: clear artifacts left by older builds — the doublings table and the
+    // watch-side private key (the watch no longer stores either).
     localStorage.removeItem('hasDoublingsTable')
     this.removeBinary('vehicle_doublings_table')
     this.removeBinary('watch_private_key')

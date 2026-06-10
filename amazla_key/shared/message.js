@@ -8,13 +8,13 @@ let logger
 function initLogger() {
   if (typeof __ZEPPOS__ !== 'undefined') {
     logger = Logger.getLogger('device-message')
-    // logger.level = logger.levels.warn
+    // logger.level = logger.levels.warn  // no-op on fw 4.1.0 — use DEBUG flag below
   } else {
     logger = Logger.getLogger('side-message')
   }
 }
 
-const DEBUG = true
+const DEBUG = false
 
 // Large payloads (e.g. the 16 KB doublings table over BLE) froze the watch
 // for seconds because each chunk was hex-/JSON-serialized synchronously on

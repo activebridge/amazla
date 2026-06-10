@@ -176,7 +176,7 @@ class TeslaSession {
           error: 'Vehicle not in BLE range. Wake the car (touch a door handle) and retry.',
         })
       }
-    }, 8000, expectedName)
+    }, 3000, expectedName)
   }
   _doConnect(mac, _attempt, callback) {
     console.log(`[SESSION] Dialing vehicle: ${mac}`)
@@ -211,14 +211,14 @@ class TeslaSession {
     // identity and ECDH. Sending an ephemeral key here makes the vehicle
     // respond with SessionInfo{status:KEY_NOT_ON_WHITELIST=1} because only
     // the enrolled key is in its whitelist.
-    const watchPriv = store.watchPrivateKey
     const watchPub = store.watchPublicKey
-    if (!watchPriv || watchPriv.length !== 32 || !watchPub || watchPub.length !== 65) {
-      callback({ success: false, error: 'Watch keypair missing — re-pair from phone' })
+    if (!watchPub || watchPub.length !== 65) {
+      callback({ success: false, error: 'Watch public key missing — re-pair from phone' })
       return
     }
-    // watchPriv validated above (re-pair guard); the ECDH itself runs on the
-    // phone, so the watch never needs the private key past this point.
+    // Only the enrolled PUBLIC key is needed: it's the SessionInfoRequest identity,
+    // and the ECDH runs on the phone (no BigInt in QuickJS). The watch holds no
+    // private key — the enrolled secret never leaves the companion.
     this.ephemeralPublicKey = watchPub // long-term key; name kept for crypto-path compat
     this.routingAddress = generateRoutingAddress()
     this._lastRequestUuid = generateUUID()

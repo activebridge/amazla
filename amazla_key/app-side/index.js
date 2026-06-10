@@ -60,25 +60,25 @@ const dispatch = async (method, response, params = {}) => {
 
 const actions = {
   BLE_SYNC_KEYS: async () => {
-    console.log('[App] Syncing BLE keys to watch')
-    // Return BOTH priv+pub: Tesla protocol uses one long-term keypair for both
-    // SessionInfoRequest identity AND ECDH (vehicle-command Go SDK pattern).
-    // Watch must hold the private key to derive the session secret locally.
+    console.log('[App] Syncing BLE public key to watch')
+    // Send only the PUBLIC key: it's the SessionInfoRequest identity. The ECDH
+    // runs here on the phone (BLE_COMPUTE_SHARED_SECRET), so the private key never
+    // leaves the companion — the watch has no use for it (no BigInt in QuickJS).
     try {
-      const { publicKeyBinary, privateKeyBinary, regenerated } = ensureValidKeypair()
-      console.log(regenerated ? '[App] ✓ Regenerated and stored enrolled key pair' : '[App] Sending existing watch keypair to watch')
-      return { success: true, publicKeyBinary, privateKeyBinary }
+      const { publicKeyBinary, regenerated } = ensureValidKeypair()
+      console.log(regenerated ? '[App] ✓ Regenerated and stored enrolled key pair' : '[App] Sending existing watch public key to watch')
+      return { success: true, publicKeyBinary }
     } catch (e) {
       return { success: false, message: e.message || 'Failed to store keys' }
     }
   },
 
   BLE_PAIR_SETUP: async () => {
-    console.log('[App] BLE_PAIR_SETUP: syncing keys and building pair/verify messages')
-    const { publicKeyBinary, privateKeyBinary } = ensureValidKeypair()
-    const r = bleCrypto.pairSetup(publicKeyBinary)
-    if (!r.success) return r
-    return { ...r, watchPrivateKey: privateKeyBinary }
+    console.log('[App] BLE_PAIR_SETUP: syncing key and building pair/verify messages')
+    // Returns { success, watchPublicKey, pairMsg, verifyMsg } — no private key
+    // crosses BLE; the phone keeps it for ECDH.
+    const { publicKeyBinary } = ensureValidKeypair()
+    return bleCrypto.pairSetup(publicKeyBinary)
   },
 
   // No-op success. The pair response's field 17 holds a signer/admin key,

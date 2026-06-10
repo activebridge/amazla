@@ -8,7 +8,7 @@ function initLogger() {
   logger = Logger.getLogger('side-message')
 }
 
-const DEBUG = true
+const DEBUG = false
 
 // See message.js: cap heavy log paths so large payloads (16 KB table) don't
 // get hex-/JSON-serialized synchronously. Big frames log a size marker only.

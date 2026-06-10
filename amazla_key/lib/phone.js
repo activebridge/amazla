@@ -67,26 +67,22 @@ class Phone {
     })
   }
 
-  // Generate or fetch enrolled watch keypair. Writes store.watchPublicKey + watchPrivateKey.
-  // Tesla protocol uses the same long-term keypair for SessionInfoRequest identity AND ECDH,
-  // so the watch must hold both halves locally (mirrors vehicle-command Go SDK).
-  // cb: { success, publicKeyBinary, privateKeyBinary }
+  // Generate or fetch the enrolled watch key. Writes store.watchPublicKey only —
+  // the private key stays on the phone, which does the ECDH (no BigInt on watch).
+  // cb: { success, publicKeyBinary }
   syncKeys(cb) {
     this._call('BLE_SYNC_KEYS', {}, cb, (r) => {
       store.watchPublicKey = r.publicKeyBinary
-      if (r.privateKeyBinary) store.watchPrivateKey = r.privateKeyBinary
     })
   }
 
-  // Sync/generate watch keypair and pre-build both BLE messages in one IPC call.
-  // Writes store.watchPublicKey + watchPrivateKey. cb: { success, pairMsg, verifyMsg }
+  // Sync/generate watch key and pre-build both BLE messages in one IPC call.
+  // Writes store.watchPublicKey only. cb: { success, pairMsg, verifyMsg }
   pairSetup(cb) {
     this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
       const _hex = (s) => { if (s == null) return '<null>'; let h=''; for (let i=0;i<s.length;i++) h += (s.charCodeAt(i)&0xff).toString(16).padStart(2,'0'); return h }
       console.log(`[Watch.diag] r.watchPublicKey:  len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length} hex=${_hex(r.watchPublicKey)}`)
-      console.log(`[Watch.diag] r.watchPrivateKey: len=${r.watchPrivateKey == null ? 'null' : r.watchPrivateKey.length} hex=${_hex(r.watchPrivateKey)}`)
       store.watchPublicKey = r.watchPublicKey
-      if (r.watchPrivateKey) store.watchPrivateKey = r.watchPrivateKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })
   }

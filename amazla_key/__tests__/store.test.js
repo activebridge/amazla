@@ -122,10 +122,10 @@ describe('lib/store.js', () => {
 
   // ── isReady / isEnrolled / isPaired ────────────────────────────────────────
 
-  // Enrolled = keypair + VIN (gates connects). Fully paired also needs the key.
+  // Enrolled = public key + VIN (gates connects). Fully paired also needs the
+  // session key. The private key lives only on the phone, never on the watch.
   function setupEnrolled() {
     store.watchPublicKey        = bytesToBinaryString(new Uint8Array(65).fill(0x04))
-    store.watchPrivateKey       = bytesToBinaryString(new Uint8Array(32).fill(0x05))
     store.vehicleEcPublicKey    = new Uint8Array(65).fill(0x04)
     store.vehicleVin            = '5YJ3E1EA6JF020598'
   }
@@ -140,15 +140,15 @@ describe('lib/store.js', () => {
     expect(store.isReady).toBe(true)
   })
 
-  test('isEnrolled: true with keypair + VIN, even without a session key', () => {
+  test('isEnrolled: true with public key + VIN, even without a session key', () => {
     setupEnrolled()
     expect(store.isEnrolled).toBe(true)
     expect(store.sessionKey).toBeFalsy()
   })
 
-  test('isEnrolled: false when watchPrivateKey missing', () => {
+  test('isEnrolled: false when watchPublicKey missing', () => {
     setupEnrolled()
-    store.removeBinary('watch_private_key')
+    store.removeItem('watchPublicKey')
     expect(store.isEnrolled).toBe(false)
   })
 

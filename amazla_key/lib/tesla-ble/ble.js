@@ -39,7 +39,9 @@ const LAST_CONNECT_ID_KEY = 'lastBleConnectId'
 let _localStorage = null
 const _ls = () => {
   if (!_localStorage) {
-    try { _localStorage = new LocalStorage() } catch (_e) {}
+    try {
+      _localStorage = new LocalStorage()
+    } catch (_e) {}
   }
   return _localStorage
 }
@@ -75,8 +77,7 @@ const _dumpDevice = (d) => {
   if (d.vendor_id !== undefined) parts.push(`vendorId=${d.vendor_id}`)
   if (d.vendor_data) parts.push(`vendorData=${d.vendor_data}`)
   if (d.service_uuid_array && d.service_uuid_array.length) parts.push(`services=[${d.service_uuid_array.join(',')}]`)
-  if (d.service_data_array && d.service_data_array.length)
-    parts.push(`svcData=${JSON.stringify(d.service_data_array)}`)
+  if (d.service_data_array && d.service_data_array.length) parts.push(`svcData=${JSON.stringify(d.service_data_array)}`)
   return parts.join(' ')
 }
 const _frame = (data) => {
@@ -127,13 +128,21 @@ class TeslaBLE {
     const saved = _readSavedConnectId()
     if (saved !== null) {
       console.log(`[BLE] Clearing stale native state (${reason}): mstDisconnect(${saved})`)
-      try { hmBle.mstDisconnect(saved) } catch (e) { console.log('[BLE]   mstDisconnect threw (ignored):', e && e.message) }
+      try {
+        hmBle.mstDisconnect(saved)
+      } catch (e) {
+        console.log('[BLE]   mstDisconnect threw (ignored):', e && e.message)
+      }
       _writeSavedConnectId(null)
     }
     // Best-effort: stop any in-flight scan and drop any stale callbacks the
     // previous run left registered on the native singleton.
-    try { hmBle.mstStopScan() } catch (_e) {}
-    try { if (hmBle.mstOffAllCb) hmBle.mstOffAllCb() } catch (_e) {}
+    try {
+      hmBle.mstStopScan()
+    } catch (_e) {}
+    try {
+      if (hmBle.mstOffAllCb) hmBle.mstOffAllCb()
+    } catch (_e) {}
   }
   _ensureBLE() {
     if (!this.ble) this.ble = new BLEMaster()
@@ -353,8 +362,12 @@ class TeslaBLE {
   // recovers a wedged link. Call AFTER disconnect() and BEFORE the next connect,
   // while no BLEMaster is attached, so only stale registrations are cleared.
   flushNative() {
-    try { hmBle.mstStopScan() } catch (_e) {}
-    try { if (hmBle.mstOffAllCb) hmBle.mstOffAllCb() } catch (_e) {}
+    try {
+      hmBle.mstStopScan()
+    } catch (_e) {}
+    try {
+      if (hmBle.mstOffAllCb) hmBle.mstOffAllCb()
+    } catch (_e) {}
   }
   reset() {
     this.connected = false
@@ -499,4 +512,4 @@ class TeslaBLE {
 }
 const teslaBLE = new TeslaBLE()
 export default teslaBLE
-export { TESLA_SERVICE_UUID, TESLA_WRITE_UUID, TESLA_READ_UUID, CONNECTION_CONFIG }
+export { CONNECTION_CONFIG, TESLA_READ_UUID, TESLA_SERVICE_UUID, TESLA_WRITE_UUID }

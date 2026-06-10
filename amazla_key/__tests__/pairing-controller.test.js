@@ -35,19 +35,12 @@ function makePhone(overrides = {}) {
   return {
     pairSetup(cb) {
       // Mirrors the real phone-side flow: app-side/index.js BLE_PAIR_SETUP
-      // generates a fresh keypair, stores BOTH halves in settings, and returns
-      // both to the watch. lib/phone.js then persists store.watchPrivateKey
-      // alongside store.watchPublicKey. Tests must reproduce this contract or
-      // session establishment will fail later with "Watch keypair missing".
+      // generates a fresh keypair, keeps the private key in settings, and returns
+      // only the PUBLIC key to the watch. lib/phone.js persists store.watchPublicKey.
+      // The private key never crosses BLE — the phone does the ECDH.
       const result = bleCrypto.pairSetup()  // generates a fresh watch keypair
       if (!result.success) return cb({ success: false, error: result.error })
       store.watchPublicKey = result.watchPublicKey  // binary string
-      // Real flow: app-side reads tesla_private_key from settingsStorage and
-      // returns it as watchPrivateKey; phone.js persists it on the watch.
-      // bleCrypto.pairSetup() doesn't expose the private key, so generate one
-      // here that's structurally valid (32 bytes) — pair flow itself never
-      // exercises it, but downstream session code will.
-      store.watchPrivateKey = bytesToBinaryString(new Uint8Array(32).fill(0x07))
       cb({ success: true, pairMsg: result.pairMsg, verifyMsg: result.verifyMsg })
     },
     completePairing(rawResponseBinary, cb) {
@@ -456,15 +449,14 @@ describe('BLE scan path', () => {
     expect(result.states).toContain('scanning')
     expect(result.states).toContain('connecting')
     expect(result.states).toContain('done')
-    // Tesla protocol requires the long-term enrolled keypair on the watch for
-    // session establishment (SessionInfoRequest identity + ECDH). Pair must
-    // persist BOTH halves before completing or the next session attempt fails
-    // with KEY_NOT_ON_WHITELIST. See project_amazla_key_session_long_term_key.
+    // Tesla protocol requires the enrolled PUBLIC key on the watch for session
+    // establishment (SessionInfoRequest identity). Pair must persist it before
+    // completing or the next attempt fails with KEY_NOT_ON_WHITELIST. The private
+    // key stays on the phone (it does the ECDH). See project_amazla_key_session_long_term_key.
     expect(store.watchPublicKey).toBeTruthy()
     expect(store.watchPublicKey.length).toBe(65)
-    expect(store.watchPrivateKey).toBeTruthy()
-    expect(store.watchPrivateKey.length).toBe(32)
-    // Enrollment (keypair + VIN) is complete after pairing. The session key is
+    expect(store.watchPrivateKey).toBeFalsy() // never persisted on the watch
+    // Enrollment (public key + VIN) is complete after pairing. The session key is
     // derived on the SessionInfo exchange (not wired in this controller test),
     // so assert isEnrolled here; isPaired (+sessionKey) is covered in store/session tests.
     expect(store.isEnrolled).toBe(true)
