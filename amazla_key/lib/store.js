@@ -4,22 +4,34 @@ import { binaryStringToBytes } from './tesla-ble/crypto/binary-utils.js'
 
 const localStorage = new LocalStorage()
 
+// In-memory cache of file-backed values. Each readFileSync costs ~50-130ms on
+// the watch, and a single connect reads vehicle_ec_public_key up to 4x and
+// session_key 2x (incl. two presence-diag logs) — ~600ms of redundant I/O before
+// the fast/slow branch even runs. Cache keyed by file path; coherent because the
+// only writers are writeBinary/removeBinary below (no external .dat writes). A
+// miss is cached as `undefined` so a not-yet-derived key isn't re-read each access.
+const _fileCache = Object.create(null)
+
 const readBinary = (path) => {
+  if (path in _fileCache) return _fileCache[path]
+  let val
   try {
     const raw = readFileSync({ path: `${path}.dat` })
-    if (raw) return new Uint8Array(raw)
-    return undefined
+    val = raw ? new Uint8Array(raw) : undefined
   } catch (_e) {
-    return undefined
+    val = undefined
   }
+  _fileCache[path] = val
+  return val
 }
 
 const writeBinary = (path, bytes) => {
-  bytes &&
-    writeFileSync({
-      path: `${path}.dat`,
-      data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-    })
+  if (!bytes) return
+  writeFileSync({
+    path: `${path}.dat`,
+    data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  })
+  _fileCache[path] = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
 }
 
 const get = (name) => {
@@ -129,6 +141,7 @@ const store = {
   },
 
   removeBinary: (key) => {
+    _fileCache[key] = undefined // keep the read cache coherent with the file
     try {
       rmSync({ path: `${key}.dat` })
     } catch (_e) {
