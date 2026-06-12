@@ -24,6 +24,7 @@ function resetTesla() {
   tesla.frunkOpen   = false
   tesla.sleeping    = false
   tesla.userPresent = false
+  tesla.charge      = null
   tesla.connection  = { status: 'checking', error: null }
   tesla.busy        = false
   tesla._listeners  = []
@@ -236,6 +237,134 @@ describe('_applyStatus', () => {
   })
 })
 
+// ─── cached state snapshot ────────────────────────────────────────────────────
+// The car can take 10–20s to volunteer its first VehicleStatus on a fresh
+// connection (device captures 2026-06-11), so the last applied state is
+// persisted and painted immediately on the next app load.
+
+describe('cached state snapshot', () => {
+  test('_applyStatus persists the snapshot to store.lastVehicleState', () => {
+    tesla._applyStatus(makeStatus({ vehicleLockState: 0, userPresence: 1 }))
+    const cached = store.lastVehicleState
+    expect(cached).not.toBeNull()
+    expect(cached.locked).toBe(false)
+    expect(cached.userPresent).toBe(true)
+    expect(cached.trunkOpen).toBe(false)
+  })
+
+  test('redundant snapshot (no change) does not rewrite the cache', () => {
+    tesla._applyStatus(makeStatus({ vehicleLockState: 0 }))
+    store.lastVehicleState = null
+    tesla._applyStatus(makeStatus({ vehicleLockState: 0 })) // same state again
+    expect(store.lastVehicleState).toBeNull() // unchanged → not persisted
+  })
+
+  test('_hydrateCachedState paints the persisted snapshot over the defaults', () => {
+    store.lastVehicleState = { locked: false, chargePortOpen: true }
+    tesla.locked = true
+    tesla.chargePortOpen = false
+    tesla._hydrateCachedState()
+    expect(tesla.locked).toBe(false)
+    expect(tesla.chargePortOpen).toBe(true)
+    expect(tesla.df).toBe(false) // keys absent from the cache keep their defaults
+  })
+
+  test('hydrate is a no-op when nothing is cached', () => {
+    store.lastVehicleState = null
+    tesla.locked = true
+    expect(() => tesla._hydrateCachedState()).not.toThrow()
+    expect(tesla.locked).toBe(true)
+  })
+
+  test('non-boolean values in the cache are ignored (no type smuggling into the UI)', () => {
+    store.lastVehicleState = { locked: 'nope', trunkOpen: 1 }
+    tesla.locked = true
+    tesla._hydrateCachedState()
+    expect(tesla.locked).toBe(true)
+    expect(tesla.trunkOpen).toBe(false)
+  })
+})
+
+// ─── charge block (infotainment, pull-only) ───────────────────────────────────
+// Charge data comes from GetVehicleData (no pushes), so it lives in a separate
+// `charge` block carrying its own capture time. One state blob, two independent
+// writers (VCSEC push + charge fetch) that must not clobber each other.
+
+describe('charge state snapshot', () => {
+  test('_applyChargeState stamps a timestamp and persists into the same blob', () => {
+    tesla._applyChargeState({ level: 70, range: 198, state: 'Disconnected' })
+    expect(tesla.charge.level).toBe(70)
+    expect(tesla.charge.range).toBe(198)
+    expect(tesla.charge.state).toBe('Disconnected')
+    expect(typeof tesla.charge.ts).toBe('number')
+    expect(store.lastVehicleState.charge.level).toBe(70)
+  })
+
+  test('a VCSEC status update preserves an existing charge block', () => {
+    tesla._applyChargeState({ level: 70, range: 198, state: 'Charging' })
+    tesla._applyStatus(makeStatus({ vehicleLockState: 1 })) // different writer
+    expect(store.lastVehicleState.locked).toBe(true)
+    expect(store.lastVehicleState.charge.level).toBe(70) // not clobbered
+  })
+
+  test('a charge update preserves the VCSEC fields', () => {
+    tesla._applyStatus(makeStatus({ vehicleLockState: 0, vehicleSleepStatus: 1 }))
+    tesla._applyChargeState({ level: 42, range: 110, state: 'Complete' })
+    expect(store.lastVehicleState.locked).toBe(false)
+    expect(store.lastVehicleState.sleeping).toBe(true)
+    expect(store.lastVehicleState.charge.level).toBe(42)
+  })
+
+  test('_hydrateCachedState restores the charge block', () => {
+    store.lastVehicleState = { locked: false, charge: { level: 55, range: 150, state: 'Charging', ts: 123 } }
+    tesla._hydrateCachedState()
+    expect(tesla.locked).toBe(false)
+    expect(tesla.charge.level).toBe(55)
+    expect(tesla.charge.ts).toBe(123)
+  })
+
+  test('hydrate ignores a non-object charge value', () => {
+    store.lastVehicleState = { locked: true, charge: 'oops' }
+    tesla.charge = null
+    tesla._hydrateCachedState()
+    expect(tesla.charge).toBeNull()
+  })
+
+  test('_applyChargeState is a no-op on null (no charge data yet)', () => {
+    tesla.charge = null
+    tesla._applyChargeState(null)
+    expect(tesla.charge).toBeNull()
+  })
+
+  test('fetchChargeState applies a successful session result', () => {
+    jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 64, range: 175, state: 'Disconnected' } }))
+    const cb = jest.fn()
+    tesla.fetchChargeState(cb)
+    expect(tesla.charge.level).toBe(64)
+    expect(tesla.charge.state).toBe('Disconnected')
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: true }))
+  })
+
+  test('fetchChargeState failure leaves existing charge untouched', () => {
+    tesla._applyChargeState({ level: 90, range: 250, state: 'Complete' })
+    jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: false, error: 'timeout' }))
+    tesla.fetchChargeState()
+    expect(tesla.charge.level).toBe(90) // unchanged
+  })
+
+  test('refresh loads charge after a successful status fetch', () => {
+    mockEstablished()
+    mockGetStatus({ vehicleLockState: 1 })
+    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 71, range: 200, state: 'Charging' } }))
+    tesla.refresh()
+    expect(chargeSpy).toHaveBeenCalled()
+    expect(tesla.charge.level).toBe(71)
+  })
+})
+
 // ─── connect() ────────────────────────────────────────────────────────────────
 
 describe('connect()', () => {
@@ -324,6 +453,7 @@ describe('refresh()', () => {
     mockEstablished()
     jest.spyOn(teslaSession, 'getVehicleStatus')
       .mockImplementation(cb => cb({ success: false, error: 'No response' }))
+    jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
     const liveSpy = jest.spyOn(teslaSession, 'startStatusPushListener')
 
     tesla.refresh()
@@ -331,6 +461,37 @@ describe('refresh()', () => {
     expect(tesla.connection.status).toBe('online')
     expect(tesla.connection.error).toBe(null)
     expect(liveSpy).toHaveBeenCalled()
+  })
+
+  // A dozing car keeps beaconing but ignores GET_STATUS (device 2026-06-11:
+  // connect-time fetch silent for 15s; the same fetch answered in 0.8s right
+  // after an actuation). On a silent short fetch, wake it and fetch again.
+  test('silent status → wakes the vehicle and re-fetches', () => {
+    mockEstablished()
+    const results = [
+      { success: false, error: 'Vehicle status timed out' },
+      { success: true, status: makeStatus({ vehicleLockState: 0 }) },
+    ]
+    const timeouts = []
+    let calls = 0
+    jest.spyOn(teslaSession, 'getVehicleStatus')
+      .mockImplementation((cb, timeoutMs) => { timeouts.push(timeoutMs); cb(results[calls++]) })
+    const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+
+    tesla.refresh()
+
+    expect(timeouts[0]).toBe(4000) // short first fetch — fall through fast
+    expect(wakeSpy).toHaveBeenCalled()
+    expect(calls).toBe(2)
+    expect(tesla.locked).toBe(false) // re-fetched state applied
+  })
+
+  test('answered status → no wake sent', () => {
+    mockEstablished()
+    mockGetStatus()
+    const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+    tesla.refresh()
+    expect(wakeSpy).not.toHaveBeenCalled()
   })
 
   test('calls optional callback with success', () => {

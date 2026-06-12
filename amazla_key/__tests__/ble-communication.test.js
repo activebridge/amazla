@@ -1,8 +1,53 @@
 // BLE Communication Tests
 // Tests for Tesla BLE communication layer
 
+import { jest } from '@jest/globals'
 import { hexToBytes, bytesToHex } from '../app-side/ble-crypto.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
+
+// Device capture 2026-06-11: a GET_STATUS frame was still chunking when the
+// passive-entry responder started its AuthenticationResponse — the two 20-byte
+// chunk streams interleaved on the write characteristic and the car (which
+// reassembles by length prefix) answered NEITHER. Frames must be serialized.
+describe('TX serialization — chunked sends must not interleave', () => {
+  afterEach(() => {
+    teslaBLE.reset()
+    jest.useRealTimers()
+  })
+
+  test('a frame sent mid-chunking is queued and drains after the first completes', () => {
+    jest.useFakeTimers()
+    const writes = []
+    teslaBLE.ble = { write: { characteristic: (_uuid, buf) => writes.push(new Uint8Array(buf)) } }
+    teslaBLE._sendMessage(new Uint8Array(50).fill(0xaa)) // 3 chunks
+    teslaBLE._sendMessage(new Uint8Array(50).fill(0xbb)) // mid-chunking → queued
+    expect(writes.length).toBe(1) // only the first chunk of A so far
+    jest.runAllTimers()
+    expect(writes.length).toBe(6)
+    // Every chunk of A precedes every chunk of B.
+    expect(writes.map((w) => w[0])).toEqual([0xaa, 0xaa, 0xaa, 0xbb, 0xbb, 0xbb])
+  })
+
+  test('single-chunk frames release the TX lock synchronously', () => {
+    const writes = []
+    teslaBLE.ble = { write: { characteristic: (_uuid, buf) => writes.push(new Uint8Array(buf)) } }
+    teslaBLE._sendMessage(new Uint8Array(10).fill(0x01))
+    teslaBLE._sendMessage(new Uint8Array(10).fill(0x02))
+    expect(writes.length).toBe(2) // no queueing needed
+    expect(teslaBLE._txBusy).toBe(false)
+  })
+
+  test('reset() drops any queued frames (no sends into a dead/new link)', () => {
+    jest.useFakeTimers()
+    const writes = []
+    teslaBLE.ble = { write: { characteristic: (_uuid, buf) => writes.push(new Uint8Array(buf)) } }
+    teslaBLE._sendMessage(new Uint8Array(50).fill(0xaa))
+    teslaBLE._sendMessage(new Uint8Array(50).fill(0xbb))
+    teslaBLE.reset()
+    expect(teslaBLE._txQueue.length).toBe(0)
+    expect(teslaBLE._txBusy).toBe(false)
+  })
+})
 
 describe('RX framing orphan/oversized guard', () => {
   beforeEach(() => teslaBLE.reset())

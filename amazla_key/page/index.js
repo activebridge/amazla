@@ -5,7 +5,7 @@ import { push } from '@zos/router'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
 
-import UI, { button, circle, img, page, rect } from '../../pages/ui'
+import UI, { button, circle, img, page, rect, text } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
 
@@ -172,6 +172,12 @@ const render = () => {
   !tesla.chargePortOpen && button({ ...OPEN, x: -130, y: 40, w: 100, h: 100, click_func: onChargePort }, slide1)
   tesla.chargePortOpen && circle({ centered: true, x: -110, y: 150, radius: 12, color: 0x00ccff }, slide1)
 
+  // Battery readout (infotainment domain, pull-only). Loaded on connect — painted
+  // from cache instantly, refreshed by the live fetch. Tap to refresh on demand
+  // (no charge pushes exist, so an idle screen would otherwise go stale). The
+  // capture timestamp dims a stale value so a cached "Charging" can't mislead.
+  renderCharge(slide1)
+
   rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
 
   // ── Screen 2: debug controls (scroll down from the car) ──────────────────
@@ -238,6 +244,37 @@ const render = () => {
     hmUI.scrollToPage(0, false)
     scrollPages = 2
   }
+}
+
+// Battery % + charging state at the top of the car screen. Color: green while
+// charging, amber when low, white otherwise; greyed when the snapshot is stale
+// (> 1 h old) so a cached value reads as "old", not current. A wide transparent
+// button over the text makes the whole readout a tap-to-refresh target.
+const CHARGE_STALE_SEC = 3600
+const renderCharge = (slide1) => {
+  const c = tesla.charge
+  if (!c || typeof c.level !== 'number') return
+  const stale = Math.floor(Date.now() / 1000) - (c.ts || 0) > CHARGE_STALE_SEC
+  let color = 0xffffff
+  if (stale) color = 0x888888
+  else if (c.state === 'Charging') color = 0x44dd44
+  else if (c.level <= 20) color = 0xffaa33
+  const showState = c.state && c.state !== 'Disconnected' && c.state !== 'Unknown'
+  const label = showState ? c.level + '% · ' + c.state : c.level + '%'
+  // Tap target FIRST so the text draws on top and stays legible whether or not
+  // `alpha` is honored on a BUTTON (transparent target if it is; a thin status-
+  // bar-like strip behind the text if it isn't — either reads fine).
+  button({ centered: true, x: 0, y: -211, w: 320, h: 30, text: '', normal_color: 0x000000, press_color: 0x111111, alpha: 0, radius: 0, click_func: onChargeRefresh }, slide1)
+  text({ centered: true, x: 0, y: -211, w: 320, h: 30, text: label, text_size: 22, color }, slide1)
+}
+
+const onChargeRefresh = () => {
+  if (tesla.connection.status !== 'online') return
+  hmUI.updateStatusBarTitle('Charge…')
+  tesla.fetchChargeState((r) => {
+    hmUI.updateStatusBarTitle(r.success ? '✓ Charge' : '✗ Charge')
+    if (!r.success) hmUI.showToast({ text: r.error || 'Charge unavailable' })
+  })
 }
 
 const onTestPurchase = () => {

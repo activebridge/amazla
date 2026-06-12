@@ -1,11 +1,13 @@
 // Session protocol tests: vcsec session builders, SessionInfo parsing, HMAC wiring
 
+import { jest } from '@jest/globals'
 import {
   SIGNATURE_TYPE_HMAC_PERSONALIZED,
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_OPEN_TRUNK,
   RKE_ACTION_OPEN_FRUNK,
+  RKE_ACTION_WAKE_VEHICLE,
   buildRoutableMessage,
   buildSessionInfoRequest,
   buildClosureMoveRequest,
@@ -44,6 +46,10 @@ describe('RKE action constants', () => {
     expect(RKE_ACTION_LOCK).toBe(1)
     expect(RKE_ACTION_OPEN_TRUNK).toBe(2)
     expect(RKE_ACTION_OPEN_FRUNK).toBe(3)
+  })
+
+  test('WAKE_VEHICLE=30 (verified in teslamotors + acvigue protos) — DO NOT CHANGE', () => {
+    expect(RKE_ACTION_WAKE_VEHICLE).toBe(30)
   })
 
   test('SIGNATURE_TYPE_HMAC_PERSONALIZED=8 (signatures.proto SignatureType enum)', () => {
@@ -980,5 +986,124 @@ describe('passive entry — _handleAuthenticationRequest responder', () => {
     s._commandInFlight = false
     teslaBLE.idleCallback({ success: true, data: authFrame(0xab) })
     expect(sent.length).toBe(1)
+  })
+})
+
+// Device captures 2026-06-11: while getVehicleStatus owned the BLE response slot
+// (15s deadline), the streaming IDENTIFICATION beacons were requeued unanswered —
+// the idle listener never saw them — and the car DROPPED THE LINK after ~8s,
+// before any status arrived. App-load state never loaded. getVehicleStatus must
+// dispatch passive-entry requests itself while it waits.
+describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
+  let sent, pendingCb
+
+  function makeSession() {
+    store.vehicleVin = null
+    const s = new TeslaSession()
+    s.established  = true
+    s.sessionKey   = new Uint8Array(16).fill(0x0b)
+    s.epoch        = new Uint8Array(16).fill(0xee)
+    s.counter      = 5
+    s.clockTime    = 1000
+    s.routingAddress = new Uint8Array(16).fill(0x01)
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    initSessionHmacs(s)
+    return s
+  }
+
+  function authFrame(tokenByte = 0xab, reason = 1) {
+    const token = new Uint8Array(20).fill(tokenByte)
+    const reqToken = encodeBytes(1, token)
+    const authReq = new Uint8Array([
+      ...encodeBytes(2, reqToken),
+      0x18, 0x02,
+      0x22, 0x01, reason,
+    ])
+    return encodeBytes(10, encodeBytes(3, authReq))
+  }
+
+  beforeEach(() => {
+    sent = []
+    pendingCb = null
+    teslaBLE.connected = true
+    teslaBLE.send = (msg, cb) => { sent.push(msg); pendingCb = cb }
+  })
+  afterEach(() => {
+    teslaBLE.connected = false
+    delete teslaBLE.send
+    teslaBLE.responseCallback = null
+  })
+
+  test('auth beacon during the status wait → AuthenticationResponse sent, fetch not settled', () => {
+    jest.useFakeTimers()
+    try {
+      const s = makeSession()
+      const results = []
+      s.getVehicleStatus((r) => results.push(r))
+      expect(sent.length).toBe(1) // GET_STATUS out
+
+      // Unaddressed beacon lands on the in-flight slot — must be ANSWERED, not requeued.
+      pendingCb({ success: true, data: authFrame(0xcd, 1) })
+      expect(sent.length).toBe(2)
+      const unsigned = decodeMessage(decodeMessage(sent[1])[10])
+      expect(unsigned[3]).toBeDefined() // authenticationResponse
+      expect(results.length).toBe(0)    // beacon did not settle the fetch
+
+      // The fetch stays bounded by its own deadline.
+      jest.advanceTimersByTime(s.commandTimeoutMs + 1)
+      expect(results.length).toBe(1)
+      expect(results[0].success).toBe(false)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('does not hold the responder gate (no _commandInFlight during a status fetch)', () => {
+    const s = makeSession()
+    s.getVehicleStatus(() => {})
+    expect(s._commandInFlight).not.toBe(true)
+    s.reset()
+  })
+
+  test('honors a custom deadline (short app-load fetch)', () => {
+    jest.useFakeTimers()
+    try {
+      const s = makeSession()
+      const results = []
+      s.getVehicleStatus((r) => results.push(r), 4000)
+      jest.advanceTimersByTime(3999)
+      expect(results.length).toBe(0)
+      jest.advanceTimersByTime(2)
+      expect(results.length).toBe(1)
+      expect(results[0].success).toBe(false)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('wake() sends RKE_ACTION_WAKE_VEHICLE via the signed command path', () => {
+    const s = makeSession()
+    const actions = []
+    s.sendCommand = (action, cb) => { actions.push(action); cb({ success: true }) }
+    s.wake(() => {})
+    expect(actions).toEqual([RKE_ACTION_WAKE_VEHICLE])
+  })
+
+  test('still defers to a REAL command in flight (gate respected)', () => {
+    jest.useFakeTimers()
+    try {
+      const s = makeSession()
+      const results = []
+      s.getVehicleStatus((r) => results.push(r))
+      s._commandInFlight = true // e.g. an infotainment command racing the fetch
+      const result = { success: true, data: authFrame(0xcd, 1) }
+      pendingCb(result)
+      expect(sent.length).toBe(1)       // no responder send — command owns the slot
+      expect(result._requeue).toBe(true) // beacon requeued as before
+      jest.advanceTimersByTime(s.commandTimeoutMs + 1)
+      s._commandInFlight = false
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

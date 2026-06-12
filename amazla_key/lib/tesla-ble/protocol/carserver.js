@@ -29,19 +29,55 @@ const buildHvacAutoAction = (powerOn) => {
   return buildAction(encodeBytes(10, hvac))
 }
 
-// Parse a decrypted car-server Response far enough to pull the charge state's
-// battery_level. The full Response/VehicleData schema is large; we walk only the
-// path we need and return null if the shape doesn't match (caller logs raw bytes).
-const parseBatteryLevel = (responseBytes) => {
+// IEEE-754 float32, little-endian (protobuf fixed32 / wire type 5). QuickJS has
+// no guaranteed DataView ergonomics in this path, so decode the bits by hand.
+const decodeFloat32LE = (b) => {
+  const bits = ((b[3] << 24) | (b[2] << 16) | (b[1] << 8) | b[0]) >>> 0
+  const sign = bits >>> 31 ? -1 : 1
+  const exp = (bits >>> 23) & 0xff
+  const frac = bits & 0x7fffff
+  if (exp === 0) return sign * frac * Math.pow(2, -149) // subnormal / zero
+  if (exp === 0xff) return frac ? NaN : sign * Infinity
+  return sign * (1 + frac * Math.pow(2, -23)) * Math.pow(2, exp - 127)
+}
+
+// ChargeState.charging_state (field 1) is a ChargingState message whose oneof
+// member's FIELD NUMBER is the state (each member is an empty Void). So we read
+// which field is present, not a value.
+const CHARGING_STATE_NAMES = {
+  1: 'Unknown', 2: 'Disconnected', 3: 'NoPower', 4: 'Starting',
+  5: 'Charging', 6: 'Complete', 7: 'Stopped', 8: 'Calibrating',
+}
+
+// Parse a car-server Response (the PLAINTEXT bytes in RoutableMessage field 10 —
+// we don't request FLAG_ENCRYPT_RESPONSE, so the reply isn't GCM-encrypted) for
+// the charge snapshot. Path: Response{1 actionStatus, 2 vehicleData}
+// → VehicleData{3 charge_state} → ChargeState{1 charging_state, 111 battery_range
+// (float32), 114 battery_level (int32)}. Returns { ok, level, range, state }; ok
+// is false (caller logs raw) if the shape doesn't match or the action errored.
+const parseChargeStateResponse = (responseBytes) => {
   try {
-    // Response { actionStatus(1), vehicleData(... )} — field layout varies by FW; the
-    // ChargeState.battery_level is a float/int we locate by walking GetVehicleData →
-    // ChargeState. This is best-effort until validated against a real car capture.
-    const top = decodeMessage(responseBytes)
-    // Placeholder: real field path wired once we have a captured response to decode.
-    return top && Object.keys(top).length ? { raw: responseBytes, fields: Object.keys(top) } : null
-  } catch (_e) {
-    return null
+    const resp = decodeMessage(responseBytes)
+    // actionStatus.result (field 1) — OPERATIONSTATUS_E: 0=OK, 1=ERROR. Absent/0 = OK.
+    if (resp[1] instanceof Uint8Array) {
+      const status = decodeMessage(resp[1])
+      if (status[1]) return { ok: false, error: 'vehicle reported ERROR' }
+    }
+    if (!(resp[2] instanceof Uint8Array)) return { ok: false, error: 'no vehicleData' }
+    const vd = decodeMessage(resp[2])
+    if (!(vd[3] instanceof Uint8Array)) return { ok: false, error: 'no charge_state' }
+    const cs = decodeMessage(vd[3])
+
+    const level = typeof cs[114] === 'number' ? cs[114] : null
+    const range = cs[111] instanceof Uint8Array && cs[111].length === 4 ? decodeFloat32LE(cs[111]) : null
+    let state = null
+    if (cs[1] instanceof Uint8Array) {
+      const memberField = Object.keys(decodeMessage(cs[1]))[0] // the oneof member set
+      state = CHARGING_STATE_NAMES[memberField] || null
+    }
+    return { ok: true, level, range, state }
+  } catch (e) {
+    return { ok: false, error: e && e.message }
   }
 }
 
@@ -51,5 +87,6 @@ export {
   buildChargePortCloseAction,
   buildGetChargeStateAction,
   buildHvacAutoAction,
-  parseBatteryLevel,
+  decodeFloat32LE,
+  parseChargeStateResponse,
 }

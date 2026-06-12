@@ -90,11 +90,49 @@ const store = {
     // File is the single source of truth — drop any stale LocalStorage copy.
     localStorage.removeItem('vehicleEcPublicKey')
   },
+  // Infotainment (domain 3) runs on a different ECU with its OWN EC key pair —
+  // its SessionInfo pubkey is not the VCSEC one, so it needs its own ECDH-derived
+  // 16-byte key (sha1(watchPriv × infotainmentPub)[:16]). Cached like sessionKey:
+  // derived once via the phone, then reused; invalidated when the stored pubkey
+  // stops matching the live d3 SessionInfo pubkey.
+  get infotainmentSessionKey() {
+    return readBinary('inf_session_key')
+  },
+  set infotainmentSessionKey(value) {
+    if (typeof value === 'string') value = binaryStringToBytes(value)
+    if (value) writeBinary('inf_session_key', value)
+    else this.removeBinary('inf_session_key')
+  },
+  get infotainmentEcPublicKey() {
+    return readBinary('inf_ec_public_key')
+  },
+  set infotainmentEcPublicKey(value) {
+    if (value) writeBinary('inf_ec_public_key', value)
+    else this.removeBinary('inf_ec_public_key')
+  },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')
   },
   set vehicleMac(value) {
     set('vehicleMac', value)
+  },
+  // Last-known vehicle state snapshot (flat booleans, JSON — LocalStorage-safe).
+  // Rendered immediately on app load: since the key started using domain 3 the
+  // car stopped answering GET_STATUS promptly (3s → 20s+ to first push, device
+  // captures 2026-06-11), so the UI paints the cached state instantly and live
+  // pushes correct any drift.
+  get lastVehicleState() {
+    const s = localStorage.getItem('lastVehicleState')
+    if (!s) return null
+    try {
+      return JSON.parse(s)
+    } catch (_e) {
+      return null
+    }
+  },
+  set lastVehicleState(value) {
+    if (value) localStorage.setItem('lastVehicleState', JSON.stringify(value))
+    else localStorage.removeItem('lastVehicleState')
   },
   get vehicleVin() {
     const s = localStorage.getItem('vehicleVin')
@@ -187,6 +225,7 @@ const store = {
     localStorage.removeItem('vehicleModel')
     localStorage.removeItem('vehicleVin')
     localStorage.removeItem('vehicleMac')
+    localStorage.removeItem('lastVehicleState')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
     // Legacy: clear artifacts left by older builds — the doublings table and the
@@ -196,6 +235,8 @@ const store = {
     this.removeBinary('watch_private_key')
     this.removeBinary('vehicle_ec_public_key')
     this.removeBinary('session_key')
+    this.removeBinary('inf_ec_public_key')
+    this.removeBinary('inf_session_key')
   },
 }
 

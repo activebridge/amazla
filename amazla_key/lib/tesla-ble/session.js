@@ -33,9 +33,10 @@ import {
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_REMOTE_DRIVE,
+  RKE_ACTION_WAKE_VEHICLE,
 } from './protocol/vcsec.js'
 import { buildAesGcmCommand } from './infotainment.js'
-import { buildChargePortOpenAction } from './protocol/carserver.js'
+import { buildChargePortOpenAction, buildGetChargeStateAction, parseChargeStateResponse } from './protocol/carserver.js'
 
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
@@ -518,6 +519,7 @@ class TeslaSession {
       // after a timeout can't double-deliver). Non-terminal requeues do NOT go
       // through here — they call callback(result) directly and keep listening.
       let settled = false
+      let ownCb = null // this command's BLE registration — release only our own
       this._commandInFlight = true // gate the passive-entry responder off the shared slot
       const finish = (result) => {
         if (settled) return
@@ -529,7 +531,7 @@ class TeslaSession {
           this._secondResponseTimer = null
         }
         this._waitingForSecondResponse = false
-        teslaBLE.responseCallback = null
+        if (teslaBLE.responseCallback === ownCb) teslaBLE.responseCallback = null
         callback(result)
       }
       try {
@@ -550,7 +552,7 @@ class TeslaSession {
         }, this.commandTimeoutMs)
 
         // Use BLE layer's wrapper to handle multi-response
-        teslaBLE.send(message, (result) => {
+        ownCb = teslaBLE.send(message, (result) => {
           if (!result.success) {
             finish({ success: false, error: result.error })
             return
@@ -638,7 +640,10 @@ class TeslaSession {
       doSend()
     }
   }
-  getVehicleStatus(callback) {
+  // timeoutMs (optional) overrides the default deadline — the initial app-load
+  // fetch uses a short one so a dozing car (which never answers) falls through
+  // to wake()+refetch quickly instead of burning the full 15s.
+  getVehicleStatus(callback, timeoutMs) {
     if (!this.established) {
       callback({ success: false, error: 'Session not established' })
       return
@@ -649,15 +654,25 @@ class TeslaSession {
     const message = this._buildAuthMessage(unsignedMessage)
 
     // Fire the terminal result exactly once and tear down command state.
+    // NOTE: deliberately does NOT take the _commandInFlight gate. This is a
+    // best-effort fetch, not a user command — and while it owns the response
+    // slot the idle listener never sees the passive-entry beacons streaming
+    // underneath. An enrolled key that ignores IDENTIFICATION beacons gets the
+    // link DROPPED by the car in ~8s (device captures 2026-06-11: established →
+    // status TX → beacons requeued unanswered → disconnect before the deadline).
+    // Beacons are dispatched to the responder below instead.
     let settled = false
     let statusTimer = null
-    this._commandInFlight = true // gate the passive-entry responder off the shared slot
+    let ownCb = null // this fetch's BLE registration — release only our own
     const finish = (result) => {
       if (settled) return
       settled = true
-      this._commandInFlight = false
       if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
-      teslaBLE.responseCallback = null
+      // Only clear the slot we still own. A blanket clear here clobbered the
+      // charge-port command that registered 1ms before this deadline fired
+      // (device capture 2026-06-11) — its d3 reply then fell to the idle
+      // listener and the command timed out.
+      if (teslaBLE.responseCallback === ownCb) teslaBLE.responseCallback = null
       callback(result)
     }
     // Overall deadline: covers "no response" and "only unsolicited pushes"
@@ -666,9 +681,9 @@ class TeslaSession {
       statusTimer = null
       console.log('[SESSION] getVehicleStatus timeout — no addressed response')
       finish({ success: false, error: 'Vehicle status timed out' })
-    }, this.commandTimeoutMs)
+    }, timeoutMs || this.commandTimeoutMs)
 
-    teslaBLE.send(message, (result) => {
+    ownCb = teslaBLE.send(message, (result) => {
       if (!result.success) {
         finish({ success: false, error: result.error })
         return
@@ -691,6 +706,12 @@ class TeslaSession {
           for (let i = 0; i < ra.length; i++) if (ra[i] !== dst[i]) return false
           return true
         })()
+        // DIAGNOSTIC (3s→20s status regression, 2026-06-11): one line per frame in
+        // the status window — proves whether the car answers GET_STATUS at all
+        // (addressed or as a status-carrying push) or only streams beacons.
+        try {
+          console.log(`[SESSION] status RX ${result.data.length}B fields=[${Object.keys(decodeMessage(result.data)).join(',')}] addressed=${addressedToUs ? 'yes' : 'no'} status=${response.vehicleStatus ? 'yes' : 'no'}`)
+        } catch (_e) {}
         if (!addressedToUs) {
           // The car answers GET_STATUS by PUSHING VehicleStatus unsolicited (addressed
           // to a domain, not our routing address) rather than as an addressed reply, and
@@ -701,6 +722,13 @@ class TeslaSession {
             finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
             return
           }
+          // A passive-entry request (auth beacon / AppDeviceInfoRequest) must be
+          // answered even though this fetch owns the response slot — unanswered
+          // beacons cost us the link. The responder's signed reply seizes the
+          // slot, and the car answers it with a VehicleStatus the reply-chain
+          // hands to the UI — so the state this fetch wanted arrives anyway,
+          // while the deadline above still bounds this callback.
+          if (this._respondToVcsecRequest(response)) return
           result._requeue = true // unsolicited push (not a status reply) — keep waiting
           callback(result)
           return
@@ -729,6 +757,12 @@ class TeslaSession {
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
   }
+  wake(callback) {
+    // A dozing car keeps VCSEC beaconing but ignores GET_STATUS (device capture
+    // 2026-06-11: connect-time fetch silent, post-actuation fetch answered in
+    // 0.8s). Same wake the phone app sends on connect.
+    this.sendCommand(RKE_ACTION_WAKE_VEHICLE, callback)
+  }
   trunk(callback) {
     this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_REAR_TRUNK, CLOSURE_MOVE_OPEN) }, callback)
   }
@@ -756,70 +790,227 @@ class TeslaSession {
       return
     }
     console.log(`[INF] ${label}: requesting infotainment session (domain 3)…`)
+    // One routing address for the whole exchange — the domain-3 replies are
+    // matched by it. VCSEC keeps pushing unsolicited frames (auth beacons,
+    // AppDeviceInfoRequest) on the same characteristic, and infotainment can
+    // take >1s to answer, so the first frame after TX is usually NOT our reply.
+    const routingAddress = generateRoutingAddress()
+    const addressedToUs = (response) => {
+      const dst = response.toRoutingAddress
+      if (!dst || dst.length !== routingAddress.length) return false
+      for (let i = 0; i < dst.length; i++) if (dst[i] !== routingAddress[i]) return false
+      return true
+    }
+    // Terminal-once + responder gate + overall deadline (mirrors getVehicleStatus).
+    let settled = false
+    let deadline = null
+    const own = { cb: null } // this command's BLE registration — release only our own
+    this._commandInFlight = true
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      this._commandInFlight = false
+      if (deadline) { clearTimeout(deadline); deadline = null }
+      if (teslaBLE.responseCallback === own.cb) teslaBLE.responseCallback = null
+      callback(result)
+    }
+    deadline = setTimeout(() => {
+      deadline = null
+      console.log(`[INF] ✗ ${label} timeout — no addressed domain-3 response`)
+      finish({ success: false, error: 'infotainment request timed out' })
+    }, this.commandTimeoutMs)
+
+    const requestUuid = generateUUID() // kept: it's the challenge in the SessionInfo HMAC
     const sessReq = buildRoutableMessage({
       toDomain: DOMAIN_INFOTAINMENT,
-      routingAddress: generateRoutingAddress(),
+      routingAddress,
       sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
-      uuid: generateUUID(),
+      uuid: requestUuid,
     })
     console.log(`[INF] TX SessionInfo(d3) ${sessReq.length}B: ${hx(sessReq)}`)
-    teslaBLE.send(sessReq, (r) => {
+    own.cb = teslaBLE.send(sessReq, (r) => {
+      if (settled) return
       if (!r.success || !r.data) {
         console.log(`[INF] ✗ SessionInfo(d3) no response: ${r.error || 'no data'}`)
-        callback({ success: false, error: 'infotainment session request failed' })
+        finish({ success: false, error: 'infotainment session request failed' })
+        return
+      }
+      let response
+      try {
+        response = parseRoutableMessage(r.data)
+      } catch (e) {
+        console.log(`[INF] ✗ parse error: ${e && e.message}`)
+        finish({ success: false, error: 'infotainment session parse error' })
+        return
+      }
+      if (!addressedToUs(response)) {
+        r._requeue = true // unsolicited VCSEC push — keep waiting for the d3 reply
         return
       }
       console.log(`[INF] RX SessionInfo(d3) ${r.data.length}B: ${hx(r.data)}`)
-      let si
-      try {
-        si = parseRoutableMessage(r.data).sessionInfo
-      } catch (e) {
-        console.log(`[INF] ✗ parse error: ${e && e.message}`)
-        callback({ success: false, error: 'infotainment session parse error' })
-        return
-      }
+      const si = response.sessionInfo
       if (!si) {
-        console.log(`[INF] ✗ no sessionInfo (fields ${Object.keys(decodeMessage(r.data)).join(',')})`)
-        callback({ success: false, error: 'no infotainment sessionInfo in response' })
+        console.log(`[INF] ✗ no sessionInfo (fields ${Object.keys(decodeMessage(r.data)).join(',')}) status=${response.sessionInfoStatus}`)
+        finish({ success: false, error: 'no infotainment sessionInfo in response' })
         return
       }
       const epoch = si.epoch
       const counter = si.counter || 0
       const clockTime = si.clockTime || 0
-      console.log(`[INF] session: epoch=${epoch ? epoch.length + 'B' : '<none>'} counter=${counter} clock=${clockTime} status=${si.status}`)
+      console.log(`[INF] session: epoch=${epoch ? epoch.length + 'B' : '<none>'} counter=${counter} clock=${clockTime} status=${si.status} pubKey=${si.publicKey ? si.publicKey.length + 'B' : '<none>'}`)
 
-      const cmdCounter = counter + 1
-      const expiresAt = clockTime + 60
-      const { message, nonce } = buildAesGcmCommand({
-        sessionKey: this.sessionKey,
-        vin: store.vehicleVin || new Uint8Array(0),
-        signerPublicKey: this.ephemeralPublicKey,
-        domain: DOMAIN_INFOTAINMENT,
-        epoch,
-        counter: cmdCounter,
-        expiresAt,
-        routingAddress: generateRoutingAddress(),
-        uuid: generateUUID(),
-        plaintext,
-      })
-      console.log(`[INF] TX ${label} ${message.length}B nonce=${hx(nonce)} ct+sig=${hx(message)}`)
-      teslaBLE.send(message, (r2) => {
-        if (!r2.success || !r2.data) {
-          console.log(`[INF] ✗ ${label} no response: ${r2.error || 'no data'}`)
-          callback({ success: false, error: 'no command response' })
+      this._resolveInfotainmentKey(si.publicKey, (key, fresh) => {
+        if (settled) return
+        if (!key) {
+          finish({ success: false, error: 'no infotainment session key — phone needed once to derive it' })
           return
         }
-        console.log(`[INF] RX ${label} ${r2.data.length}B: ${hx(r2.data)}`)
-        // Log decoded top-level fields to spot a fault vs an ack.
-        try {
-          console.log(`[INF] ${label} response fields: ${Object.keys(decodeMessage(r2.data)).join(',')}`)
-        } catch (_e) {}
-        callback({ success: true, data: r2.data })
+        // Verify the d3 SessionInfo HMAC tag with the candidate key BEFORE
+        // signing a command: a wrong key fails here, locally and explicitly,
+        // instead of as the car's opaque INVALID_SIGNATURE fault.
+        const vin = store.vehicleVin || new Uint8Array(0)
+        const tag = response.sessionInfoTag
+        const expected = createSessionInfoHmac(key)(buildSessionInfoHmacInput(vin, requestUuid, response.sessionInfoBytes))
+        let tagOk = !!tag && tag.length === expected.length
+        if (tagOk) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected[i] ^ tag[i]; tagOk = d === 0 }
+        if (!tagOk) {
+          console.log(`[INF] ✗ d3 SessionInfo tag mismatch — vinLen=${vin.length} infoLen=${response.sessionInfoBytes ? response.sessionInfoBytes.length : 0} tag=${tag ? tag.length + 'B' : '<none>'} (wrong key or VIN)`)
+          finish({ success: false, error: 'infotainment SessionInfo tag mismatch' })
+          return
+        }
+        console.log('[INF] ✓ d3 SessionInfo tag verified')
+        if (fresh) {
+          // Cache only AFTER the tag verifies, so a wrong key is never persisted.
+          store.infotainmentEcPublicKey = si.publicKey
+          store.infotainmentSessionKey = key
+          console.log('[INF] d3 session key derived (phone ECDH), verified, and cached')
+        }
+
+        const cmdCounter = counter + 1
+        const expiresAt = clockTime + 60
+        const { message, nonce } = buildAesGcmCommand({
+          sessionKey: key,
+          vin,
+          signerPublicKey: this.ephemeralPublicKey,
+          domain: DOMAIN_INFOTAINMENT,
+          epoch,
+          counter: cmdCounter,
+          expiresAt,
+          routingAddress,
+          uuid: generateUUID(),
+          plaintext,
+        })
+        console.log(`[INF] TX ${label} ${message.length}B nonce=${hx(nonce)} ct+sig=${hx(message)}`)
+        this._sendInfotainmentMessage(message, label, hx, addressedToUs, finish, () => settled, own)
       })
+    })
+  }
+  // Resolve the AES-GCM key for DOMAIN_INFOTAINMENT. Domains are separate ECUs
+  // with their own EC key pairs — the d3 SessionInfo pubkey can differ from
+  // VCSEC's, and the key is sha1(ECDH(watchPriv, d3Pub))[:16]. Reusing the VCSEC
+  // key when the pubkeys differ → MESSAGEFAULT_ERROR_INVALID_SIGNATURE(5)
+  // (device capture 2026-06-11). Order: VCSEC key (same pubkey) → cached d3 key
+  // (same pubkey) → phone ECDH. cb(key, fresh): fresh ⇒ caller verifies the
+  // SessionInfo tag, then caches.
+  _resolveInfotainmentKey(pubKey, cb) {
+    if (!pubKey || pubKey.length !== 65) {
+      console.log(`[INF] ✗ bad d3 vehicle pubkey: ${pubKey ? pubKey.length : 0}B`)
+      cb(null)
+      return
+    }
+    if (this._ecPubMatches(pubKey, this.vehiclePublicKey)) {
+      console.log('[INF] d3 pubkey == VCSEC pubkey — reusing VCSEC session key')
+      cb(this.sessionKey, false)
+      return
+    }
+    const cached = store.infotainmentSessionKey
+    if (cached && cached.length === 16 && this._ecPubMatches(store.infotainmentEcPublicKey, pubKey)) {
+      console.log('[INF] Using cached d3 session key — skipping ECDH')
+      cb(cached, false)
+      return
+    }
+    console.log('[INF] d3 pubkey differs from VCSEC — requesting ECDH shared secret from phone')
+    new Phone().computeSharedSecret(pubKey)
+      .then((secret) => {
+        if (!secret || secret.length !== 32) {
+          console.log(`[INF] ✗ bad shared secret from phone: ${secret ? secret.length : 'null'}`)
+          cb(null)
+          return
+        }
+        cb(sha1(secret).slice(0, 16), true)
+      })
+      .catch((e) => {
+        console.log(`[INF] ✗ phone ECDH failed: ${e && e.message}`)
+        cb(null)
+      })
+  }
+  _sendInfotainmentMessage(message, label, hx, addressedToUs, finish, isSettled, own) {
+    own.cb = teslaBLE.send(message, (r2) => {
+      if (isSettled()) return
+      if (!r2.success || !r2.data) {
+        console.log(`[INF] ✗ ${label} no response: ${r2.error || 'no data'}`)
+        finish({ success: false, error: 'no command response' })
+        return
+      }
+      let resp2
+      try {
+        resp2 = parseRoutableMessage(r2.data)
+      } catch (_e) {
+        resp2 = null
+      }
+      if (resp2 && !addressedToUs(resp2)) {
+        r2._requeue = true // unsolicited push — keep waiting for the command reply
+        return
+      }
+      console.log(`[INF] RX ${label} ${r2.data.length}B: ${hx(r2.data)}`)
+      // Log decoded top-level fields to spot a fault vs an ack.
+      try {
+        console.log(`[INF] ${label} response fields: ${Object.keys(decodeMessage(r2.data)).join(',')}`)
+      } catch (_e) {}
+      // A signedMessageStatus with a fault is the car REJECTING the message
+      // (e.g. INVALID_SIGNATURE=5, TIME_EXPIRED=17) — not success.
+      const st = resp2 && resp2.signedMessageStatus
+      if (st && (st.operationStatus || st.signedMessageFault)) {
+        console.log(`[INF] ✗ ${label} rejected: operationStatus=${st.operationStatus} fault=${st.signedMessageFault}`)
+        finish({ success: false, error: `vehicle rejected ${label} (fault ${st.signedMessageFault})` })
+        return
+      }
+      finish({ success: true, data: r2.data })
     })
   }
   chargePortInfotainment(callback) {
     this._infotainmentCommand(buildChargePortOpenAction(), 'ChargePortOpen', callback)
+  }
+  // Read charge state (battery %, range, charging status) over the infotainment
+  // domain. The car replies with a PLAINTEXT carserver Response in RoutableMessage
+  // field 10 (we don't set FLAG_ENCRYPT_RESPONSE) — so no GCM decryption on the
+  // way back, just protobuf walking. Returns { success, charge:{ level, range, state } }.
+  getChargeState(callback) {
+    this._infotainmentCommand(buildGetChargeStateAction(), 'GetChargeState', (r) => {
+      if (!r.success || !r.data) {
+        callback({ success: false, error: r.error || 'no charge response' })
+        return
+      }
+      let payload
+      try {
+        payload = decodeMessage(r.data)[10]
+      } catch (e) {
+        callback({ success: false, error: 'charge response parse error: ' + (e && e.message) })
+        return
+      }
+      if (!(payload instanceof Uint8Array)) {
+        callback({ success: false, error: 'charge response had no payload (field 10)' })
+        return
+      }
+      const charge = parseChargeStateResponse(payload)
+      if (!charge.ok) {
+        console.log(`[INF] GetChargeState decode failed: ${charge.error || '?'}`)
+        callback({ success: false, error: charge.error || 'charge decode failed' })
+        return
+      }
+      console.log(`[INF] charge: level=${charge.level}% range=${charge.range} state=${charge.state}`)
+      callback({ success: true, charge: { level: charge.level, range: charge.range, state: charge.state } })
+    })
   }
   remoteDrive(callback) {
     // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless
@@ -857,10 +1048,12 @@ class TeslaSession {
   // answers each response with the NEXT request, so every reply is re-dispatched).
   _respondToVcsecRequest(response) {
     if (!this.established) return false
-    // Never fire while a user command (connect/getVehicleStatus/lock/...) owns the BLE
+    // Never fire while a user command (lock/unlock/drive/infotainment) owns the BLE
     // response slot — a signed reply here would seize that slot and steal the frame the
     // command is waiting for, starving it into a timeout. Skip WITHOUT marking the token
     // answered, so we still respond on the next beacon once the command finishes.
+    // getVehicleStatus deliberately does NOT take this gate: it dispatches beacons here
+    // itself, trading its (rarely-answered) slot for keeping the link alive.
     if (this._commandInFlight) return false
     if (response.authenticationRequest) return this._handleAuthenticationRequest(response.authenticationRequest)
     if (response.appDeviceInfoRequest) return this._handleAppDeviceInfoRequest(response.appDeviceInfoRequest)

@@ -109,6 +109,12 @@ class TeslaBLE {
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
+    // TX serialization. Chunked sends MUST NOT interleave: two concurrent 20-byte
+    // chunk streams on the same characteristic corrupt BOTH frames (the car
+    // reassembles by length prefix). Device capture 2026-06-11: GET_STATUS chunks
+    // overlapped a passive-entry AuthenticationResponse → the car answered neither.
+    this._txBusy = false
+    this._txQueue = []
     // Inter-chunk write delay (see BLE_CHUNK_INTERVAL_MS). Instance-level so tests
     // can set it to 0 (pacing-agnostic) and so it can be tuned at runtime.
     this.chunkIntervalMs = BLE_CHUNK_INTERVAL_MS
@@ -176,6 +182,8 @@ class TeslaBLE {
     this.mac = null
     this._rxBuf = null
     this._rxExpected = 0
+    this._txBusy = false
+    this._txQueue = []
   }
   scan(callback, duration = 10000, expectedName = null) {
     console.log(`[BLE] scan() start: duration=${duration}ms expectedName=${expectedName || '<none>'}`)
@@ -398,6 +406,12 @@ class TeslaBLE {
     }
     this.responseCallback = wrappedCallback
     this._sendMessage(_frame(data))
+    // Returned so the caller can release ONLY its own registration on teardown.
+    // A timeout's blanket `responseCallback = null` clobbers whatever command
+    // registered after it (device capture 2026-06-11: getVehicleStatus deadline
+    // fired 1ms after a charge-port send and wiped its callback — the d3 reply
+    // fell to the idle listener and the command timed out).
+    return wrappedCallback
   }
   waitForNextResponse(timeout, callback) {
     const responseTimeout = setTimeout(() => {
@@ -431,6 +445,13 @@ class TeslaBLE {
     // Always chunk at BLE_CHUNK_SIZE (20). The link is fixed at ATT MTU 23 = 20-byte
     // payload with no API to raise it (see connect()'s writeCompleteHandler), so every
     // write — even a sub-20B frame, which is just a single chunk — goes this path.
+    // Serialized: a frame mid-chunking queues later frames (see _txBusy in ctor).
+    if (this._txBusy) {
+      this._txQueue.push(message)
+      console.log(`[BLE] TX queued ${message.length}B (a send is mid-chunking)`)
+      return
+    }
+    this._txBusy = true
     const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
     console.log(`[BLE] TX ${message.length}B (${total} chunk(s) @ ${this.chunkIntervalMs}ms)`)
     this._sendChunk(message, 0)
@@ -439,7 +460,17 @@ class TeslaBLE {
     const end = Math.min(offset + BLE_CHUNK_SIZE, message.length)
     const chunk = message.slice(offset, end)
     this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
-    if (end < message.length) setTimeout(() => this._sendChunk(message, end), this.chunkIntervalMs)
+    if (end < message.length) {
+      setTimeout(() => this._sendChunk(message, end), this.chunkIntervalMs)
+      return
+    }
+    // Frame complete — release the TX lock and drain the queue (one chunk-interval
+    // gap so the car's reassembler sees a clean frame boundary).
+    this._txBusy = false
+    if (this._txQueue.length > 0) {
+      const next = this._txQueue.shift()
+      setTimeout(() => this._sendMessage(next), this.chunkIntervalMs)
+    }
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)

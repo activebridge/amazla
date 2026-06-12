@@ -6,12 +6,14 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Lock / Unlock / Trunk / Frunk** - HMAC-signed RKE commands; **device-confirmed actuating the vehicle (2026-06-02)**
+- **Charge Port** - first **infotainment-domain** (AES-128-GCM) command; **device-confirmed opening the port (2026-06-11)** — see [Infotainment Domain](#infotainment-domain-aes-gcm--implemented)
+- **Charge Status** - battery %, range, and charging state read over the infotainment domain (`getChargeState`); top-of-screen battery readout, tap to refresh; **built 2026-06-12**, not yet device-validated
 - **Passive Entry & Keyless Drive** - walk up → unlock → drive → walk away → auto-lock, with **no command** (the car unlocks/authorizes from its own ranging once the watch is a present key); **device-validated full drive cycle (2026-06-09)**, while the app is open + connected — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive)
 - **Drive (Remote Start)** - `RKE_ACTION_REMOTE_DRIVE`; explicit command-path "shift to Drive", **device-confirmed (2026-06-04)**. Now largely superseded by passive keyless drive above.
-- **Vehicle Status** - Door/closure states, lock state, sleep status
-- **Offline session** - The session key (derived once via phone ECDH) is cached on the watch, so session establishment needs no phone after pairing
+- **Vehicle Status** - Door/closure states, lock state, sleep status; last-known state painted instantly on load, refreshed live; a dozing car is woken (`RKE_ACTION_WAKE_VEHICLE`) when it won't answer
+- **Offline session** - The session keys (derived via phone ECDH, one per domain) are cached on the watch, so session establishment needs no phone after pairing
 
-> **Status (2026-06-09):** Pairing, session, lock/unlock/trunk/frunk, **and passive entry + keyless drive** are working end-to-end on real hardware. Passive entry reverses an earlier "not achievable" verdict — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). Getting commands to actuate required six fixes to the command/response path — see [Command path fixes](#command-path-fixes-2026-06-02).
+> **Status (2026-06-11):** Pairing, session, lock/unlock/trunk/frunk, passive entry + keyless drive, **and the infotainment domain (charge port over AES-GCM)** are working end-to-end on real hardware. Passive entry reverses an earlier "not achievable" verdict — see [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). Getting commands to actuate required six fixes to the command/response path — see [Command path fixes](#command-path-fixes-2026-06-02); getting the infotainment domain working surfaced its own set — see [Infotainment Domain](#infotainment-domain-aes-gcm--implemented).
 
 ## Architecture Overview
 
@@ -433,6 +435,169 @@ beacons**, so the car correctly saw no present key — not evidence the path is 
 
 </details>
 
+## Infotainment Domain (AES-GCM) — implemented
+
+> ✅ **Working and device-confirmed 2026-06-11: the charge port opens from the watch over
+> `DOMAIN_INFOTAINMENT = 3`, including standalone (cached d3 key, no phone).** This was the
+> "Future Work" AES-GCM domain — it's now real. Charge port was deliberately built first as the
+> **canary** for the whole domain: it's the smallest carserver action, so once it actuates, the
+> entire AES-GCM stack (session, key, encryption, signing, framing) is proven for everything
+> else gated to this domain — Climate and Charge Status are mechanical follow-ons.
+
+VCSEC (lock/unlock/status) signs plaintext protobuf with HMAC. The infotainment domain carries
+`CarServer.Action` protobufs **encrypted with AES-128-GCM** — same BLE transport, same
+`RoutableMessage` envelope, different domain, different crypto:
+
+| Aspect | VCSEC (domain 2) | Infotainment (domain 3) |
+|---|---|---|
+| Payload | plaintext `vcsec.UnsignedMessage` | AES-128-GCM **ciphertext** of `carserver.Action` |
+| Auth | HMAC-SHA256 tag, subkey `HMAC(key, "authenticated command")` | GCM auth tag; the session key is used **directly** (no subkey) |
+| AAD / metadata | TLV prepended into the HMAC input | `SHA256(metadata TLV ‖ 0xFF)` as the GCM AAD |
+| Session key | `sha1(ECDH(watchPriv, VCSEC pubkey))[:16]` | `sha1(ECDH(watchPriv, **d3 pubkey**))[:16]` — see below |
+| Signature type | `HMAC_PERSONALIZED = 8` | `AES_GCM_PERSONALIZED = 5` (SignatureData field 5: epoch, 12-B nonce, counter, expires_at fixed32, 16-B tag) |
+
+### The key discovery: each domain has its own EC key pair
+
+The original plan assumed both domains share one session key (same ECDH secret, different
+algorithms). **Wrong — and the car said so with `MESSAGEFAULT_ERROR_INVALID_SIGNATURE` (fault 5).**
+Domain 3 runs on a different ECU with its **own** P-256 key pair: its `SessionInfo` returns a
+different `publicKey` than VCSEC's, so the GCM key must be derived against *that* point. The Go
+SDK does exactly this (one `NewSession` per domain off that domain's `SessionInfo.publicKey`);
+the "shared key" reading conflated shared *derivation* with shared *peer key*.
+
+Key resolution (`session.js` `_resolveInfotainmentKey`), in order:
+
+1. d3 pubkey == VCSEC pubkey → reuse the VCSEC session key (same ECDH);
+2. cached d3 key whose stored pubkey matches → use it (**standalone fast path**, no phone);
+3. otherwise → phone ECDH (`BLE_COMPUTE_SHARED_SECRET` with the d3 pubkey), `sha1(secret)[:16]`.
+
+The resolved key is **verified against the d3 SessionInfo HMAC tag before signing anything** — a
+wrong key fails locally and explicitly instead of as the car's opaque fault 5 — and is cached
+(`inf_session_key.dat` + `inf_ec_public_key.dat`) only after that verification passes. Like the
+VCSEC key, first derivation needs the phone once; every later use is standalone.
+
+### Command flow (charge port)
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                       INFOTAINMENT COMMAND FLOW (domain 3)                    │
+│                 (VCSEC session already established & verified)                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│      Watch                                              Tesla                │
+│        │                                                  │                  │
+│        │ ── SessionInfoRequest { toDomain: 3 } ─────────► │                  │
+│        │    (enrolled watch pubkey, fresh routing addr)   │                  │
+│        │                                                  │                  │
+│        │ ◄─ SessionInfo(d3) ────────────────────────────  │  addressed       │
+│        │    { d3 publicKey, epoch, counter, clock_time }  │  to our          │
+│        │    + HMAC tag                                    │  routing addr    │
+│        │                                                  │                  │
+│   ┌────┴──────────────────────────────────┐               │                  │
+│   │ Resolve d3 key (VCSEC / cached / phone│               │                  │
+│   │ ECDH) → VERIFY SessionInfo tag with it│               │                  │
+│   │                                       │               │                  │
+│   │ plaintext = carserver.Action{         │               │                  │
+│   │   vehicleAction.chargePortDoorOpen{} }│               │                  │
+│   │ aad   = SHA256(metadata TLV ‖ 0xFF)   │               │                  │
+│   │ nonce = 8B random ‖ counter (BE)      │               │                  │
+│   │ ct,tag= AES-128-GCM(key,nonce,pt,aad) │               │                  │
+│   └────┬──────────────────────────────────┘               │                  │
+│        │                                                  │                  │
+│        │ ── RoutableMessage{ to:3, payload: ct,           │                  │
+│        │      SignatureData.AES_GCM_Personalized{         │                  │
+│        │        epoch, nonce, counter,                    │                  │
+│        │        expires_at, tag } } ───────────────────►  │                  │
+│        │                                                  │                  │
+│        │ ◄─ addressed reply (fields 6,7,10,50,51;         │  port            │
+│        │    NO signedMessageStatus fault) ──────────────  │  actuates        │
+│        ▼                                                  ▼                  │
+│   Charge port open. (fault 5 = wrong key; fault 17 = clock expired)          │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+Unsolicited VCSEC traffic (auth beacons, `AppDeviceInfoRequest`) keeps streaming on the same
+characteristic during all of this; both d3 waits filter by **our routing address** and requeue
+everything else — the first device run consumed a 13-byte beacon as its "reply" and timed out
+while the real 177-byte d3 answer went unclaimed.
+
+### What it took (device iterations, 2026-06-11)
+
+- **Pure-JS AES-128-GCM** (`crypto/aes-gcm.js`) — AES encrypt-only (GCM uses CTR both ways) +
+  right-shift GF(2^128) GHASH; byte-for-byte verified against Node's `aes-128-gcm` (200 random
+  round-trips + NIST vector + tamper cases). Runs on the watch — no BigInt needed, so the domain
+  is standalone-viable.
+- **Byte-locked signing against the Go SDK** — GCM uses the session key **directly** (HMAC uses a
+  derived subkey — easy to get wrong); AAD = `SHA256(metadata TLV ‖ 0xFF)`; payload field 10 is
+  the **ciphertext**; `expires_at` is fixed32. A real GCM verifier (Node, `setAAD`+`setAuthTag`)
+  authenticates and decrypts our exact wire bytes in tests.
+- **Per-domain session key** (the fault-5 fix above) + tag verification before signing.
+- **Addressed-reply filtering with requeue** on both the d3 SessionInfo wait and the command wait,
+  plus a 15 s deadline, the `_commandInFlight` responder gate, and decoded fault reporting (a
+  reply carrying `signedMessageStatus` is a rejection, not a success).
+- **TX serialization** (`ble.js`) — the responder's `AuthenticationResponse` started chunking while
+  GET_STATUS was still mid-flight; two interleaved 20-byte chunk streams corrupt **both** frames
+  (the car reassembles by length prefix) and the car answered neither. All frames now queue behind
+  the in-flight chunked send.
+- **Slot ownership on teardown** — every command timeout used to blanket-null the shared BLE
+  response callback, wiping whichever command registered after it (observed: charge port tapped
+  1 ms before a pending status deadline fired → its d3 reply fell to the idle listener).
+  `teslaBLE.send()` now returns its registration and teardown clears only its own.
+- **Nonce uniqueness without `getRandomValues`** — GCM nonce reuse is catastrophic and ZeppOS has
+  no CSPRNG; the 12-byte nonce is 8 random-ish bytes ‖ the strictly-increasing 4-byte counter, so
+  uniqueness is guaranteed by the counter half.
+
+### Reading data: Charge Status (battery %)
+
+> ✅ **Built 2026-06-12** (`session.getChargeState` → `tesla.fetchChargeState`); not yet
+> device-validated. This is the first time we **read structured data** back over the
+> infotainment domain rather than just actuating.
+
+`GetVehicleData` is **one** request with a getter flag per state group — you don't fetch
+properties individually. Setting `getChargeState` returns the whole `ChargeState` (≈60 fields)
+in one round-trip. The request is the same encrypted `_infotainmentCommand` path as charge port:
+`Action{ VehicleAction{ getVehicleData{ getChargeState{} } } }`.
+
+**The response is plaintext — no decryption.** We don't set `FLAG_ENCRYPT_RESPONSE`, so the car
+replies unencrypted (confirmed by the charge-port reply, whose field 10 was `0a00` =
+`Response.actionStatus{} = OK`). So reading data is just protobuf walking, not GCM-decrypt:
+
+```
+RoutableMessage field 10  (plaintext)
+  └─ carserver Response { actionStatus(1), vehicleData(2) }
+       └─ VehicleData.charge_state(3)
+            └─ ChargeState { charging_state(1), battery_range(111, float32-LE),
+                             battery_level(114, int32) }
+```
+
+`charging_state` (field 1) is a `ChargingState` message wrapping a **oneof of empty `Void`s** —
+the *field number that's present* is the state (1 Unknown, 2 Disconnected, 3 NoPower, 4 Starting,
+5 Charging, 6 Complete, 7 Stopped, 8 Calibrating), so we read which field is set, not a value.
+`parseChargeStateResponse` (`protocol/carserver.js`) walks this path and returns
+`{ ok, level, range, state }`, `ok:false` (never a throw) on any shape mismatch — the caller then
+logs the raw bytes for reconciliation, the same diagnostic discipline as the HMAC/GCM work.
+`battery_range` is `float32` little-endian (protobuf fixed32); `decodeFloat32LE` decodes the bits
+by hand (no `DataView` dependency in this path).
+
+**State storage & UI.** The decoded snapshot goes into the one `lastVehicleState` blob, but in a
+nested `charge` block carrying its **own capture timestamp** — because infotainment data is
+*pull-only* (the car streams no charge pushes, unlike VCSEC status), so it can be confidently
+stale and the UI dims a value older than an hour. See [State caching](#state-caching). The watch
+auto-loads charge after the status fetch on connect (sequential — they share the one BLE slot);
+the top-of-screen battery readout is also tap-to-refresh.
+
+### Remaining in this domain
+
+Charge port + charge status proved both the write and read paths; still to build (mechanical, same
+`_infotainmentCommand` path):
+
+- **Climate** — `VehicleAction.hvacAutoAction` (builder already in `protocol/carserver.js`); pairs
+  with reading `getClimateState` (temps, seat heaters, defrost) via the same `GetVehicleData` request
+- **More `GetVehicleData` groups** — `ClosuresState`, `DriveState` (speed/odometer/route ETA),
+  `TirePressureState`, `SoftwareUpdateState` (version, download %). Each is one more getter flag on
+  the same request and one more `parse*` walker; flag only the groups the UI shows (response size)
+
 ## Tesla BLE Command Reference
 
 All commands are sent after a session is established as an HMAC-signed `RoutableMessage` whose `protobuf_message_as_bytes` (field 10) is a **bare `vcsec.UnsignedMessage`** — no `ToVCSECMessage`/`SignedMessage` wrapper. Authentication rides in `signature_data` (field 13). This matches Tesla's Go SDK (`executeRKEAction` marshals `UnsignedMessage` straight into `getReceiver`). The earlier `ToVCSECMessage{SignedMessage{UnsignedMessage}}` wrapping authenticated fine (no fault) but the vehicle parsed field 1 of our wrapper as `UnsignedMessage.InformationRequest` → replied with status and never actuated. See [Command path fixes](#command-path-fixes-2026-06-02).
@@ -446,6 +611,7 @@ Core lock/unlock commands are sent via `UnsignedMessage.rkeAction` (field 2).
 | `RKE_ACTION_UNLOCK` | 0 | `session.unlock(cb)` | Unlock all doors |
 | `RKE_ACTION_LOCK` | 1 | `session.lock(cb)` | Lock all doors |
 | `RKE_ACTION_REMOTE_DRIVE` | 20 | `session.remoteDrive(cb)` | Remote Start — explicit command-path keyless drive (car shows "keyless driving enabled"). SDK `RemoteDrive` / `tesla-control drive`. Now a fallback — passive keyless drive needs no command and no banner. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). |
+| `RKE_ACTION_WAKE_VEHICLE` | 30 | `session.wake(cb)` | Wake a dozing vehicle (SDK `tesla-control wake -b`). A dozing car keeps beaconing but **ignores `GET_STATUS`** — device-observed: a connect-time status fetch stayed silent for 15 s while the identical fetch right after an actuation was answered in 0.8 s. `tesla.refresh` sends this automatically when the initial short status fetch gets no answer. Value verified in both the official and acvigue protos (sparse enum — 29 is `AUTO_SECURE_VEHICLE`). |
 
 **Usage:**
 ```javascript
@@ -473,6 +639,34 @@ teslaSession.sendCommand({ closureMoveRequest: rearTrunk }, result => { ... })
 const frontTrunk = buildClosureMoveRequest(6, 0)
 teslaSession.sendCommand({ closureMoveRequest: frontTrunk }, result => { ... })
 ```
+
+### Infotainment Commands (carserver, AES-GCM)
+
+Charge port is **not** a VCSEC closure — per the Tesla SDK it lives in the infotainment domain
+as a `carserver.Action`, encrypted with AES-128-GCM. See
+[Infotainment Domain](#infotainment-domain-aes-gcm--implemented) for the full path. The
+`VehicleAction` builders live in `protocol/carserver.js`; `_infotainmentCommand` handles the
+d3 session, key resolution, encryption, and reply filtering.
+
+```javascript
+import teslaSession from './lib/tesla-ble/session.js'
+
+// Charge port open — device-confirmed 2026-06-11 (the UI charge-port button uses this):
+teslaSession.chargePortInfotainment(result => { ... })
+
+// Read charge state — built 2026-06-12. result.charge = { level, range, state }:
+teslaSession.getChargeState(result => { if (result.success) { /* result.charge.level, … */ } })
+```
+
+| Builder (`protocol/carserver.js`) | carserver field | Status |
+|---|---|---|
+| `buildChargePortOpenAction()` | `VehicleAction.chargePortDoorOpen` (62) | ✅ device-confirmed 2026-06-11 |
+| `buildChargePortCloseAction()` | `VehicleAction.chargePortDoorClose` (61) | built, not yet wired to UI |
+| `buildHvacAutoAction()` | `VehicleAction.hvacAutoAction` (10) | built, not yet wired to UI |
+| `buildGetChargeStateAction()` + `parseChargeStateResponse()` | `VehicleAction.getVehicleData` (1) → `getChargeState` (2); response decoded from plaintext field 10 | ✅ built 2026-06-12, not yet device-validated |
+
+_(The experimental VCSEC `session.chargePort` — `ClosureMoveRequest.chargePort` — is kept for
+comparison but is not what the button uses.)_
 
 ### Passive Entry (AuthenticationResponse / AppDeviceInfo)
 
@@ -542,7 +736,10 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 | Method | Description |
 |--------|-------------|
 | `session.requestSessionInfo(cb)` | Establish BLE session (ECDH key exchange) |
-| `session.getVehicleStatus(cb)` | Fetch door/lock/sleep status |
+| `session.getVehicleStatus(cb, timeoutMs?)` | Fetch door/lock/sleep status. Optional deadline override — the app-load fetch uses a short 4 s one so a dozing car falls through to `wake()` + re-fetch instead of burning the full 15 s. Dispatches passive-entry beacons to the responder while it waits (an enrolled key that ignores them gets the link dropped by the car in ~8 s). |
+| `session.wake(cb)` | `RKE_ACTION_WAKE_VEHICLE` — wake a dozing car so it answers status requests |
+| `session.chargePortInfotainment(cb)` | Charge port open via the infotainment domain (AES-GCM) |
+| `session.getChargeState(cb)` | Read battery %, range, charging state (infotainment domain). `cb({ success, charge: { level, range, state } })` — response is plaintext (no GCM decryption) |
 | `session.established` | Boolean — true if session is active |
 | `session.reset()` | Clear session state |
 | `session.ensureSessionEstablished(cb)` | Establish session if needed, queue concurrent callers |
@@ -796,6 +993,14 @@ Notes:
 | Item | Status | Notes |
 |------|--------|-------|
 | Lock / Unlock / Trunk / Frunk actuation | ✅ Device-confirmed 2026-06-02 | See [Command path fixes](#command-path-fixes-2026-06-02). Six fixes on the command/response path; car actuates and watch shows success. |
+| Charge port via infotainment domain (AES-GCM) | ✅ Device-confirmed 2026-06-11 | First domain-3 command; standalone repeat (cached d3 key, no phone ECDH) also device-confirmed same day. See [Infotainment Domain](#infotainment-domain-aes-gcm--implemented). |
+| Per-domain session key (d3 ≠ VCSEC) | ✅ Device-confirmed 2026-06-11 | Domain 3 has its own EC key pair; reusing the VCSEC key → fault 5 `INVALID_SIGNATURE`. Resolved VCSEC-match → cached d3 key → phone ECDH; tag-verified before signing, cached after. |
+| TX serialization (chunk interleave) | ✅ Applied 2026-06-11, observed queueing on device | Two concurrent chunked sends (status fetch + passive-entry reply) interleaved 20-byte chunks and corrupted **both** frames — the car answered neither. `_sendMessage` now queues frames behind the in-flight send (`TX queued …B` in logs). |
+| BLE slot ownership on command teardown | ✅ Applied 2026-06-11 | Command timeouts blanket-nulled the shared `responseCallback`, orphaning whichever command registered after them (charge port tapped 1 ms before a status deadline → its d3 reply dropped). `send()` returns its registration; teardown clears only its own. |
+| Beacon dispatch during status fetch | ✅ Applied 2026-06-11, observed on device | While `getVehicleStatus` owned the response slot, auth beacons were requeued unanswered → car dropped the link in ~8–11 s. The fetch now dispatches passive-entry requests itself (and no longer takes the `_commandInFlight` gate). |
+| Wake-on-silent-status | ✅ Applied 2026-06-11 | A dozing car beacons but ignores `GET_STATUS` (proven: the same fetch answered in 0.8 s right after an actuation). Load flow = short 4 s fetch → on silence `RKE_ACTION_WAKE_VEHICLE` (=30, proto-verified) → full re-fetch. Not yet device-validated. |
+| Cached state on load | ✅ Applied 2026-06-11 | `store.lastVehicleState` snapshot persisted on every applied status; hydrated in the Tesla constructor so the UI paints the last-known state instantly while the fresh one loads. Extended 2026-06-12 to a push/pull split — see [State caching](#state-caching). |
+| Charge status read (battery %) | ✅ Built 2026-06-12, not device-validated | `getChargeState` over the infotainment domain; response is **plaintext** (no GCM decrypt — we don't set `FLAG_ENCRYPT_RESPONSE`), decoded from `Response → VehicleData → ChargeState`. Battery readout on the car screen, tap to refresh; auto-loaded after the status fetch on connect. See [Reading data: Charge Status](#reading-data-charge-status-battery-). |
 | Passive entry + keyless drive | ✅ Device-validated 2026-06-09 | Walk up → unlock → drive → walk away → auto-lock, no command. Answer the car's `AuthenticationRequest` beacons with a signed `AuthenticationResponse` (+ `AppDeviceInfo`) to register as a present key; the car's own ranging does the rest. Works only while the app is open + connected. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). |
 | Session clock staleness (fault 17) | ✅ Fixed 2026-06-09 | `_buildAuthMessage` used a static `clockTime + 60`; ~60 s into a connection the vehicle's clock had advanced past it → every signed message rejected `TIME_EXPIRED` (fault 17), killing commands and passive-auth replies. Now `expiresAt = clockTime + elapsedSinceCapture + 60` (tracks `_clockCapturedAtMs`). |
 | Connect auto-retry on setup drop | ✅ Fixed 2026-06-09 | The car occasionally drops the link mid-GATT-setup ("Vehicle disconnected during setup"); `tesla.js` `refresh` now auto-retries once after 800 ms before reporting offline. Also: `refresh` reports `online` on session-established (state from live pushes) so a `getVehicleStatus` timeout under the beacon flood no longer reads as "connection failed". |
@@ -900,26 +1105,23 @@ Existing installs have a stale (wrong) doublings table on disk. After deploying 
 
 ## Future Work
 
-### Infotainment Domain (AES-GCM)
+### Infotainment Domain — remaining items
 
-Current scope covers the VCSEC domain only (lock, trunk, frunk, status) — HMAC-signed plaintext protobuf. The infotainment domain (`DOMAIN_INFOTAINMENT = 3`) unlocks lights, horn, windows, sunroof, charge port, and media controls, but uses AES-128-GCM encrypted payloads over the same BLE transport.
+> The AES-GCM infotainment domain itself is **implemented and device-confirmed** (charge port,
+> 2026-06-11) — see [Infotainment Domain](#infotainment-domain-aes-gcm--implemented). The
+> original "what's needed" list from this section all got built (pure-JS AES-128-GCM, the
+> domain-3 session, `carserver.Action` encoding, the encrypt path), with one correction to the
+> plan: the domains do **not** share a session key — domain 3 has its own EC key pair and gets
+> its own ECDH-derived key, cached like the VCSEC one.
 
-**What's needed:**
-- Pure-JS AES-128-GCM implementation (~300-500 LOC — no WebCrypto on ZeppOS QuickJS)
-- Second `SessionInfoRequest` with `domain = 3` → separate session key
-- `CarServer.Action` protobuf schema (new message family)
-- Encrypt/decrypt path parallel to existing HMAC path
+Still open in this domain (the `_infotainmentCommand` path handles all of it; only the actions
+and the response side are missing):
 
-**Reusable:**
-- Existing P-256 long-term `watchPrivateKey` serves both domains (one identity key, two handshakes — same as Tesla Go SDK's `Session.localKey`)
-- Same BLE transport, same `RoutableMessage` envelope, same framing
-- Simulator scaffolding extends cleanly
-
-**Optimizations:**
-- Ship AES S-box / T-tables as static constants (~4KB, 3-5× speedup)
-- Cache per-session AES key schedule + GHASH `H` in memory (amortize across commands in the 5-min session window)
-
-No phone-side precomputation shortcut exists — AES key schedule and GHASH `H` depend on the runtime `sessionKey` derived post-ECDH.
+- **Climate** — wire `buildHvacAutoAction()` to the UI (builder exists in `protocol/carserver.js`)
+- **Charge Status (battery %)** — `getVehicleData` + AES-GCM **response decryption** (`gcmDecrypt`
+  exists, unused on-wire yet) + `ChargeState` decode from the large `VehicleData` protobuf; watch
+  out for big-payload decrypt perf on QuickJS and chunked reassembly
+- **Perf (optional)** — cache the per-session AES key schedule + GHASH `H` across commands
 
 ## File Structure
 
@@ -939,16 +1141,19 @@ amazla_key/
 │       ├── pairing.js            # createPairingController — headless pairing state machine
 │       ├── ble.js                # Low-level BLE — @silver-zepp/easy-ble wrapper. Sole transport; imported by session.js and pairing.js; validated end-to-end on device.
 │       ├── ble-name.js           # computeTeslaBLEName(vin) → 'S' + sha1(vin)[:8] hex + 'C'. Mirrors Tesla Go SDK VehicleLocalName. Used by scan-by-name on every connect (MAC rotates every ~15 min).
-│       ├── session.js            # Session mgmt (cached key, signing, commands)
+│       ├── session.js            # Session mgmt (cached keys, signing, commands, d3 path)
+│       ├── infotainment.js       # buildAesGcmCommand — AES-GCM RoutableMessage assembly (domain 3)
 │       ├── index.js              # Tesla BLE API (high-level wrapper)
 │       ├── crypto/
 │       │   ├── p256.js           # P-256 (ecdhFixed — kept for the equivalence test)
 │       │   ├── sha256.js         # SHA-256 / SHA-1
 │       │   ├── hmac.js           # HMAC-SHA256
+│       │   ├── aes-gcm.js        # Pure-JS AES-128-GCM (gcmEncrypt/gcmDecrypt) — verified vs Node
 │       │   └── binary-utils.js   # Hex / binary-string helpers
 │       └── protocol/
 │           ├── protobuf.js       # Protobuf encoding/decoding
 │           ├── vcsec.js          # Tesla VCSEC message builders/parsers
+│           ├── carserver.js      # carserver.Action builders + response parsers (charge port, HVAC, GetChargeState → parseChargeStateResponse, decodeFloat32LE)
 │           └── vcsec-pairing.js  # Pairing-specific builders (WhitelistOperation, etc.)
 ├── __mocks__/
 │   └── zos.js                    # @zos/* stubs + BLEHarness (VCR-style BLE interception)
@@ -973,6 +1178,29 @@ amazla_key/
     └── ...                       # Additional unit tests
 ```
 
+## State caching
+
+The car can take 10–20 s to answer on connect (a dozing vehicle ignores `GET_STATUS` until
+[woken](#rke-actions-remote-keyless-entry); infotainment data is pull-only and never pushed), so
+the last-known state is persisted and **painted instantly on app load** while the fresh values
+load behind it. One JSON blob (`store.lastVehicleState`), structured by **refresh model, not by
+which protocol delivered the field**:
+
+- **VCSEC fields** (`locked`, doors, `sleeping`, `userPresent`) sit **flat** — they're
+  *push-driven*: while connected the car streams `VehicleStatus`, so they stay live and need no
+  freshness marker.
+- **Infotainment data** (`charge: { level, range, state, ts }`) sits in a **nested block with its
+  own capture timestamp** — it's *pull-only* (no charge pushes exist), so it can be confidently
+  stale and the UI dims a value older than an hour rather than presenting it as current.
+
+`this` (the `Tesla` singleton) is the single in-memory source of truth that both writers update —
+`_applyStatus` (VCSEC push) and `_applyChargeState` (charge fetch) — and `_persistState` rebuilds
+the blob from it. So the two independent writers **can't clobber each other's fields**
+structurally, with no read-modify-write of storage. On load, `_hydrateCachedState` restores both
+tiers. Config (name/vin/model) stays in its own discrete LocalStorage keys (write-once at
+pairing), and key material stays file-backed (null bytes, re-pair lifecycle) — three tiers by
+write-frequency, never mixed.
+
 ## Storage Files
 
 Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and binary `.dat` files.
@@ -986,6 +1214,7 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 | `vehicleVin` | Vehicle VIN | binary string (getter returns `Uint8Array`) | Saved during pairing |
 | `vehicleName` | Vehicle display name | plain string | Saved during pairing |
 | `vehicleModel` | Vehicle model | plain string | Saved during pairing |
+| `lastVehicleState` | Last applied state snapshot — flat VCSEC fields + a nested `charge` block | JSON | Persisted on every applied status / charge fetch; painted instantly on the next app load. See [State caching](#state-caching). |
 
 > **Note**: keys/points with null bytes are stored as **files**, not LocalStorage — null bytes corrupt later LocalStorage writes on ZeppOS (see Binary Files below). `vehicleEcPublicKey` and the cached `sessionKey` are file-backed for this reason; `vehicleEcPublicKey` keeps a one-time legacy LocalStorage fallback so an already-paired watch migrates without re-pairing. (The watch no longer stores a private key — see "Superseded (2026-06-10)" above.)
 
@@ -994,8 +1223,10 @@ Two storage backends: `LocalStorage` (key-value, binary-string-encoded) and bina
 | File | Size | Format | Managed By |
 |------|------|--------|------------|
 | `watch_private_key.dat` | 32 bytes | Raw binary | **Legacy / removed 2026-06-10** — the watch no longer stores a private key (it lives only on the phone). Stale files from older installs are purged on reset/re-pair. |
-| `vehicle_ec_public_key.dat` | 65 bytes | Raw binary | Vehicle EC pubkey from SessionInfo (saved on first connect; the fast-path guard for the cached session key) |
+| `vehicle_ec_public_key.dat` | 65 bytes | Raw binary | Vehicle VCSEC EC pubkey from SessionInfo (saved on first connect; the fast-path guard for the cached session key) |
 | `session_key.dat` | 16 bytes | Raw `sha1(ECDH)[:16]` symmetric key | derived once via `BLE_COMPUTE_SHARED_SECRET` (phone ECDH), cached |
+| `inf_ec_public_key.dat` | 65 bytes | Raw binary | **Infotainment (domain 3)** EC pubkey — a different ECU with its own key pair; the fast-path guard for the d3 key |
+| `inf_session_key.dat` | 16 bytes | Raw `sha1(ECDH)[:16]` AES-GCM key | derived once via phone ECDH against the d3 pubkey, cached **after** the d3 SessionInfo tag verifies |
 
 ## Setup Guide
 

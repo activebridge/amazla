@@ -42,22 +42,41 @@ The phone-side ECDH is proven bit-identical to the old `ecdhFixed(priv, table)` 
 A missing/corrupted cached key (or a vehicle re-key) needs the phone to re-derive — i.e. re-pair.
 There is no standalone on-watch ECDH fallback anymore (that was the point of dropping the table).
 
+## Infotainment domain (AES-128-GCM) — one key per domain
+
+The infotainment domain (`DOMAIN_INFOTAINMENT = 3`, charge port etc.) runs on a **different ECU
+with its own P-256 key pair** — its `SessionInfo.publicKey` is not the VCSEC one, so it gets its
+**own** session key:
+
+```
+infotainmentKey = sha1( ECDH(enrolledPrivateKey, d3PublicKey) )[:16]
+```
+
+Same derivation, same phone-side ECDH, same caching discipline (`inf_session_key.dat` guarded by
+`inf_ec_public_key.dat`; cached only after the d3 SessionInfo HMAC tag verifies with it). Device
+lesson 2026-06-11: reusing the VCSEC key for domain 3 is rejected with
+`MESSAGEFAULT_ERROR_INVALID_SIGNATURE` (fault 5). Unlike VCSEC's HMAC subkeys, AES-GCM uses the
+session key **directly**; the GCM AAD is `SHA256(metadata TLV ‖ 0xFF)`. Charge port over this
+path is device-confirmed (2026-06-11), including standalone repeats on the cached key.
+
 ## Structure
 
 ```
 tesla-ble/
   index.js          - Main entry point
-  ble.js            - BLE transport (scan/connect, chunked TX, reassembly)
+  ble.js            - BLE transport (scan/connect, serialized chunked TX, reassembly)
   ble-name.js       - VIN → Tesla BLE local-name derivation
-  session.js        - Session establishment, key cache, command signing
+  session.js        - Session establishment, key caches (VCSEC + d3), command signing
+  infotainment.js   - AES-GCM RoutableMessage assembly for domain-3 commands
   pairing.js        - Pairing / key enrollment flow
   crypto/
     p256.js         - P-256 (ecdhFixed — retained for the equivalence test only)
     sha256.js       - SHA-1 / SHA-256
     hmac.js         - HMAC-SHA256
+    aes-gcm.js      - Pure-JS AES-128-GCM (verified byte-for-byte vs Node aes-128-gcm)
     binary-utils.js - byte/binary-string/hex helpers
   protocol/
-    ...             - Tesla VCSEC / RoutableMessage encode + decode
+    ...             - Tesla VCSEC / carserver / RoutableMessage encode + decode
 ```
 
 The vehicle's session key is derived on the phone (`app-side/ble-crypto.js`), not here.
