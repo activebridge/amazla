@@ -413,6 +413,16 @@ class TeslaBLE {
     // fell to the idle listener and the command timed out).
     return wrappedCallback
   }
+  // Transmit a frame WITHOUT claiming the response slot — fire-and-forget. The
+  // reply (if any) falls through to the idle/passive-entry listener. Use only for
+  // messages whose response we don't need (wake): registering responseCallback
+  // would gate the passive-entry responder for the wait, and wake's effect is on
+  // TX anyway (a deep-asleep car never ACKs it).
+  sendNoReply(data) {
+    if (!this.connected) return false
+    this._sendMessage(_frame(data))
+    return true
+  }
   waitForNextResponse(timeout, callback) {
     const responseTimeout = setTimeout(() => {
       this.responseCallback = null

@@ -14,8 +14,10 @@ import { TeslaSession } from '../lib/tesla-ble/session.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
 import store from '../lib/store.js'
 import { decodeMessage, encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
-import { buildSessionInfoHmacInput } from '../lib/tesla-ble/protocol/vcsec.js'
+import { buildSessionInfoHmacInput, buildAesGcmRequestId, buildAesGcmResponseMetadataInput, FLAG_ENCRYPT_RESPONSE } from '../lib/tesla-ble/protocol/vcsec.js'
 import { createSessionInfoHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
+import { sha256 } from '../lib/tesla-ble/crypto/sha256.js'
+import { gcmEncrypt } from '../lib/tesla-ble/crypto/aes-gcm.js'
 import { hexToBytes } from '../lib/tesla-ble/crypto/binary-utils.js'
 
 const concatBytes = (...parts) =>
@@ -133,7 +135,7 @@ describe('_infotainmentCommand — domain-3 reply filtering and key resolution',
     expect(session._commandInFlight).toBe(false)
   })
 
-  test('getChargeState decodes the plaintext carserver Response in field 10', () => {
+  test('getChargeState sets FLAG_ENCRYPT_RESPONSE and decrypts the encrypted reply', () => {
     const session = makeSession()
     const results = []
     session.getChargeState((r) => results.push(r))
@@ -142,7 +144,17 @@ describe('_infotainmentCommand — domain-3 reply filtering and key resolution',
     deliver(makeD3SessionReply(ra, sentUuid(sent[0]), SESSION_KEY, makeSessionInfoBytes(5, 1234)))
     expect(sent.length).toBe(2) // GetChargeState command went out
 
-    // Car replies with a PLAINTEXT carserver Response in field 10 (no encryption):
+    // The request must carry flags=FLAG_ENCRYPT_RESPONSE (field 52) — without it
+    // the car answers fault 28 (REQUIRES_RESPONSE_ENCRYPTION).
+    const reqFields = decodeMessage(sent[1])
+    expect(reqFields[52]).toBe(FLAG_ENCRYPT_RESPONSE)
+
+    // The car binds its encrypted response to OUR request via a request-hash:
+    // sig-type(5) || our request GCM tag (SignatureData(13) → AES_GCM_Personalized(5) → tag(5)).
+    const reqTag = decodeMessage(decodeMessage(reqFields[13])[5])[5]
+    const requestId = buildAesGcmRequestId(reqTag)
+
+    // Build the plaintext carserver Response the car would encrypt:
     // Response{2 vehicleData{3 charge_state{1 charging_state=Charging, 111 range, 114 level}}}
     const range = new Uint8Array(4); new DataView(range.buffer).setFloat32(0, 240.0, true)
     const chargeState = concatBytes(
@@ -150,8 +162,23 @@ describe('_infotainmentCommand — domain-3 reply filtering and key resolution',
       concatBytes(new Uint8Array([0xfd, 0x06]), range),  // battery_range (field 111, wire 5)
       encodeVarintField(114, 83),                        // battery_level = 83
     )
-    const response = encodeBytes(2, encodeBytes(3, chargeState)) // Response.vehicleData.charge_state
-    deliver(makeAddressedRoutable(ra, encodeBytes(10, response)))
+    const plaintext = encodeBytes(2, encodeBytes(3, chargeState))
+
+    // Encrypt it exactly as the vehicle would: AES-GCM with the d3 key, the
+    // response nonce/counter, and the response-metadata AAD bound to requestId.
+    const respCounter = 9
+    const respFlags = 0 // car's response carries its own flags; 0 here, echoed in field 52
+    const nonce = new Uint8Array(12); nonce.set([0, 0, 0, 0, 0, 0, 0, 0, (respCounter >>> 24) & 255, 0, 0, respCounter & 255])
+    const aad = sha256(buildAesGcmResponseMetadataInput(store.vehicleVin || new Uint8Array(0), 3, respCounter, respFlags, requestId, 0))
+    const { ciphertext, tag } = gcmEncrypt(SESSION_KEY, nonce, plaintext, aad)
+
+    // SignatureData{ AES_GCM_Response_data(9){ nonce(1), counter(2), tag(3) } }
+    const respSig = encodeBytes(9, concatBytes(
+      encodeBytes(1, nonce),
+      encodeVarintField(2, respCounter),
+      encodeBytes(3, tag),
+    ))
+    deliver(makeAddressedRoutable(ra, concatBytes(encodeBytes(10, ciphertext), encodeBytes(13, respSig))))
 
     expect(results.length).toBe(1)
     expect(results[0].success).toBe(true)
@@ -237,16 +264,16 @@ describe('_infotainmentCommand — domain-3 reply filtering and key resolution',
     try {
       const session = makeSession()
       const statusResults = []
-      session.getVehicleStatus((r) => statusResults.push(r))
+      session.getVehicleStatus((r) => statusResults.push(r), 2000) // short status deadline
       expect(sent.length).toBe(1) // GET_STATUS out
 
       jest.advanceTimersByTime(1000)
       const infResults = []
-      session.chargePortInfotainment((r) => infResults.push(r))
+      session.chargePortInfotainment((r) => infResults.push(r)) // INF deadline 6s
       expect(sent.length).toBe(2) // d3 SessionInfo request — owns the slot now
 
-      // The status deadline fires while the charge-port request is in flight.
-      jest.advanceTimersByTime(session.commandTimeoutMs - 999)
+      // The status deadline (2s) fires while the charge-port request (6s) is in flight.
+      jest.advanceTimersByTime(1001)
       expect(statusResults.length).toBe(1)
       expect(statusResults[0].success).toBe(false)
       expect(teslaBLE.responseCallback).not.toBeNull() // INF registration survived

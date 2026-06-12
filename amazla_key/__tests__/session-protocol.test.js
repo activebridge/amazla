@@ -1081,12 +1081,22 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
     }
   })
 
-  test('wake() sends RKE_ACTION_WAKE_VEHICLE via the signed command path', () => {
+  test('wake() is fire-and-forget: signs RKE_ACTION_WAKE_VEHICLE, sends without claiming the slot', () => {
     const s = makeSession()
-    const actions = []
-    s.sendCommand = (action, cb) => { actions.push(action); cb({ success: true }) }
+    const sent = []
+    const origSNR = teslaBLE.sendNoReply
+    teslaBLE.connected = true
+    teslaBLE.responseCallback = null
+    teslaBLE.sendNoReply = (msg) => { sent.push(msg); return true }
     s.wake(() => {})
-    expect(actions).toEqual([RKE_ACTION_WAKE_VEHICLE])
+    expect(sent.length).toBe(1)
+    // payload (field 10) = UnsignedMessage with rkeAction(2) = WAKE(30); session-signed (13)
+    const outer = decodeMessage(sent[0])
+    expect(decodeMessage(outer[10])[2]).toBe(RKE_ACTION_WAKE_VEHICLE)
+    expect(outer[13]).toBeDefined()
+    // Did NOT register a response slot → the passive-entry responder stays live.
+    expect(teslaBLE.responseCallback).toBeNull()
+    teslaBLE.sendNoReply = origSNR
   })
 
   test('still defers to a REAL command in flight (gate respected)', () => {

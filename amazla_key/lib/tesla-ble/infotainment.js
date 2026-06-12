@@ -35,12 +35,16 @@ const buildNonce = (counter) => {
 }
 
 // Compute the GCM associated data for a command: sha256 of the metadata TLV.
-const aesGcmAad = (vin, domain, epoch, counter, expiresAt) =>
-  sha256(buildAesGcmMetadataInput(vin || new Uint8Array(0), domain, epoch, counter, expiresAt))
+// `flags` (e.g. FLAG_ENCRYPT_RESPONSE) is folded into the AAD only when set — the
+// vehicle does the same, so omitting it when flags>0 would fail verification.
+const aesGcmAad = (vin, domain, epoch, counter, expiresAt, flags) =>
+  sha256(buildAesGcmMetadataInput(vin || new Uint8Array(0), domain, epoch, counter, expiresAt, flags))
 
 // Assemble a complete AES-GCM RoutableMessage. `plaintext` is the carserver command
-// protobuf (e.g. a VehicleAction). Returns { message, nonce } — the nonce is also
-// embedded in signature_data, returned for logging/tests.
+// protobuf (e.g. a VehicleAction). `flags` sets RoutableMessage.flags (field 52) —
+// pass FLAG_ENCRYPT_RESPONSE for data reads so the car returns an encrypted reply.
+// Returns { message, nonce, tag } — `tag` is the request GCM tag, needed to build
+// the request-hash that authenticates an encrypted response.
 const buildAesGcmCommand = ({
   sessionKey,
   vin,
@@ -53,8 +57,9 @@ const buildAesGcmCommand = ({
   uuid,
   plaintext,
   nonce,
+  flags,
 }) => {
-  const aad = aesGcmAad(vin, domain, epoch, counter, expiresAt)
+  const aad = aesGcmAad(vin, domain, epoch, counter, expiresAt, flags)
   const n = nonce || buildNonce(counter)
   const { ciphertext, tag } = gcmEncrypt(sessionKey, n, plaintext, aad)
   const signatureData = buildAesGcmSignatureData(signerPublicKey, epoch, n, counter, expiresAt, tag)
@@ -64,8 +69,9 @@ const buildAesGcmCommand = ({
     payload: ciphertext,
     signatureData,
     uuid,
+    flags,
   })
-  return { message, nonce: n }
+  return { message, nonce: n, tag }
 }
 
 export { buildAesGcmCommand, buildNonce, aesGcmAad }

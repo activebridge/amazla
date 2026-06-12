@@ -150,31 +150,51 @@ class Tesla {
         if (cb) cb(r)
         return
       }
-      // Session is established here — the link works. Report online and arm live
-      // pushes BEFORE the status fetch, so a getVehicleStatus that times out on the
-      // auth-beacon flood (passive entry ON) doesn't read as "connection failed".
+      // Session is established here — the link works. Report online + arm live
+      // pushes immediately so the UI shows the (cached) car at once, and a status
+      // fetch that times out under the beacon flood never reads as "offline".
       this._setConnection({ status: 'online', error: null })
       this._startLivePushes()
-      // Short first fetch: an awake car answers GET_STATUS in <1s; a dozing one
-      // never does (it keeps beaconing but ignores InformationRequest — device
-      // captures 2026-06-11; an actuation made the very same fetch answer in
-      // 0.8s). On silence, wake it like the phone app does and fetch again.
-      teslaSession.getVehicleStatus((r2) => {
-        if (r2.success) {
-          this._applyStatus(r2.status)
-          if (cb) cb({ success: true })
-          this._loadChargeState() // sequential — status slot is free now
+      if (cb) cb({ success: true }) // online now; live state refines as it arrives
+      this._loadInitialState()
+    })
+  }
+
+  // Load live state on connect. The hard case is a DOZING car: it keeps VCSEC
+  // beaconing (passive entry works) but ignores GET_STATUS until it fully wakes —
+  // device 2026-06-12 showed ~30s and nothing addressed until then. The old flow
+  // stacked 15s timeouts serially (status → wake-ack → status → charge), so even
+  // once the car woke it took ~40s to surface. Instead: fire a quick wake, then
+  // POLL status with short deadlines, stopping the moment one is answered — so we
+  // catch the wake-up within a few seconds of it happening, not 15s later.
+  _loadInitialState() {
+    var POLL_MS = 4000
+    var MAX_POLLS = 7 // ~28s budget covering a cold wake; cached state shows meanwhile
+    var attempts = 0
+    var done = false
+    var self = this
+    var poll = function () {
+      teslaSession.getVehicleStatus(function (r) {
+        if (r && r._requeue) return // beacon notification, not terminal — keep waiting
+        if (done) return
+        if (r.success) {
+          done = true
+          self._applyStatus(r.status)
+          // Charge ONLY once status proves the car is awake. A charge fetch holds
+          // the BLE slot (and gates the passive-entry responder) for its deadline;
+          // firing it at a dozing car that won't answer would freeze walk-up
+          // unlock for no payoff (device 2026-06-12). Cached charge shows meanwhile.
+          self._loadChargeState()
           return
         }
-        if (cb) cb({ success: true }) // online either way; state refines below
-        teslaSession.wake(() => {
-          teslaSession.getVehicleStatus((r3) => {
-            if (r3.success) this._applyStatus(r3.status)
-            this._loadChargeState()
-          })
-        })
-      }, 4000)
-    })
+        attempts++
+        if (attempts >= MAX_POLLS) { done = true; return } // dozing — give up, don't hog the slot on charge
+        poll()
+      }, POLL_MS)
+    }
+    // Fire wake first (short, non-blocking — a deep-asleep car never ACKs it, the
+    // wake happens on TX), then start polling once the slot is free again.
+    teslaSession.wake(function () { poll() })
   }
 
   // Fetch the charge snapshot (infotainment domain) AFTER the VCSEC status work

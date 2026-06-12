@@ -559,9 +559,12 @@ properties individually. Setting `getChargeState` returns the whole `ChargeState
 in one round-trip. The request is the same encrypted `_infotainmentCommand` path as charge port:
 `Action{ VehicleAction{ getVehicleData{ getChargeState{} } } }`.
 
-**The response is plaintext — no decryption.** We don't set `FLAG_ENCRYPT_RESPONSE`, so the car
-replies unencrypted (confirmed by the charge-port reply, whose field 10 was `0a00` =
-`Response.actionStatus{} = OK`). So reading data is just protobuf walking, not GCM-decrypt:
+**Data reads require an encrypted response — actuations don't.** This split was found on device
+(2026-06-12): a data read *without* `FLAG_ENCRYPT_RESPONSE` is rejected with
+`MESSAGEFAULT_ERROR_REQUIRES_RESPONSE_ENCRYPTION` (fault 28). An *actuation* reply (charge port)
+is a plaintext ack (`0a00` = `Response.actionStatus{} = OK`); a *data* reply is AES-GCM encrypted.
+So `getChargeState` sets `flags = FLAG_ENCRYPT_RESPONSE` (RoutableMessage field 52) and **decrypts**
+the reply with the same `gcmDecrypt` used for the request. Once decrypted it's just protobuf walking:
 
 ```
 RoutableMessage field 10  (plaintext)
@@ -570,6 +573,15 @@ RoutableMessage field 10  (plaintext)
             └─ ChargeState { charging_state(1), battery_range(111, float32-LE),
                              battery_level(114, int32) }
 ```
+
+**Response decryption** (byte-locked against the Go SDK in `aes-gcm-signing.test.js`): the reply
+carries its GCM `{ nonce, counter, tag }` in `SignatureData.AES_GCM_Response_data` (field 13 → 9)
+and the ciphertext in field 10. The decryption AAD is `SHA256` of a metadata TLV
+(`SIGTYPE=9, DOMAIN=3, PERSONALIZATION=VIN, COUNTER, FLAGS, REQUEST_HASH, FAULT`), where
+`REQUEST_HASH` binds the response to our request (`AES_GCM_PERSONALIZED(5) ‖ our request GCM tag`).
+Because we set the flag on the request, the **request** metadata must also include `TAG_FLAGS(7)`
+or the car rejects the request itself. Errors always come back as a plaintext status (field 12),
+so a fault is read before any decrypt is attempted.
 
 `charging_state` (field 1) is a `ChargingState` message wrapping a **oneof of empty `Void`s** —
 the *field number that's present* is the state (1 Unknown, 2 Disconnected, 3 NoPower, 4 Starting,
@@ -663,7 +675,7 @@ teslaSession.getChargeState(result => { if (result.success) { /* result.charge.l
 | `buildChargePortOpenAction()` | `VehicleAction.chargePortDoorOpen` (62) | ✅ device-confirmed 2026-06-11 |
 | `buildChargePortCloseAction()` | `VehicleAction.chargePortDoorClose` (61) | built, not yet wired to UI |
 | `buildHvacAutoAction()` | `VehicleAction.hvacAutoAction` (10) | built, not yet wired to UI |
-| `buildGetChargeStateAction()` + `parseChargeStateResponse()` | `VehicleAction.getVehicleData` (1) → `getChargeState` (2); response decoded from plaintext field 10 | ✅ built 2026-06-12, not yet device-validated |
+| `buildGetChargeStateAction()` + `parseChargeStateResponse()` | `VehicleAction.getVehicleData` (1) → `getChargeState` (2); request sets `FLAG_ENCRYPT_RESPONSE`, reply is AES-GCM-decrypted then walked | ✅ built 2026-06-12, not yet device-validated |
 
 _(The experimental VCSEC `session.chargePort` — `ClosureMoveRequest.chargePort` — is kept for
 comparison but is not what the button uses.)_
@@ -739,7 +751,7 @@ const req = buildInformationRequest(INFO_REQUEST_GET_WHITELIST_ENTRY_INFO, null,
 | `session.getVehicleStatus(cb, timeoutMs?)` | Fetch door/lock/sleep status. Optional deadline override — the app-load fetch uses a short 4 s one so a dozing car falls through to `wake()` + re-fetch instead of burning the full 15 s. Dispatches passive-entry beacons to the responder while it waits (an enrolled key that ignores them gets the link dropped by the car in ~8 s). |
 | `session.wake(cb)` | `RKE_ACTION_WAKE_VEHICLE` — wake a dozing car so it answers status requests |
 | `session.chargePortInfotainment(cb)` | Charge port open via the infotainment domain (AES-GCM) |
-| `session.getChargeState(cb)` | Read battery %, range, charging state (infotainment domain). `cb({ success, charge: { level, range, state } })` — response is plaintext (no GCM decryption) |
+| `session.getChargeState(cb)` | Read battery %, range, charging state (infotainment domain). `cb({ success, charge: { level, range, state } })` — sets `FLAG_ENCRYPT_RESPONSE` and AES-GCM-decrypts the reply (data reads require it; fault 28 otherwise) |
 | `session.established` | Boolean — true if session is active |
 | `session.reset()` | Clear session state |
 | `session.ensureSessionEstablished(cb)` | Establish session if needed, queue concurrent callers |
@@ -1000,7 +1012,7 @@ Notes:
 | Beacon dispatch during status fetch | ✅ Applied 2026-06-11, observed on device | While `getVehicleStatus` owned the response slot, auth beacons were requeued unanswered → car dropped the link in ~8–11 s. The fetch now dispatches passive-entry requests itself (and no longer takes the `_commandInFlight` gate). |
 | Wake-on-silent-status | ✅ Applied 2026-06-11 | A dozing car beacons but ignores `GET_STATUS` (proven: the same fetch answered in 0.8 s right after an actuation). Load flow = short 4 s fetch → on silence `RKE_ACTION_WAKE_VEHICLE` (=30, proto-verified) → full re-fetch. Not yet device-validated. |
 | Cached state on load | ✅ Applied 2026-06-11 | `store.lastVehicleState` snapshot persisted on every applied status; hydrated in the Tesla constructor so the UI paints the last-known state instantly while the fresh one loads. Extended 2026-06-12 to a push/pull split — see [State caching](#state-caching). |
-| Charge status read (battery %) | ✅ Built 2026-06-12, not device-validated | `getChargeState` over the infotainment domain; response is **plaintext** (no GCM decrypt — we don't set `FLAG_ENCRYPT_RESPONSE`), decoded from `Response → VehicleData → ChargeState`. Battery readout on the car screen, tap to refresh; auto-loaded after the status fetch on connect. See [Reading data: Charge Status](#reading-data-charge-status-battery-). |
+| Charge status read (battery %) | ✅ Built 2026-06-12, not device-validated | `getChargeState` over the infotainment domain. Device run showed data reads need `FLAG_ENCRYPT_RESPONSE` (fault 28 without it) — the encrypted-response decrypt path is now built (request flags + `TAG_FLAGS` in the request AAD, response AAD bound to the request hash, `gcmDecrypt`), byte-locked vs the Go SDK. Battery readout on the car screen, tap to refresh; auto-loaded after the status fetch on connect. See [Reading data: Charge Status](#reading-data-charge-status-battery-). |
 | Passive entry + keyless drive | ✅ Device-validated 2026-06-09 | Walk up → unlock → drive → walk away → auto-lock, no command. Answer the car's `AuthenticationRequest` beacons with a signed `AuthenticationResponse` (+ `AppDeviceInfo`) to register as a present key; the car's own ranging does the rest. Works only while the app is open + connected. See [Passive Entry & Keyless Drive](#passive-entry--keyless-drive). |
 | Session clock staleness (fault 17) | ✅ Fixed 2026-06-09 | `_buildAuthMessage` used a static `clockTime + 60`; ~60 s into a connection the vehicle's clock had advanced past it → every signed message rejected `TIME_EXPIRED` (fault 17), killing commands and passive-auth replies. Now `expiresAt = clockTime + elapsedSinceCapture + 60` (tracks `_clockCapturedAtMs`). |
 | Connect auto-retry on setup drop | ✅ Fixed 2026-06-09 | The car occasionally drops the link mid-GATT-setup ("Vehicle disconnected during setup"); `tesla.js` `refresh` now auto-retries once after 800 ms before reporting offline. Also: `refresh` reports `online` on session-established (state from live pushes) so a `getVehicleStatus` timeout under the beacon flood no longer reads as "connection failed". |

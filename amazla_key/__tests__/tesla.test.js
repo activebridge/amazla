@@ -74,6 +74,11 @@ beforeEach(() => {
   resetTesla()
   Object.keys(_fsStore).forEach(k => delete _fsStore[k])
   store.reset()
+  // refresh() now always fires wake() before polling status, and loads charge
+  // after. Default both to no-op successes so the connect-path tests don't hit
+  // the real BLE implementations; tests that assert on them override these.
+  jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+  jest.spyOn(teslaSession, 'getChargeState').mockImplementation(cb => cb({ success: false }))
 })
 
 afterEach(() => {
@@ -486,12 +491,34 @@ describe('refresh()', () => {
     expect(tesla.locked).toBe(false) // re-fetched state applied
   })
 
-  test('answered status → no wake sent', () => {
+  test('wake is fired on connect, then charge loads after status settles', () => {
     mockEstablished()
-    mockGetStatus()
+    mockGetStatus({ vehicleLockState: 1 })
     const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
     tesla.refresh()
-    expect(wakeSpy).not.toHaveBeenCalled()
+    expect(wakeSpy).toHaveBeenCalled()   // wake always fires (handles the dozing-car case)
+    expect(tesla.locked).toBe(true)      // status applied
+    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loaded once
+  })
+
+  // getVehicleStatus re-invokes its callback with _requeue on every unsolicited
+  // beacon. Device 2026-06-12: refresh treated those as terminal and fired a fresh
+  // charge fetch per beacon, each grabbing the BLE slot for ~15s and starving the
+  // status request — so live state never loaded and the UI stayed on stale cache.
+  test('beacon (_requeue) frames during status do NOT trigger charge fetches', () => {
+    mockEstablished()
+    jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation((cb) => {
+      cb({ success: true, _requeue: true })            // beacon
+      cb({ success: true, _requeue: true })            // beacon
+      cb({ success: true, status: makeStatus({ vehicleLockState: 1 }) }) // terminal
+    })
+    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 50, range: 120, state: 'Disconnected' } }))
+    tesla.refresh()
+    expect(chargeSpy).toHaveBeenCalledTimes(1) // once, only after the terminal status
+    expect(tesla.locked).toBe(true)
   })
 
   test('calls optional callback with success', () => {
