@@ -383,6 +383,13 @@ Page({
   onDestroy() {
     tesla.offChange(render)
     keepScreenOn(false)
+    // Auto-lock on close: passive entry only locks while connected, and closing the
+    // app drops BLE — so a car left unlocked stays unlocked. Fire a synchronous lock
+    // (no ACK wait — we reset right after) if still connected to an unlocked, empty
+    // car. MUST run BEFORE teslaSession.reset() below, which tears down the link.
+    try {
+      tesla.lockOnClose()
+    } catch (_e) {}
     // Free BLE so next launch doesn't inherit poisoned native state.
     // Without this, mstConnect on the next session-info attempt returns
     // status:"failed" after ~30s until the watch is rebooted.

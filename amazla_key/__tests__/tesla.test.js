@@ -468,27 +468,48 @@ describe('refresh()', () => {
     expect(liveSpy).toHaveBeenCalled()
   })
 
-  // A dozing car keeps beaconing but ignores GET_STATUS (device 2026-06-11:
-  // connect-time fetch silent for 15s; the same fetch answered in 0.8s right
-  // after an actuation). On a silent short fetch, wake it and fetch again.
-  test('silent status → wakes the vehicle and re-fetches', () => {
+  // GET_STATUS answers only once the passive-entry handshake progresses (device
+  // 2026-06-15: first status ~21s after Established). A single attempt timed out long
+  // before that and left a STALE lock state shown — which misfires the toggle button.
+  // So we poll until a status lands (re-waking each round), bounded by a budget; and
+  // charge loads whether status succeeds or the budget runs out (never gated).
+  test('silent status → polls to budget, then loads charge (decoupled)', () => {
     mockEstablished()
-    const results = [
-      { success: false, error: 'Vehicle status timed out' },
-      { success: true, status: makeStatus({ vehicleLockState: 0 }) },
-    ]
     const timeouts = []
     let calls = 0
     jest.spyOn(teslaSession, 'getVehicleStatus')
-      .mockImplementation((cb, timeoutMs) => { timeouts.push(timeoutMs); cb(results[calls++]) })
+      .mockImplementation((cb, timeoutMs) => { timeouts.push(timeoutMs); calls++; cb({ success: false, error: 'Vehicle status timed out' }) })
     const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
 
     tesla.refresh()
 
-    expect(timeouts[0]).toBe(4000) // short first fetch — fall through fast
+    expect(timeouts[0]).toBe(3000) // short per-poll deadline — fall through fast
     expect(wakeSpy).toHaveBeenCalled()
-    expect(calls).toBe(2)
-    expect(tesla.locked).toBe(false) // re-fetched state applied
+    expect(calls).toBe(6) // bounded retry loop (MAX_POLLS), no infinite spin
+    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loads despite status never answering
+  })
+
+  // A status that lands stops the poll loop immediately and applies fresh lock state.
+  test('status answered on 2nd poll → applies state, stops polling, loads charge', () => {
+    mockEstablished()
+    let calls = 0
+    jest.spyOn(teslaSession, 'getVehicleStatus')
+      .mockImplementation((cb) => {
+        calls++
+        if (calls === 1) { cb({ success: false, error: 'timed out' }); return }
+        cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }) // unlocked
+      })
+    jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
+    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
+      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
+
+    tesla.refresh()
+
+    expect(calls).toBe(2) // stopped as soon as status landed
+    expect(tesla.locked).toBe(false) // fresh state applied (fixes the toggle)
+    expect(chargeSpy).toHaveBeenCalledTimes(1)
   })
 
   test('wake is fired on connect, then charge loads after status settles', () => {
@@ -772,5 +793,49 @@ describe('command failure', () => {
     expect(tesla.connection.status).toBe('offline')
     expect(tesla.busy).toBe(false)
     expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: false }))
+  })
+})
+
+// ─── app-close auto-lock ────────────────────────────────────────────────────────
+
+describe('lockOnClose', () => {
+  test('online + unlocked + no driver → fires synchronous lock', () => {
+    tesla.connection.status = 'online'
+    tesla.locked = false
+    tesla.userPresent = false
+    const spy = jest.spyOn(teslaSession, 'lockSyncFireAndForget').mockReturnValue(true)
+
+    expect(tesla.lockOnClose()).toBe(true)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  test('already locked → no lock', () => {
+    tesla.connection.status = 'online'
+    tesla.locked = true
+    tesla.userPresent = false
+    const spy = jest.spyOn(teslaSession, 'lockSyncFireAndForget').mockReturnValue(true)
+
+    expect(tesla.lockOnClose()).toBe(false)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('driver present → no lock (never lock someone in/out)', () => {
+    tesla.connection.status = 'online'
+    tesla.locked = false
+    tesla.userPresent = true
+    const spy = jest.spyOn(teslaSession, 'lockSyncFireAndForget').mockReturnValue(true)
+
+    expect(tesla.lockOnClose()).toBe(false)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('not connected → no lock', () => {
+    tesla.connection.status = 'offline'
+    tesla.locked = false
+    tesla.userPresent = false
+    const spy = jest.spyOn(teslaSession, 'lockSyncFireAndForget').mockReturnValue(true)
+
+    expect(tesla.lockOnClose()).toBe(false)
+    expect(spy).not.toHaveBeenCalled()
   })
 })

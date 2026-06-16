@@ -598,7 +598,7 @@ describe('TeslaSession HMAC lifecycle', () => {
 // doesn't recognise it — silently dropped, sending an empty routable message.
 // Born in Copilot commit 6f0ea70. Also removed unused `const self = this`.
 
-describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () => {
+describe('getVehicleStatus — sends UNSIGNED GET_STATUS request (SDK AuthMethodNone)', () => {
   let capturedMsg
 
   function makeSession() {
@@ -639,10 +639,10 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     expect(capturedMsg).toBeUndefined()
   })
 
-  test('increments counter before sending', () => {
+  test('does NOT increment the session counter (unsigned read)', () => {
     const s = makeSession()
     s.getVehicleStatus(() => {})
-    expect(s.counter).toBe(6)
+    expect(s.counter).toBe(5) // unchanged — an unsigned status request consumes no counter
   })
 
   test('RoutableMessage has DOMAIN_VEHICLE_SECURITY at field 6', () => {
@@ -652,58 +652,27 @@ describe('getVehicleStatus — sends HMAC-authenticated GET_STATUS request', () 
     expect(decodeMessage(outer[6])[1]).toBe(DOMAIN_VEHICLE_SECURITY)
   })
 
-  test('has payload at field 10 — not empty (was missing before fix)', () => {
+  test('has payload at field 10 — not empty', () => {
     makeSession().getVehicleStatus(() => {})
     const outer = decodeMessage(capturedMsg)
     expect(outer[10]).toBeDefined()
     expect(outer[10].length).toBeGreaterThan(0)
   })
 
-  test('SignatureData in RoutableMessage field 13; payload(10) is a bare UnsignedMessage', () => {
+  // GET_STATUS is a READ — sent UNSIGNED (no signature_data), matching the official SDK
+  // (pkg/vehicle/vcsec.go getVCSECInfo → connector.AuthMethodNone). A SIGNED status
+  // request rides on the session counter/clock and a dozing car silently drops it
+  // (device 2026-06-15: signed GET_STATUS ignored ~20s → stale lock state → toggle misfired).
+  test('has NO signature_data (field 13) — unsigned, matches SDK AuthMethodNone', () => {
     makeSession().getVehicleStatus(() => {})
-    const outer = decodeMessage(capturedMsg)
-    // Auth data in field 13 (RoutableMessage.signature_data)
-    expect(outer[13]).toBeDefined()
-    // Payload (field 10) is the vcsec.UnsignedMessage itself — no ToVCSECMessage/
-    // SignedMessage wrapper. GET_STATUS rides in UnsignedMessage.informationRequest (field 1).
-    const unsignedMsg = decodeMessage(outer[10])
+    expect(decodeMessage(capturedMsg)[13]).toBeUndefined()
+  })
+
+  test('payload(10) is a bare UnsignedMessage carrying informationRequest (field 1)', () => {
+    makeSession().getVehicleStatus(() => {})
+    const unsignedMsg = decodeMessage(decodeMessage(capturedMsg)[10])
     expect(unsignedMsg[1]).toBeDefined()   // informationRequest present
     expect(unsignedMsg[2]).toBeUndefined() // not an RKEAction
-  })
-
-  test('SignatureData has signer_identity (field 1) and HMAC_Personalized_data (field 8)', () => {
-    makeSession().getVehicleStatus(() => {})
-    const sigData = decodeMessage(decodeMessage(capturedMsg)[13])
-    expect(sigData[1]).toBeDefined()  // signer_identity
-    expect(sigData[8]).toBeDefined()  // HMAC_Personalized_data
-  })
-
-  test('HMAC_Personalized_data has counter=6, epoch(16B), expires_at=1060', () => {
-    makeSession().getVehicleStatus(() => {})
-    const sigData   = decodeMessage(decodeMessage(capturedMsg)[13])
-    const hmacData  = decodeMessage(sigData[8])
-    expect(hmacData[2]).toBe(6)           // counter (varint)
-    expect(hmacData[1].length).toBe(16)   // epoch (bytes)
-    // expires_at: fixed32 LE encoding of 1060 = 0x424 → [0x24, 0x04, 0x00, 0x00]
-    expect(hmacData[3][0]).toBe(0x24)
-    expect(hmacData[3][1]).toBe(0x04)
-    expect(hmacData[3][2]).toBe(0x00)
-    expect(hmacData[3][3]).toBe(0x00)
-    expect(hmacData[4].length).toBe(32)   // tag (32-byte HMAC-SHA256)
-  })
-
-  test('expiresAt advances with real elapsed time since clock capture (no TIME_EXPIRED)', () => {
-    // Vehicle validates expiresAt against its own ticking clock. ~30s into a connection
-    // the window must be ~30s further out, not frozen at clockTime+60.
-    const s = makeSession()
-    s._clockCapturedAtMs = Date.now() - 30000 // captured 30s ago
-    s.getVehicleStatus(() => {})
-    const hmacData = decodeMessage(decodeMessage(decodeMessage(capturedMsg)[13])[8])
-    const le = hmacData[3] // expires_at fixed32 LE
-    const expiresAt = (le[0] | (le[1] << 8) | (le[2] << 16) | (le[3] << 24)) >>> 0
-    // clockTime(1000) + ~30s elapsed + 60s window ≈ 1090 (allow a little timing slack).
-    expect(expiresAt).toBeGreaterThanOrEqual(1088)
-    expect(expiresAt).toBeLessThanOrEqual(1092)
   })
 
   test('UnsignedMessage has InformationRequest with GET_STATUS (0)', () => {
@@ -812,6 +781,21 @@ describe('buildAuthenticatedCommand — SignatureData structure', () => {
     const tag1 = decodeMessage(decodeMessage(decodeMessage(m1)[13])[8])[4]
     const tag2 = decodeMessage(decodeMessage(decodeMessage(m2)[13])[8])[4]
     expect(Array.from(tag1)).not.toEqual(Array.from(tag2))
+  })
+
+  test('expiresAt advances with real elapsed time since clock capture (no TIME_EXPIRED)', () => {
+    // Vehicle validates expiresAt against its own ticking clock. ~30s into a connection
+    // the window must be ~30s further out, not frozen at clockTime+60. (Signed commands
+    // only — GET_STATUS is now unsigned and carries no expires_at.)
+    const s = makeSession()
+    s._clockCapturedAtMs = Date.now() - 30000 // captured 30s ago
+    const msg = s.buildAuthenticatedCommand(RKE_ACTION_LOCK)
+    const hmacData = decodeMessage(decodeMessage(decodeMessage(msg)[13])[8])
+    const le = hmacData[3] // expires_at fixed32 LE
+    const expiresAt = (le[0] | (le[1] << 8) | (le[2] << 16) | (le[3] << 24)) >>> 0
+    // clockTime(2000) + ~30s elapsed + 60s window ≈ 2090 (allow a little timing slack).
+    expect(expiresAt).toBeGreaterThanOrEqual(2088)
+    expect(expiresAt).toBeLessThanOrEqual(2092)
   })
 
   test('throws if session not established', () => {

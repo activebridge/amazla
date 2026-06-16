@@ -120,6 +120,12 @@ class TeslaSession {
       this._commandTimer = null
     }
   }
+  _clearResendTimer() {
+    if (this._resendTimer) {
+      clearTimeout(this._resendTimer)
+      this._resendTimer = null
+    }
+  }
   _buildHMACTag(epoch, counter, expiresAt, payloadBytes) {
     if (!this._cmdHmacFn) throw new Error('Command HMAC not initialized')
     return this._cmdHmacFn(buildHMACTagInput(store.vehicleVin || new Uint8Array(0), epoch, counter, expiresAt, payloadBytes))
@@ -531,6 +537,7 @@ class TeslaSession {
         settled = true
         this._commandInFlight = false
         this._clearCommandTimer()
+        this._clearResendTimer()
         if (this._secondResponseTimer) {
           clearTimeout(this._secondResponseTimer)
           this._secondResponseTimer = null
@@ -545,6 +552,15 @@ class TeslaSession {
         // Track if we received the first response (status push)
         this._waitingForSecondResponse = false
 
+        // Prod the radio awake first. The phone unlocks a DOZING car instantly:
+        // VCSEC actuates RKE while dozing (only GET_STATUS needs a full wake), but
+        // a cold radio can drop the first frame. Fire a wake (fire-and-forget — a
+        // deep-asleep car never ACKs it, the effect is on TX) before the command so
+        // VCSEC is listening when the command lands.
+        try {
+          teslaBLE.sendNoReply(this._buildAuthMessage(buildUnsignedMessage({ rkeAction: RKE_ACTION_WAKE_VEHICLE })))
+        } catch (_e) {}
+
         // Overall deadline: covers "no response at all" and "only unsolicited
         // pushes" — neither arms _secondResponseTimer (that only starts after a
         // first addressed non-terminal reply). Without this a dropped command
@@ -555,6 +571,33 @@ class TeslaSession {
           console.log('[SESSION] Command timeout — no response from vehicle')
           finish({ success: false, error: 'Command timed out — no response from vehicle' })
         }, timeoutMs || this.commandTimeoutMs)
+
+        // Resend loop: one signed send + a 15s wait loses to a dozing radio that
+        // drops the first frame (device: tap does nothing for ~20s, then "works"
+        // once the car woke from connect traffic — phone never one-shots). Re-TX
+        // the command every RESEND_MS until the car ACKs or the deadline fires.
+        // Each resend is REBUILT (fresh counter) — a replayed identical counter
+        // can be rejected as anti-replay; re-actuation is idempotent for LOCK /
+        // UNLOCK and explicit-OPEN trunk/frunk. Fire-and-forget so the original
+        // responseCallback (ownCb) below stays registered to catch whichever ACK
+        // lands (all carry our stable routingAddress).
+        this._clearResendTimer()
+        let resends = 0
+        const RESEND_MS = 1500
+        const MAX_RESENDS = 4
+        const scheduleResend = () => {
+          this._resendTimer = setTimeout(() => {
+            this._resendTimer = null
+            if (settled || resends >= MAX_RESENDS) return
+            resends++
+            try {
+              console.log(`[SESSION] Command resend ${resends}/${MAX_RESENDS} (no ACK yet)`)
+              teslaBLE.sendNoReply(this.buildAuthenticatedCommand(rkeActionOrClosure))
+            } catch (_e) {}
+            scheduleResend()
+          }, RESEND_MS)
+        }
+        scheduleResend()
 
         // Use BLE layer's wrapper to handle multi-response
         ownCb = teslaBLE.send(message, (result) => {
@@ -594,9 +637,11 @@ class TeslaSession {
             if (!isTerminal && !this._waitingForSecondResponse) {
               this._waitingForSecondResponse = true
               console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
-              // The car has answered, so hand the deadline off to the tighter
-              // second-response timer — the overall command timer is no longer
-              // the right bound now that the link is proven alive.
+              // The car answered — it heard us, so stop prodding the radio (further
+              // resends would only risk extra actuations) and hand the deadline off
+              // to the tighter second-response timer; the overall command timer is
+              // no longer the right bound now that the link is proven alive.
+              this._clearResendTimer()
               this._clearCommandTimer()
               if (this._secondResponseTimer) clearTimeout(this._secondResponseTimer)
               this._secondResponseTimer = setTimeout(() => {
@@ -656,7 +701,20 @@ class TeslaSession {
     const unsignedMessage = buildUnsignedMessage({
       informationRequest: buildInformationRequest(INFO_REQUEST_GET_STATUS),
     })
-    const message = this._buildAuthMessage(unsignedMessage)
+    // GET_STATUS is a READ — send it UNSIGNED (no signature_data), exactly as the
+    // official Tesla SDK does (pkg/vehicle/vcsec.go getVCSECInfo → connector.
+    // AuthMethodNone). A SIGNED status request rides on our session counter/clock; a
+    // dozing/busy car silently drops it (device 2026-06-15: signed GET_STATUS ignored
+    // ~20s, stale lock state shown, toggle button misfired). Unsigned VCSEC status is
+    // "safe to poll when asleep" — the official app & ESPHome poll it ~every 10s and
+    // the car answers even sleeping. routingAddress so the reply is addressed to us;
+    // no counter is consumed (unsigned doesn't touch _buildAuthMessage's counter).
+    const message = buildRoutableMessage({
+      toDomain: DOMAIN_VEHICLE_SECURITY,
+      routingAddress: this.routingAddress,
+      payload: unsignedMessage,
+      uuid: generateUUID(),
+    })
 
     // Fire the terminal result exactly once and tear down command state.
     // NOTE: deliberately does NOT take the _commandInFlight gate. This is a
@@ -761,6 +819,20 @@ class TeslaSession {
   }
   unlock(callback) {
     this.sendCommand(RKE_ACTION_UNLOCK, callback)
+  }
+  // Fire a signed LOCK and flush it in one JS turn — for app-close auto-lock only.
+  // The normal sendCommand path waits for an ACK over chunked (setTimeout) TX, which
+  // can't complete in onDestroy before the process dies. Here we sign once and write
+  // all chunks synchronously (sendNoReplySync), no ACK wait. Returns true if sent.
+  lockSyncFireAndForget() {
+    if (!this.established) return false
+    try {
+      const message = this.buildAuthenticatedCommand(RKE_ACTION_LOCK)
+      return teslaBLE.sendNoReplySync(message)
+    } catch (e) {
+      console.log(`[SESSION] autolock send error: ${e && e.message}`)
+      return false
+    }
   }
   wake(callback) {
     // A dozing car keeps VCSEC beaconing but ignores GET_STATUS (device 2026-06-11:
@@ -1061,7 +1133,7 @@ class TeslaSession {
   // the car answers MESSAGEFAULT_ERROR_REQUIRES_RESPONSE_ENCRYPTION (28, device
   // capture 2026-06-12). So we set the flag and decrypt: r.plaintext is the
   // decrypted carserver Response. Returns { success, charge:{ level, range, state } }.
-  getChargeState(callback) {
+  getChargeState(callback, timeoutMs) {
     this._infotainmentCommand(buildGetChargeStateAction(), 'GetChargeState', (r) => {
       if (!r.success) {
         callback({ success: false, error: r.error || 'no charge response' })
@@ -1080,7 +1152,7 @@ class TeslaSession {
       }
       console.log(`[INF] charge: level=${charge.level}% range=${charge.range} state=${charge.state}`)
       callback({ success: true, charge: { level: charge.level, range: charge.range, state: charge.state } })
-    }, { encryptResponse: true })
+    }, { encryptResponse: true, timeoutMs: timeoutMs })
   }
   remoteDrive(callback) {
     // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless

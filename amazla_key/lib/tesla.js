@@ -160,51 +160,75 @@ class Tesla {
     })
   }
 
-  // Load live state on connect. The hard case is a DOZING car: it keeps VCSEC
-  // beaconing (passive entry works) but ignores GET_STATUS until it fully wakes —
-  // device 2026-06-12 showed ~30s and nothing addressed until then. The old flow
-  // stacked 15s timeouts serially (status → wake-ack → status → charge), so even
-  // once the car woke it took ~40s to surface. Instead: fire a quick wake, then
-  // POLL status with short deadlines, stopping the moment one is answered — so we
-  // catch the wake-up within a few seconds of it happening, not 15s later.
+  // Load live state on connect. Cached state (lock/doors/charge) is already painted
+  // at the ~3s "connected" mark by _hydrateCachedState; this refreshes it.
+  //
+  // CRITICAL — the displayed lock state drives the toggle button (page renders LOCK
+  // whose action is unlock, and vice versa). A STALE lock state silently misfires the
+  // button (device 2026-06-15: cache said locked, car was unlocked → tapping "lock"
+  // sent unlock to an already-unlocked car, nothing happened). So getting fresh VCSEC
+  // status is not cosmetic — it's correctness.
+  //
+  // GET_STATUS is slow on this car: it answers only once the passive-entry handshake
+  // progresses — device 2026-06-15 saw the first status ~21s after Established. A
+  // single short attempt (the previous version) timed out long before that and left
+  // the stale cache uncorrected. So we POLL with short deadlines until a status lands,
+  // re-waking each round; the polls dispatch passive-entry beacons (handshake advances,
+  // walk-up stays alive), and any status volunteered between polls is caught by
+  // _startLivePushes. Charge runs AFTER status settles — running it during load gated
+  // the handshake responder and pushed the status out even later.
+  //   • GetChargeState (d3) is RELIABLE (~3s) but DECOUPLED: it runs whether status
+  //     succeeded or the poll budget ran out, so charge never silently fails to load.
   _loadInitialState() {
-    var POLL_MS = 4000
-    var MAX_POLLS = 7 // ~28s budget covering a cold wake; cached state shows meanwhile
+    var POLL_MS = 3000
+    var MAX_POLLS = 6 // ~18s budget — covers the slow-handshake car; cached shows meanwhile
     var attempts = 0
-    var done = false
+    var statusDone = false
+    var charged = false
     var self = this
+    var loadCharge = function () {
+      if (charged) return
+      charged = true
+      // Short deadline: a sleeping car ignores d3, and this fetch gates passive
+      // entry for its whole window — keep that short so walk-up stays responsive.
+      self._loadChargeState(null, 4000)
+    }
     var poll = function () {
+      teslaSession.wake(function () {}) // re-prod each round (non-blocking, on TX)
       teslaSession.getVehicleStatus(function (r) {
         if (r && r._requeue) return // beacon notification, not terminal — keep waiting
-        if (done) return
+        if (statusDone) return
         if (r.success) {
-          done = true
-          self._applyStatus(r.status)
-          // Charge ONLY once status proves the car is awake. A charge fetch holds
-          // the BLE slot (and gates the passive-entry responder) for its deadline;
-          // firing it at a dozing car that won't answer would freeze walk-up
-          // unlock for no payoff (device 2026-06-12). Cached charge shows meanwhile.
-          self._loadChargeState()
+          statusDone = true
+          self._applyStatus(r.status) // fresh lock/door state — fixes the toggle
+          loadCharge()
           return
         }
         attempts++
-        if (attempts >= MAX_POLLS) { done = true; return } // dozing — give up, don't hog the slot on charge
+        if (attempts >= MAX_POLLS) { // car won't answer GET_STATUS — load charge anyway
+          statusDone = true
+          loadCharge()
+          return
+        }
         poll()
       }, POLL_MS)
     }
-    // Fire wake first (short, non-blocking — a deep-asleep car never ACKs it, the
-    // wake happens on TX), then start polling once the slot is free again.
-    teslaSession.wake(function () { poll() })
+    poll()
   }
 
   // Fetch the charge snapshot (infotainment domain) AFTER the VCSEC status work
   // settles — they share the one BLE response slot, so this must run sequentially,
   // not concurrently. Best-effort: a failure leaves the cached charge in place.
-  _loadChargeState(cb) {
+  // timeoutMs (optional): the connect-time fetch passes a SHORT deadline — a
+  // deeply asleep car ignores d3 too, and the charge fetch holds the slot (gating
+  // passive entry) for its whole deadline (device 2026-06-15: 6s wasted on a
+  // sleeping car). A tight bound releases walk-up sooner while still covering an
+  // awake car's ~3s d3 answer. Manual pull-to-refresh keeps the default 6s.
+  _loadChargeState(cb, timeoutMs) {
     teslaSession.getChargeState((r) => {
       if (r.success) this._applyChargeState(r.charge)
       if (cb) cb(r)
-    })
+    }, timeoutMs)
   }
 
   // Manual refresh of just the charge snapshot (e.g. a pull-to-refresh on the
@@ -216,6 +240,20 @@ class Tesla {
   retry() {
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
+  }
+
+  // App-close auto-lock. Passive entry only auto-locks while the watch is connected;
+  // closing the app drops BLE, so a car left unlocked stays unlocked. On close, if
+  // we're still connected to an UNLOCKED car with NO driver present, fire a lock
+  // before the BLE link is torn down. Fire-and-forget with a synchronous flush —
+  // onDestroy kills the process immediately after, so there's no time to wait for an
+  // ACK or pace chunks. Returns true if a lock was sent. Gating is conservative: it
+  // never locks while someone's in the car (userPresent) or if already locked.
+  lockOnClose() {
+    if (this.connection.status !== 'online') return false
+    if (this.locked) return false        // already locked — nothing to do
+    if (this.userPresent) return false   // driver in the car — do not lock them in/out
+    return teslaSession.lockSyncFireAndForget()
   }
 
   // ── Internal helpers ──────────────────────────────────────────────────
