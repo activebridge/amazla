@@ -1,3 +1,4 @@
+import "../zeppify/zos-globals"; // MUST be first: seeds hmUI/hmSetting globals that ui.js needs
 import "./shared/device-polyfill";
 import { MessageBuilder } from "./shared/message";
 import { getPackageInfo } from "@zos/app";

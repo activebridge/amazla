@@ -1,11 +1,7 @@
-// Comment these if you want to use v1 UI
-import * as hmUI from '@zos/ui'
-import { redraw, deleteWidget } from '@zos/ui'
-import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
-// end v1 UI
-
-export const { width, height, screenShape, deviceSource } = getDeviceInfo()
-// export const { width, height, screenShape, deviceSource } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
+// v1-native UI helper: uses ONLY the hmUI / hmSetting globals (no @zos imports —
+// the v1 runtime can't load @zos/*). On v2/v3 these globals are supplied by the
+// zos-globals shim, which the app imports before any page loads ui.js.
+export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
 
 // Permanent dimension log. getDeviceInfo() is reliable on both simulator and
