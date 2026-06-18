@@ -10,7 +10,7 @@ const GAP = 20
 const CARD_H = (height - GAP * 3) / 3 | 0
 // Round screens (screenShape === 1) clip the edges, so they need a wider margin.
 const CARD_W = width - (screenShape === 1 ? 120 : 60)
-const CODE_FONT = height * 0.14 | 0
+const CODE_FONT = height * 0.12 | 0
 const HEART_H = 144 // heart footprint (two stacked halves in heart.js: 64 + 80)
 export const STEP = CARD_H + GAP
 

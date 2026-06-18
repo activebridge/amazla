@@ -1,16 +1,16 @@
 {
   "configVersion": "v2",
   "app": {
-    "appId": 27280,
-    "appName": "Fetch API",
+    "appId": 1039931,
+    "appName": "🔐 Authenticator",
     "appType": "app",
     "version": {
-      "code": 1,
-      "name": "1.0.1"
+      "code": 113,
+      "name": "1.1.3"
     },
     "icon": "icon.png",
-    "vender": "zepp",
-    "description": "A sample application to demonstrate the fetch API"
+    "vender": "activebridge",
+    "description": "Two-factor authentication codes on your wrist. Import from Google Authenticator, Aegis, 2FAS, andOTP, Raivo or any QR code. Works offline with auto-refresh every 30 seconds. Includes widgets for quick access."
   },
   "permissions": [],
   "runtime": {
@@ -33,53 +33,30 @@
         }
       },
       "platforms": [
-        {
-          "name": "gtr3-pro",
-          "deviceSource": 229
-        },
-        {
-          "name": "gtr3-pro-w",
-          "deviceSource": 230
-        },
-        {
-          "name": "gtr3",
-          "deviceSource": 226
-        },
-        {
-          "name": "gtr3-w",
-          "deviceSource": 227
-        },
-        {
-          "name": "t-rex2",
-          "deviceSource": 418
-        },
-        {
-          "name": "t-rex2-w",
-          "deviceSource": 419
-        },
-        {
-          "name": "gts3",
-          "deviceSource": 224
-        },
-        {
-          "name": "gts3-w",
-          "deviceSource": 225
-        },
-        {
-          "name": "gts4",
-          "deviceSource": 7995648
-        },
-        {
-          "name": "gts4-w",
-          "deviceSource": 7995649
-        }
+        { "name": "band7", "deviceSource": 252 },
+        { "name": "band7", "deviceSource": 253 },
+        { "name": "band7", "deviceSource": 254 },
+
+        { "name": "gts4-mini", "deviceSource": 246 },
+        { "name": "gts4-mini", "deviceSource": 247 },
+
+        { "name": "gtr3-pro", "deviceSource": 229 },
+        { "name": "gtr3-pro", "deviceSource": 230 },
+        { "name": "gtr3-pro", "deviceSource": 242 },
+        { "name": "gtr3-pro", "deviceSource": 6095106 },
+
+        { "name": "gtr3", "deviceSource": 226 },
+        { "name": "gtr3", "deviceSource": 227 },
+
+        { "name": "gts3", "deviceSource": 224 },
+        { "name": "gts3", "deviceSource": 225 }
       ],
       "designWidth": 480
     }
   },
   "i18n": {
     "en-US": {
-      "appName": "Fetch API"
+      "appName": "Authenticator"
     }
   },
   "defaultLanguage": "en-US"

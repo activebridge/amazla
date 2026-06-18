@@ -6,12 +6,15 @@ import UI, { screenShape, height } from './../../pages/ui.js'
 import { localStorage } from './utils.js'
 import { setScrollMode, SCROLL_MODE_SWIPER } from '@zos/page'
 import { Timer } from 'zosLoader:./components/timer.[pf].layout.js'
+import { Timer as TimerBg } from './components/timer-bg.js'
 import { List, updateCodes, STEP } from './components/list.js'
+import { getTimeRemaining } from './libs/totp.js'
 import { createTimer } from './../shared/timer.js'
 
 let app = null
 let timer = null
 let timerArc = null
+let bg = null
 
 // Read lazily — globalData.messageBuilder is set in app.onCreate, and a
 // module-eval snapshot would capture the initial null.
@@ -34,6 +37,13 @@ Page({
 
     render() {
       const { accounts } = this.state
+
+      // v1-style gradient background, behind the cards (covers full scroll
+      // height). Created before the list so it draws underneath.
+      if (accounts.length > 0) {
+        bg = TimerBg(accounts.length * STEP + height)
+        bg.update(getTimeRemaining())
+      }
 
       // Create scrollable account list
       List(accounts)
@@ -77,7 +87,10 @@ Page({
 
     startTimer() {
       timer = createTimer(
-        (remaining) => { if (timerArc) timerArc.update(remaining) },
+        (remaining) => {
+          if (bg) bg.update(remaining)
+          if (timerArc) timerArc.update(remaining)
+        },
         () => updateCodes()
       )
       timer.start()
