@@ -5,8 +5,8 @@
     "appName": "🔐 Authenticator",
     "appType": "app",
     "version": {
-      "code": 302,
-      "name": "3.0.2"
+      "code": 303,
+      "name": "3.0.3"
     },
     "icon": "icon.png",
     "vender": "activebridge",
@@ -18,9 +18,9 @@
   ],
   "runtime": {
     "apiVersion": {
-      "compatible": "3.0.0",
-      "target": "3.0.0",
-      "minVersion": "3.0"
+      "compatible": "2.0.0",
+      "target": "4.0.0",
+      "minVersion": "2.0"
     }
   },
   "targets": {

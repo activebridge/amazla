@@ -1,32 +1,29 @@
-import { BaseSideService, settingsLib } from '@zeppos/zml/base-side'
+import { MessageBuilder } from "../shared/message-side";
+
+const messageBuilder = new MessageBuilder();
 
 const getAccounts = () => {
   try {
-    const data = settingsLib.getItem('accounts')
-    return data ? JSON.parse(data) : []
+    const data = settings.settingsStorage.getItem("accounts");
+    return data ? JSON.parse(data) : [];
   } catch {
-    return []
+    return [];
   }
-}
+};
 
-AppSideService(
-  BaseSideService({
-    onInit() {},
+AppSideService({
+  onInit() {
+    messageBuilder.listen(() => {});
 
-    onRequest(req, res) {
-      const methods = {
-        SYNC_ACCOUNTS: () => {
-          const accounts = getAccounts()
-          res(null, { accounts })
-        },
+    messageBuilder.on("request", (ctx) => {
+      const payload = messageBuilder.buf2Json(ctx.request.payload);
+
+      if (payload.method === "SYNC_ACCOUNTS") {
+        ctx.response({ data: { accounts: getAccounts() } });
       }
+    });
+  },
 
-      methods[req.method]?.()
-    },
-
-    onSettingsChange() {},
-
-    onRun() {},
-    onDestroy() {},
-  })
-)
+  onRun() {},
+  onDestroy() {},
+});

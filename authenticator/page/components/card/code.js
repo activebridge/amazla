@@ -1,5 +1,4 @@
-import { prop } from '@zos/ui'
-import { text } from './../../../../pages/ui.js'
+import { text, prop } from './../../../../pages/ui.js'
 import { GRADIENT_COLORS } from './../../../shared/colors.js'
 
 const font = 'fonts/Jua.ttf'

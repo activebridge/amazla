@@ -1,4 +1,3 @@
-import { BasePage } from '@zeppos/zml/base-page'
 import { setStatusBarVisible } from '@zos/ui'
 import * as hmUI from '@zos/ui'
 import { showToast } from '@zos/interaction'
@@ -14,8 +13,11 @@ let app = null
 let timer = null
 let timerArc = null
 
-Page(
-  BasePage({
+// Read lazily — globalData.messageBuilder is set in app.onCreate, and a
+// module-eval snapshot would capture the initial null.
+const getMessageBuilder = () => getApp()._options.globalData.messageBuilder
+
+Page({
     state: {
       accounts: localStorage.accounts,
     },
@@ -52,7 +54,9 @@ Page(
     },
 
     sync() {
-      this.request({ method: 'SYNC_ACCOUNTS' })
+      const messageBuilder = getMessageBuilder()
+      if (!messageBuilder) return
+      messageBuilder.request({ method: 'SYNC_ACCOUNTS' })
         .then(({ accounts }) => {
           if (!accounts) return
           if (JSON.stringify(this.state.accounts) === JSON.stringify(accounts)) return
@@ -88,5 +92,4 @@ Page(
       if (timer) timer.stop()
       this.cleanup()
     },
-  })
-)
+})

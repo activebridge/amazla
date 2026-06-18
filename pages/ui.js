@@ -5,8 +5,31 @@ import { getDeviceInfo, SCREEN_SHAPE_SQUARE } from '@zos/device'
 // end v1 UI
 
 export const { width, height, screenShape, deviceSource } = getDeviceInfo()
-// const { width, height, screenShape } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
+// export const { width, height, screenShape, deviceSource } = hmSetting?.getDeviceInfo()// || getDeviceInfo()
 export const size = Math.min(width, height)
+
+// Permanent dimension log. getDeviceInfo() is reliable on both simulator and
+// hardware; getAppWidgetSize() is NOT (see DEVICES.md). Keep this so device vs
+// simulator geometry is always visible in the console.
+console.log('[ui] getDeviceInfo: w=' + width + ' h=' + height + ' shape=' + screenShape + ' source=' + deviceSource)
+
+// align/prop wired through here so components stay v1/v3 agnostic
+// (hmUI is the global on v1, the @zos/ui namespace on v3)
+export const align = hmUI.align
+export const prop = hmUI.prop
+
+// app-widget size + navigation, routed through the global so v1-API builds can
+// reach the v2 APIs without importing @zos/* (which the v1 runtime can't load)
+export const getAppWidgetSize = () => {
+  const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
+  // Permanent log: getAppWidgetSize() differs sim vs device (see DEVICES.md).
+  // undefined at module-eval, real slot {w,h,margin} only inside build() on
+  // hardware; simulator typically reports full device width with margin 0.
+  console.log('[ui] getAppWidgetSize: ' + (sz ? 'w=' + sz.w + ' h=' + sz.h + ' margin=' + sz.margin + ' radius=' + sz.radius : String(sz)))
+  return sz || { w: width, margin: 0 }
+}
+export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
+export const push = (o) => { if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o) }
 
 let widgets = []
 

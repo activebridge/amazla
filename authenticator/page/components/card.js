@@ -8,7 +8,8 @@ export const Card = (acc, code = null, y, colorIndex, { card, name, digit }) => 
 
   // Shadows + Background
   const shadowH = h / 2 | 0
-  rect({ x, y: y - 2, w, h: shadowH, radius, color: 0xcecece, ...c })
+  rect({ x, y: y + 3, w, h, radius, color: 0x000000, ...c }) // bottom black shadow
+  rect({ x, y: y - 2, w, h: shadowH, radius, color: 0xcecece, ...c }) // top light highlight
   rect({ x, y, w, h, radius, color: 0x3a3a3a, ...c })
 
   // Title
@@ -18,6 +19,7 @@ export const Card = (acc, code = null, y, colorIndex, { card, name, digit }) => 
     w,
     h: name.h,
     text_size: name.text_size,
+    radius: name.radius,
   })
 
   // Code

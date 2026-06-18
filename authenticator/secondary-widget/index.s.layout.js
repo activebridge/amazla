@@ -7,16 +7,19 @@ const MARGIN = 10
 const GAP = 20
 const TIMER_H = 35
 const CARD_W = (width - MARGIN * 2 - GAP) / 2 | 0
-const CARD_H = ((height - MARGIN * 2 - GAP * 3 - TIMER_H) / 3 | 0) - 10
+const CARD_H = (height - MARGIN * 2 - GAP * 3 - TIMER_H) / 3 | 0
 
-// Use fixed font sizes (not relative to card height)
 const NAME_SIZE = 22
-const CODE_SIZE = 40
+// Scale the code to the (narrow, 2-column) card width so 6 digits fit in the
+// column instead of overflowing into the next one. ~0.21*(usable half-pair width).
+const CODE_SIZE = (CARD_W - 20) * 0.27 | 0
 
+// Positions relative to CARD_H so the title + code both stay inside the card
+// (fixed y/h were taller than the card on small screens -> digits spilled below).
 const DIMS = {
   card: { x: 0, w: CARD_W, h: CARD_H, radius: 20 },
-  name: { y: 10, h: 40, text_size: NAME_SIZE },
-  digit: { y: 45, w: CARD_W - 20, h: 60, text_size: CODE_SIZE, gap: 4 },
+  name: { y: CARD_H * 0.1 | 0, h: CARD_H * 0.42 | 0, text_size: NAME_SIZE },
+  digit: { y: (CARD_H * 0.52 | 0) + 5, w: CARD_W, h: CARD_H * 0.45 | 0, text_size: CODE_SIZE, gap: 4 },
 }
 
 let cards = []

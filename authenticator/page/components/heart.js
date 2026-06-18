@@ -1,5 +1,4 @@
-import { text, width } from './../../../pages/ui.js'
-import { align } from '@zos/ui'
+import { text, width, align } from './../../../pages/ui.js'
 
 export const Heart = (y, size = 100) => {
   // Blue top half, yellow bottom half (Ukrainian flag colors)
