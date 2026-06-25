@@ -11,7 +11,7 @@ import { jest } from '@jest/globals'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
 import store from '../lib/store.js'
-import { concat, encodeBytes, encodeVarintField } from '../lib/tesla-ble/protocol/protobuf.js'
+import { concat, encodeBytes, encodeVarintField, decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
 import { bootSessionEnv, p } from './helpers/session-setup.js'
 
 describe('TeslaSession edge cases', () => {
@@ -356,20 +356,24 @@ describe('TeslaSession sendCommand fault paths', () => {
   test('signedMessageStatus with fault code → command rejected (lines 344-347)', async () => {
     // Vehicle responds with RoutableMessage.signed_message_status (field 12)
     // carrying a non-zero signedMessageFault → session.js returns auth-layer fault.
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => {
+    const origSendAddressed = teslaBLE.sendAddressed
+    teslaBLE.sendAddressed = (message, match, cb) => {
       const faultStatus = concat(
         encodeVarintField(1, 2),  // operationStatus = ERROR
         encodeVarintField(2, 5),  // signedMessageFault = arbitrary nonzero code
       )
-      // Address the response to this command's routing address (to_destination
-      // field 6 → routing_address field 2), like a real vehicle reply — otherwise
-      // session.js treats it as an unsolicited push and keeps listening.
-      const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
-      cb({ success: true, data: concat(toDest, encodeBytes(12, faultStatus)) })
+      // Address the reply to the command's per-request address (from_destination,
+      // field 7 → routing_address field 2), echoed back as to_destination (field 6),
+      // so the command's address-routed waiter matches it like a real vehicle reply.
+      const fromDest = decodeMessage(message)[7]
+      const cmdAddr = fromDest ? decodeMessage(fromDest)[2] : null
+      const toDest = encodeBytes(6, encodeBytes(2, cmdAddr))
+      const frame = concat(toDest, encodeBytes(12, faultStatus))
+      if (match(frame)) cb({ success: true, data: frame })
+      return { token: true }
     }
     const result = await p((cb) => session.sendCommand(1 /* LOCK */, cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSendAddressed
 
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/Signed message fault 5/)

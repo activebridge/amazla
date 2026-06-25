@@ -462,6 +462,10 @@ const parseRoutableMessage = (data) => {
       }
     } catch (_e) {}
   }
+  // request_uuid (field 50): the vehicle echoes the uuid we sent in field 51 of the
+  // request it's answering. The command path uses it to tell its own RKE ack apart
+  // from the (identically-shaped, empty) acks for the wake prod / passive-entry frames.
+  const requestUuid = fields[50] instanceof Uint8Array ? fields[50] : null
   // Unwrap FromVCSECMessage carried at field 10.
   const payload = fields[10] instanceof Uint8Array ? fields[10] : null
   let vehicleStatus = null
@@ -487,6 +491,7 @@ const parseRoutableMessage = (data) => {
     sessionInfoBytes:    sessionInfoBytes,
     sessionInfoTag:      sessionInfoTag,
     sessionInfoStatus:   sessionInfoStatus,
+    requestUuid:         requestUuid,
     payload:             payload,
     vehicleStatus:       vehicleStatus,
     commandStatus:       commandStatus,

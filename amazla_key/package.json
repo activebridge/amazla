@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@silver-zepp/easy-ble": "^1.6.8",
-    "@zeppos/zeus-cli": "^1.5.15",
     "kpay-amazfit": "^2.0.0",
     "zeppos-app-utils": "^1.0.0"
   }

@@ -1,7 +1,7 @@
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
 import { RKE_ACTION_LOCK } from '../lib/tesla-ble/protocol/vcsec.js'
-import { encodeVarintField, encodeBytes } from '../lib/tesla-ble/protocol/protobuf.js'
+import { encodeVarintField, encodeBytes, decodeMessage } from '../lib/tesla-ble/protocol/protobuf.js'
 import { createHmac, createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 
 const concatBytes = (...parts) =>
@@ -26,6 +26,27 @@ function makeAddressedRoutable(routingAddress, payload) {
   )
 }
 
+// The command builds its RoutableMessage with a per-request from_destination
+// (field 7 → Destination.routing_address field 2 = cmdAddr). The car echoes that
+// as the reply's to_destination, and the command's address-routed waiter matches on
+// it. Tests pull cmdAddr out of the sent message so they can address replies back.
+function extractFromAddr(message) {
+  const dest = decodeMessage(message)[7]
+  return dest ? decodeMessage(dest)[2] : null
+}
+// Install a sendAddressed stub that delivers `routableFor(cmdAddr)` IF the command's
+// matcher accepts it (mirrors ble.js dispatch). Returns a restore fn.
+function stubSendAddressed(routableFor) {
+  const orig = teslaBLE.sendAddressed
+  teslaBLE.sendAddressed = function (message, match, cb) {
+    const cmdAddr = extractFromAddr(message)
+    const frame = routableFor(cmdAddr)
+    if (frame && match(frame)) cb({ success: true, data: frame })
+    return { token: true }
+  }
+  return () => { teslaBLE.sendAddressed = orig }
+}
+
 describe('sendCommand — second response timeout handling', () => {
   test('sets _waitingForSecondResponse then clears it on timeout and invokes callback with error', () => {
     const session = new TeslaSession()
@@ -39,28 +60,21 @@ describe('sendCommand — second response timeout handling', () => {
     session.routingAddress = new Uint8Array(16).fill(0x22)
     { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
-    // Stub BLE send to synchronously deliver only the intermediate ack
-    const origSend = teslaBLE.send
-    teslaBLE.send = function(_message, cb) {
-      // Deliver a SessionInfo-only routable message (no actionStatus), addressed
-      // to this command's routing address like a real vehicle response.
-      const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
-      const routable = makeAddressedRoutable(session.routingAddress, encodeBytes(15, sessionInfoBytes))
-      cb({ success: true, data: routable })
-    }
+    // Deliver only the intermediate SessionInfo push, addressed back to the command's
+    // per-request address (cmdAddr) so the waiter accepts it.
+    const restore = stubSendAddressed((cmdAddr) =>
+      makeAddressedRoutable(cmdAddr, encodeBytes(15, makeSessionInfoBytes(5, 1234))),
+    )
 
     // Simple spy to record calls (avoid depending on jest.fn in this environment)
     const uiCb = function() { uiCb.calls.push(Array.from(arguments)) }
     uiCb.calls = []
     session.sendCommand(RKE_ACTION_LOCK, uiCb)
 
-    // After first delivery, session should be waiting for second response
+    // A SessionInfo-only push is non-terminal: the session waits for the action ack and
+    // does NOT call the UI callback yet (the waiter stays armed; no _requeue plumbing).
     expect(session._waitingForSecondResponse).toBe(true)
-    // UI callback should have been invoked once with the intermediate result
-    expect(uiCb.calls.length).toBeGreaterThanOrEqual(1)
-    const firstArg = uiCb.calls[0][0]
-    // session sets _requeue on the intermediate result it passes back
-    expect(firstArg && firstArg._requeue).toBe(true)
+    expect(uiCb.calls.length).toBe(0)
 
     // Ensure a timer was scheduled for the second response
     expect(session._secondResponseTimer).toBeDefined()
@@ -70,8 +84,7 @@ describe('sendCommand — second response timeout handling', () => {
     expect(session._waitingForSecondResponse).toBe(false)
     expect(session._secondResponseTimer).toBeNull()
 
-    // Restore
-    teslaBLE.send = origSend
+    restore()
   })
 
   test('second-response timer expires and invokes callback with error (simulated timer)', () => {
@@ -85,15 +98,14 @@ describe('sendCommand — second response timeout handling', () => {
     session.routingAddress = new Uint8Array(16).fill(0x22)
     { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
-    // Stub BLE send to deliver only the intermediate SessionInfo response
-    const origSend = teslaBLE.send
-    teslaBLE.send = function(_message, cb) {
-      const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
-      const routable = makeAddressedRoutable(session.routingAddress, encodeBytes(15, sessionInfoBytes))
-      cb({ success: true, data: routable })
-    }
+    // Deliver only the intermediate SessionInfo response (addressed to cmdAddr)
+    const restore = stubSendAddressed((cmdAddr) =>
+      makeAddressedRoutable(cmdAddr, encodeBytes(15, makeSessionInfoBytes(5, 1234))),
+    )
 
-    // Intercept global setTimeout so the scheduled timer can be invoked synchronously
+    // Intercept global setTimeout so the scheduled timer can be invoked synchronously.
+    // sendCommand schedules command-deadline + resend timers first, then (on the
+    // SessionInfo push) the second-response timer LAST — so capturedTimer is it.
     const origSetTimeout = global.setTimeout
     let capturedTimer = null
     global.setTimeout = function(fn, ms) { capturedTimer = fn; return 'captured' }
@@ -102,10 +114,8 @@ describe('sendCommand — second response timeout handling', () => {
     uiCb.calls = []
     session.sendCommand(RKE_ACTION_LOCK, uiCb)
 
-    // First callback should be the intermediate requeue
-    expect(uiCb.calls.length).toBeGreaterThanOrEqual(1)
-    const first = uiCb.calls[0][0]
-    expect(first && first._requeue).toBe(true)
+    // Non-terminal SessionInfo → waiting, no UI callback yet
+    expect(uiCb.calls.length).toBe(0)
     expect(session._waitingForSecondResponse).toBe(true)
     expect(capturedTimer).not.toBeNull()
 
@@ -116,14 +126,13 @@ describe('sendCommand — second response timeout handling', () => {
     expect(session._waitingForSecondResponse).toBe(false)
     expect(session._secondResponseTimer).toBeNull()
 
-    // Final callback should be an error from the timeout path
-    expect(uiCb.calls.length).toBeGreaterThanOrEqual(2)
+    // The single UI callback is the timeout error
+    expect(uiCb.calls.length).toBe(1)
     const last = uiCb.calls[uiCb.calls.length - 1][0]
     expect(last && last.success).toBe(false)
     expect(last && last.error).toMatch(/Second response timeout/)
 
-    // Restore
-    teslaBLE.send = origSend
+    restore()
     global.setTimeout = origSetTimeout
   })
 
@@ -138,29 +147,27 @@ describe('sendCommand — second response timeout handling', () => {
     session.routingAddress = new Uint8Array(16).fill(0x22)
     { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
-    // Deliver a SessionInfo push addressed to a DIFFERENT routing address —
-    // i.e. an unsolicited vehicle broadcast, like Tesla's periodic VehicleStatus.
-    const origSend = teslaBLE.send
-    teslaBLE.send = function(_message, cb) {
-      const sessionInfoBytes = makeSessionInfoBytes(5, 1234)
-      const routable = makeAddressedRoutable(new Uint8Array(16).fill(0x99), encodeBytes(15, sessionInfoBytes))
-      cb({ success: true, data: routable })
-    }
+    // A push addressed to a DIFFERENT routing address (unsolicited broadcast, like
+    // Tesla's periodic VehicleStatus) must NOT match this command's address-routed
+    // waiter — the matcher rejects it, so it never reaches the command at all.
+    const restore = stubSendAddressed(() =>
+      makeAddressedRoutable(new Uint8Array(16).fill(0x99), encodeBytes(15, makeSessionInfoBytes(5, 1234))),
+    )
 
     const uiCb = function() { uiCb.calls.push(Array.from(arguments)) }
     uiCb.calls = []
     session.sendCommand(RKE_ACTION_LOCK, uiCb)
 
-    // The push must be re-queued (kept listening), NOT consumed as the action response.
+    // Not addressed to us → never delivered to the command; it keeps waiting on the
+    // deadline, never marked as a SessionInfo wait, never calls the UI callback.
     expect(session._waitingForSecondResponse).toBe(false)
-    expect(uiCb.calls.length).toBe(1)
-    expect(uiCb.calls[0][0]._requeue).toBe(true)
-    // A requeue keeps the overall command deadline ticking (it bounds an endless
-    // push stream); tear it down so the real timer doesn't leak past the test.
+    expect(uiCb.calls.length).toBe(0)
+    // The overall command deadline is still ticking; tear it down so the real timer
+    // doesn't leak past the test.
     expect(session._commandTimer).not.toBeNull()
     session.reset()
 
-    teslaBLE.send = origSend
+    restore()
   })
 
   test('empty FromVCSECMessage (field 10, len 0) addressed to us → terminal success', () => {
@@ -175,13 +182,12 @@ describe('sendCommand — second response timeout handling', () => {
     { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
 
     // Real vehicles ack an RKE action with an EMPTY FromVCSECMessage (field 10,
-    // length 0) addressed to our routing address — no commandStatus. Per Tesla SDK
-    // (done := commandStatus == nil) that's success. Must NOT hang waiting.
-    const origSend = teslaBLE.send
-    teslaBLE.send = function(_message, cb) {
-      const routable = makeAddressedRoutable(session.routingAddress, encodeBytes(10, new Uint8Array(0)))
-      cb({ success: true, data: routable })
-    }
+    // length 0) addressed back to the command's per-request address (cmdAddr) — no
+    // commandStatus. Per Tesla SDK (done := commandStatus == nil) that's success, and
+    // with address routing the empty ack is unambiguously THIS command's. Must NOT hang.
+    const restore = stubSendAddressed((cmdAddr) =>
+      makeAddressedRoutable(cmdAddr, encodeBytes(10, new Uint8Array(0))),
+    )
 
     const uiCb = function() { uiCb.calls.push(Array.from(arguments)) }
     uiCb.calls = []
@@ -192,7 +198,7 @@ describe('sendCommand — second response timeout handling', () => {
     expect(last.success).toBe(true)
     expect(last._requeue).toBeUndefined()
 
-    teslaBLE.send = origSend
+    restore()
   })
 })
 

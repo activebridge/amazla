@@ -22,7 +22,7 @@ import {
   generateRoutingAddress,
   DOMAIN_VEHICLE_SECURITY,
 } from '../lib/tesla-ble/protocol/vcsec.js'
-import { decodeMessage, encodeBytes, encodeVarintField, encodeFixed32 } from '../lib/tesla-ble/protocol/protobuf.js'
+import { decodeMessage, encodeBytes, encodeVarintField, encodeFixed32, concat } from '../lib/tesla-ble/protocol/protobuf.js'
 import { TeslaSession } from '../lib/tesla-ble/session.js'
 import { createSessionHmacs } from '../lib/tesla-ble/crypto/hmac.js'
 import teslaBLE from '../lib/tesla-ble/ble.js'
@@ -617,12 +617,15 @@ describe('getVehicleStatus — sends UNSIGNED GET_STATUS request (SDK AuthMethod
   beforeEach(() => {
     capturedMsg = undefined
     teslaBLE.connected = true
-    teslaBLE.send = (msg, _cb) => { capturedMsg = msg }
+    // getVehicleStatus is addressed like the SDK dispatcher: an unsigned read with a
+    // per-request routing address (from_destination) + uuid, sent via sendAddressed; the
+    // waiter matches the reply the car addresses back to that routing address.
+    teslaBLE.sendAddressed = (msg, _match, _cb) => { capturedMsg = msg; return { token: true } }
   })
 
   afterEach(() => {
     teslaBLE.connected = false
-    delete teslaBLE.send
+    delete teslaBLE.sendAddressed
   })
 
   test('sends a non-empty message (was empty before fix)', () => {
@@ -682,20 +685,30 @@ describe('getVehicleStatus — sends UNSIGNED GET_STATUS request (SDK AuthMethod
     expect(infoReq[1]).toBe(0)  // GET_STATUS = 0
   })
 
-  test('includes 16-byte UUID at field 51', () => {
+  test('addressed like the SDK dispatcher: has from_destination (field 7) and a 16-byte uuid (field 51)', () => {
+    // The SDK's dispatcher generates a random per-request routing address for a VCSEC
+    // request, sets it as from_destination, and a uuid (internal/dispatcher Send). The car
+    // echoes the address back so the reply self-routes to this fetch's waiter.
     makeSession().getVehicleStatus(() => {})
-    expect(decodeMessage(capturedMsg)[51].length).toBe(16)
+    const outer = decodeMessage(capturedMsg)
+    expect(outer[7]).toBeDefined()        // from_destination (routing address) present
+    expect(outer[51].length).toBe(16)     // 16-byte uuid present
   })
 
-  test('accepts an UNADDRESSED VehicleStatus push as the reply (initial-load fix)', () => {
-    // The car pushes VehicleStatus addressed to a domain, not our routing address, and
-    // floods auth beacons; the wait must resolve on the status push, not time out.
+  test('resolves on an ADDRESSED VehicleStatus reply (car echoes our routing address)', () => {
+    // The car echoes our from_destination (field 7 → routing_address field 2) as the
+    // reply's to_destination, and the fetch's waiter matches on that address.
     const statusBytes = new Uint8Array([0x10, 0x01]) // VehicleStatus{ vehicleLockState=1 }
     const fromVcsec = encodeBytes(1, statusBytes)    // FromVCSECMessage.vehicleStatus=1
-    const frame = encodeBytes(10, fromVcsec)         // no field-6 routing address → unaddressed
     let result
     const s = makeSession()
-    teslaBLE.send = (_msg, cb) => cb({ success: true, data: frame })
+    teslaBLE.sendAddressed = (msg, match, cb) => {
+      const fromDest = decodeMessage(msg)[7]
+      const statusAddr = fromDest ? decodeMessage(fromDest)[2] : null
+      const frame = concat(encodeBytes(6, encodeBytes(2, statusAddr)), encodeBytes(10, fromVcsec))
+      if (match(frame)) cb({ success: true, data: frame })
+      return { token: true }
+    }
     s.getVehicleStatus((r) => { result = r })
     expect(result.success).toBe(true)
     expect(result.status.vehicleLockState).toBe(1)
@@ -1010,24 +1023,32 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
     sent = []
     pendingCb = null
     teslaBLE.connected = true
-    teslaBLE.send = (msg, cb) => { sent.push(msg); pendingCb = cb }
+    // GET_STATUS now goes via the address-routed waiter (sendAddressed); the responder's
+    // signed AuthenticationResponse still goes via send. Capture both into `sent`.
+    teslaBLE.sendAddressed = (msg, _match, _cb) => { sent.push(msg); return { token: true } }
+    teslaBLE.send = (msg, cb) => { sent.push(msg); pendingCb = cb; return cb }
   })
   afterEach(() => {
     teslaBLE.connected = false
     delete teslaBLE.send
+    delete teslaBLE.sendAddressed
+    teslaBLE.idleCallback = null
     teslaBLE.responseCallback = null
   })
 
-  test('auth beacon during the status wait → AuthenticationResponse sent, fetch not settled', () => {
+  test('auth beacon during the status wait → answered by the idle listener, fetch not settled', () => {
     jest.useFakeTimers()
     try {
       const s = makeSession()
+      s.startStatusPushListener(() => {}) // arms idleCallback — beacons go here now
       const results = []
       s.getVehicleStatus((r) => results.push(r))
-      expect(sent.length).toBe(1) // GET_STATUS out
+      expect(sent.length).toBe(1) // GET_STATUS out (via sendAddressed)
 
-      // Unaddressed beacon lands on the in-flight slot — must be ANSWERED, not requeued.
-      pendingCb({ success: true, data: authFrame(0xcd, 1) })
+      // A beacon is addressed elsewhere, so it never matches the fetch's address-routed
+      // waiter — it falls through to the idle listener, which ANSWERS it. The fetch is
+      // untouched (it no longer owns the slot, so beacons can't starve the link either).
+      teslaBLE.idleCallback({ success: true, data: authFrame(0xcd, 1) })
       expect(sent.length).toBe(2)
       const unsigned = decodeMessage(decodeMessage(sent[1])[10])
       expect(unsigned[3]).toBeDefined() // authenticationResponse
@@ -1043,10 +1064,42 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
   })
 
   test('does not hold the responder gate (no _commandInFlight during a status fetch)', () => {
-    const s = makeSession()
-    s.getVehicleStatus(() => {})
-    expect(s._commandInFlight).not.toBe(true)
-    s.reset()
+    jest.useFakeTimers() // the fetch arms a real deadline timer; keep it off the real clock
+    try {
+      const s = makeSession()
+      s.getVehicleStatus(() => {})
+      expect(s._commandInFlight).not.toBe(true)
+      s.reset()
+    } finally {
+      jest.clearAllTimers()
+      jest.useRealTimers()
+    }
+  })
+
+  // Connect-time clean read window: with suppressBeaconsMs set, the fetch pauses our
+  // passive-entry replies so the car gets a quiet conversation to answer the read (the
+  // Go SDK gets this for free by never doing passive entry). After the window, beacons
+  // are answered again.
+  test('suppressBeaconsMs pauses the responder, then it resumes', () => {
+    jest.useFakeTimers()
+    try {
+      const s = makeSession()
+      s.startStatusPushListener(() => {}) // arms idleCallback
+      s.getVehicleStatus(() => {}, 5000, 2500) // 2.5s suppression window
+      expect(s._suppressBeaconsUntil).toBeGreaterThan(Date.now())
+
+      // A beacon inside the window → NOT answered (no AuthenticationResponse sent).
+      teslaBLE.idleCallback({ success: true, data: authFrame(0xcd, 1) })
+      expect(sent.length).toBe(1) // only the GET_STATUS went out; beacon was suppressed
+
+      // After the window, the same beacon IS answered.
+      jest.advanceTimersByTime(2501)
+      teslaBLE.idleCallback({ success: true, data: authFrame(0xce, 1) })
+      expect(sent.length).toBe(2) // AuthenticationResponse now sent
+    } finally {
+      jest.clearAllTimers()
+      jest.useRealTimers()
+    }
   })
 
   test('honors a custom deadline (short app-load fetch)', () => {
@@ -1083,19 +1136,21 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
     teslaBLE.sendNoReply = origSNR
   })
 
-  test('still defers to a REAL command in flight (gate respected)', () => {
+  test('idle responder defers to a REAL command in flight (gate respected)', () => {
     jest.useFakeTimers()
     try {
       const s = makeSession()
-      const results = []
-      s.getVehicleStatus((r) => results.push(r))
-      s._commandInFlight = true // e.g. an infotainment command racing the fetch
-      const result = { success: true, data: authFrame(0xcd, 1) }
-      pendingCb(result)
-      expect(sent.length).toBe(1)       // no responder send — command owns the slot
-      expect(result._requeue).toBe(true) // beacon requeued as before
+      s.startStatusPushListener(() => {})
+      s.getVehicleStatus(() => {})
+      expect(sent.length).toBe(1) // GET_STATUS out
+      s._commandInFlight = true // e.g. a command racing the fetch owns the response slot
+      // Beacon to the idle listener while a command is in flight — the responder must
+      // NOT seize the slot (it would steal the command's reply).
+      teslaBLE.idleCallback({ success: true, data: authFrame(0xcd, 1) })
+      expect(sent.length).toBe(1) // no responder send — command owns the slot
       jest.advanceTimersByTime(s.commandTimeoutMs + 1)
       s._commandInFlight = false
+      s.reset()
     } finally {
       jest.useRealTimers()
     }

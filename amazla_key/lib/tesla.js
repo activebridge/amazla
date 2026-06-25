@@ -69,9 +69,11 @@ class Tesla {
   _applyChargeState(charge) {
     if (!charge) return
     this.charge = {
-      level: charge.level,         // battery_level, %
-      range: charge.range,         // battery_range, mi
-      state: charge.state,         // ChargingState: Disconnected/Charging/Complete/…
+      level: charge.level, // battery_level, %
+      range: charge.range, // battery_range, mi
+      limit: charge.limit, // charge_limit_soc, % (SOC target; null if absent)
+      minsToFull: charge.minsToFull, // minutes_to_full_charge (null if absent)
+      state: charge.state, // ChargingState: Disconnected/Charging/Complete/…
       ts: Math.floor(Date.now() / 1000),
     }
     this._persistState()
@@ -88,6 +90,19 @@ class Tesla {
   }
   get vin() {
     return store.vehicleVin
+  }
+
+  // Single mutually-exclusive "what is the car doing" token, mirroring the Tesla
+  // Apple Watch app (parked / charging / charged / asleep). Asleep wins (the car
+  // is unreachable); then charge activity; else parked. Driving isn't derivable —
+  // we don't decode shift/gear state — so an occupied-but-parked car reads parked.
+  // Returns an i18n token; the UI resolves it via getText('charge_<token>').
+  get primaryState() {
+    if (this.sleeping) return 'asleep'
+    var s = this.charge && this.charge.state
+    if (s === 'Charging' || s === 'Starting') return 'charging'
+    if (s === 'Complete') return 'charged'
+    return 'parked'
   }
 
   // ── Change notification ───────────────────────────────────────────────
@@ -135,17 +150,31 @@ class Tesla {
     this._runAction((done) => teslaSession.chargePortInfotainment(done), cb)
   }
 
-  refresh(cb, _isRetry) {
+  // Start/stop charging (only when a cable is connected — see `pluggedIn`). Same
+  // infotainment actuation path as chargePort. EXPERIMENTAL: not device-validated.
+  startCharge(cb) {
+    this._runAction((done) => teslaSession.chargeStart(done), cb)
+  }
+  stopCharge(cb) {
+    this._runAction((done) => teslaSession.chargeStop(done), cb)
+  }
+
+  // True when a charge cable is connected (any charging_state except Disconnected/
+  // Unknown). Drives the charge button: port open/close when unplugged, start/stop
+  // charge when plugged in.
+  get pluggedIn() {
+    var s = this.charge && this.charge.state
+    return !!s && s !== 'Disconnected' && s !== 'Unknown'
+  }
+
+  refresh(cb) {
     teslaSession.ensureSessionEstablished((r) => {
       if (!r.success) {
-        // The car occasionally drops the BLE link mid-GATT-setup ("disconnected
-        // during setup") — pure transient flakiness that clears on a fresh dial.
-        // Auto-retry once after a short delay so the user doesn't have to tap again.
-        if (!_isRetry && r.error && r.error.indexOf('during setup') !== -1) {
-          this._setConnection({ status: 'checking', error: null })
-          setTimeout(() => this.refresh(cb, true), 800)
-          return
-        }
+        // Cold-connect drops ("disconnected during setup") are retried inside the
+        // connect path now (session.js _doConnect re-dials up to MAX_CONNECT_ATTEMPTS,
+        // each bounded by the ble.js setup watchdog) — mirrors the Tesla Go SDK. By
+        // the time a failure bubbles up here the car genuinely isn't answering, so
+        // report offline rather than adding another retry layer on top.
         this._setConnection({ status: 'offline', error: r.error || 'Could not connect' })
         if (cb) cb(r)
         return
@@ -180,40 +209,35 @@ class Tesla {
   //   • GetChargeState (d3) is RELIABLE (~3s) but DECOUPLED: it runs whether status
   //     succeeded or the poll budget ran out, so charge never silently fails to load.
   _loadInitialState() {
-    var POLL_MS = 3000
-    var MAX_POLLS = 6 // ~18s budget — covers the slow-handshake car; cached shows meanwhile
-    var attempts = 0
-    var statusDone = false
-    var charged = false
+    // ONE read, mimicking the Tesla Go SDK. The SDK gets a clean read conversation by
+    // never doing passive entry; we can't drop passive entry, but we pause our beacon
+    // replies for a short window (session.js _suppressBeaconsUntil) so the car gets the
+    // same quiet moment to answer this single read.
+    //
+    // No poll loop: device 2026-06-25 proved the car will NOT serve a read while we're
+    // answering passive-entry beacons, so attempts 2..N (with beacons active again) were
+    // guaranteed futile — and worse, each fired a signed wake + status that queued ahead
+    // of the AuthenticationResponse the car needs for walk-up unlock, congesting the one
+    // link they share. So we take the single quiet-window shot; if it misses, fresh state
+    // arrives via the reply-chain instead (command acks + handshake escalation feed
+    // _applyStatus through the idle/push listener). Cached state shows meanwhile.
+    var STATUS_READ_WINDOW_MS = 2500
+    var READ_DEADLINE_MS = 3000 // ≥ window, so the read spans the whole quiet period
     var self = this
-    var loadCharge = function () {
-      if (charged) return
-      charged = true
-      // Short deadline: a sleeping car ignores d3, and this fetch gates passive
-      // entry for its whole window — keep that short so walk-up stays responsive.
-      self._loadChargeState(null, 4000)
-    }
-    var poll = function () {
-      teslaSession.wake(function () {}) // re-prod each round (non-blocking, on TX)
-      teslaSession.getVehicleStatus(function (r) {
+    var done = false
+    teslaSession.wake(function () {}) // one prod for a dozing car (signed; fire-and-forget)
+    teslaSession.getVehicleStatus(
+      function (r) {
         if (r && r._requeue) return // beacon notification, not terminal — keep waiting
-        if (statusDone) return
-        if (r.success) {
-          statusDone = true
-          self._applyStatus(r.status) // fresh lock/door state — fixes the toggle
-          loadCharge()
-          return
-        }
-        attempts++
-        if (attempts >= MAX_POLLS) { // car won't answer GET_STATUS — load charge anyway
-          statusDone = true
-          loadCharge()
-          return
-        }
-        poll()
-      }, POLL_MS)
-    }
-    poll()
+        if (done) return
+        done = true
+        if (r.success) self._applyStatus(r.status) // fresh lock/door state — fixes the toggle
+        // Charge is decoupled and runs whether or not the read landed (best-effort).
+        self._loadChargeState(null, 4000)
+      },
+      READ_DEADLINE_MS,
+      STATUS_READ_WINDOW_MS,
+    )
   }
 
   // Fetch the charge snapshot (infotainment domain) AFTER the VCSEC status work
@@ -224,11 +248,13 @@ class Tesla {
   // passive entry) for its whole deadline (device 2026-06-15: 6s wasted on a
   // sleeping car). A tight bound releases walk-up sooner while still covering an
   // awake car's ~3s d3 answer. Manual pull-to-refresh keeps the default 6s.
-  _loadChargeState(cb, timeoutMs) {
-    teslaSession.getChargeState((r) => {
-      if (r.success) this._applyChargeState(r.charge)
-      if (cb) cb(r)
-    }, timeoutMs)
+  _loadChargeState(cb, _timeoutMs) {
+    // CHARGE DISABLED — VCSEC only. getChargeState opens an infotainment (domain 3)
+    // session that shares the single BLE response slot with VCSEC and gates passive
+    // entry; it was starving GET_STATUS and the RKE command path. No d3 session is
+    // established at all for now. To re-enable, restore the getChargeState body (see
+    // git history) and uncomment the Battery readout + charge button in page/index.js.
+    if (cb) cb({ success: false, error: 'charge disabled (VCSEC only)' })
   }
 
   // Manual refresh of just the charge snapshot (e.g. a pull-to-refresh on the

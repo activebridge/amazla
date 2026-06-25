@@ -30,3 +30,27 @@ msgstr "OK"
 
 msgid "pairing_btn_retry"
 msgstr "Retry"
+
+msgid "charge_parked"
+msgstr "Parked"
+
+msgid "charge_charging"
+msgstr "Charging"
+
+msgid "charge_charged"
+msgstr "Charged"
+
+msgid "charge_asleep"
+msgstr "Asleep"
+
+msgid "charge_left"
+msgstr "left"
+
+msgid "charge_unit_mi"
+msgstr "mi"
+
+msgid "charge_unit_h"
+msgstr "h"
+
+msgid "charge_unit_m"
+msgstr "m"

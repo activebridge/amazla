@@ -27,9 +27,20 @@ const CONNECTION_CONFIG = {
   // 8 s is enough for any successful Tesla GATT connect we've observed (350 ms
   // typical, 2.5 s worst case). Longer waits don't help and make debug cycles
   // painful — if 8 s elapses the native stack is either stuck or vehicle is
-  // refusing us; reboots/disconnect-on-startup handle those cases.
+  // refusing us; reboots/disconnect-on-startup handle those cases. Used for the
+  // FIRST dial of a connect burst.
   timeoutMs: 8000,
-  stackStabilizeWait: 100, // Reduced from 2000ms - Tesla SDK has no delay
+  // Shorter bound for RE-dials (session.js _doConnect attempts 2..N). The first dial
+  // already proved the car is reachable; a re-dial that hasn't gotten a native connect
+  // callback within this is hung, not slow (real connects are ~300ms). Failing fast
+  // keeps the 4-attempt loop's worst case ~20s instead of 4×8s=32s.
+  retryTimeoutMs: 4000,
+  // Per-attempt setup bound (mirrors the Tesla Go SDK's maxLatency ~4s). A cold
+  // car sometimes lets GATT discovery hang ~7s before dropping the link; this
+  // fails the attempt fast so the retry loop can re-dial immediately instead of
+  // waiting out the hang. Normal setup completes in ~1.4s (device-measured), so
+  // 3s is a safe margin. See session.js _doConnect for the retry loop.
+  setupWatchdogMs: 3000,
 }
 // LocalStorage key for the last successful native connect_id. Persisting it
 // lets us call hmBle.mstDisconnect(savedId) on the NEXT app launch even if the
@@ -100,6 +111,14 @@ class TeslaBLE {
     // fall through to this so live state changes still reach the app. Stays armed
     // across pushes (never nulled by delivery) — only cleared on disconnect/reset.
     this.idleCallback = null
+    // SDK-style address-keyed waiters. Each entry { match(payload)->bool, callback }
+    // routes a reassembled frame to the request that owns its routing address — the
+    // way the official Tesla dispatcher matches VCSEC responses (receiverKey = domain
+    // + per-request random address). Checked BEFORE responseCallback/idleCallback so a
+    // command's reply (addressed to its own per-request address) can never be eaten by a
+    // concurrent status poll or the passive-entry responder sharing the single slot.
+    // Persistent (multi-response): the registrant removes its own waiter on finish.
+    this._waiters = []
     this.onDisconnect = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
@@ -179,6 +198,14 @@ class TeslaBLE {
     this.profile = null
     this.responseCallback = null
     this.idleCallback = null
+    // Fail any address-routed requests still waiting — the link is gone, their replies
+    // will never arrive, so let their callbacks settle (timeouts would too, but this is
+    // immediate and frees the caller's busy flag).
+    const orphans = this._waiters
+    this._waiters = []
+    for (let i = 0; i < orphans.length; i++) {
+      try { orphans[i].callback({ success: false, error: 'Disconnected' }) } catch (_e) {}
+    }
     this.mac = null
     this._rxBuf = null
     this._rxExpected = 0
@@ -235,14 +262,14 @@ class TeslaBLE {
   stopScan() {
     return this._ensureBLE().stopScan()
   }
-  connect(mac, callback) {
+  connect(mac, callback, timeoutMs) {
     // Each new connect attempt re-runs the defensive native cleanup. Costs
     // nothing if state is already clean; saves a reboot if the prior session
     // left something stuck.
     this._clearStaleNativeState('pre-connect')
     let done = false
     let setupStarted = false
-    const timeoutMs = CONNECTION_CONFIG.timeoutMs
+    if (!timeoutMs) timeoutMs = CONNECTION_CONFIG.timeoutMs // caller (re-dials) can pass a shorter bound
     const dialStart = Date.now()
 
     console.log(`[BLE] connect() → ${mac} (timeout ${timeoutMs}ms)`)
@@ -254,10 +281,14 @@ class TeslaBLE {
       this._cleanup()
       callback({ success: false, error: 'Connection timeout' })
     }, timeoutMs)
+    // Holds the setup-phase watchdog timer (armed once the link is up, see below).
+    // Cleared on settle so a successful/aborted connect never trips it late.
+    const setupDiag = []
     const settle = (result) => {
       if (done) return
       done = true
       clearTimeout(timeout)
+      for (let i = 0; i < setupDiag.length; i++) clearTimeout(setupDiag[i])
       callback(result)
     }
     this._ensureBLE().connect(mac, (result) => {
@@ -302,6 +333,11 @@ class TeslaBLE {
           console.log(`[BLE] Persisted connect_id=${connId} for crash-recovery cleanup`)
         }
       } catch (_e) {}
+      // Setup MUST run synchronously inside this native connect callback. A
+      // 400ms setTimeout gap here was device-tested 2026-06-25 and broke GATT
+      // discovery entirely — startListener never called back (no CCCD, no
+      // listener-failed) → 8s timeout, and it did NOT stop the cold first drop.
+      // The cold first-connect drop is car-side; the retry is the only fix.
       console.log('[BLE] Connected, setting up profile immediately...')
 
       if (!this.connected) {
@@ -309,11 +345,34 @@ class TeslaBLE {
         settle({ success: false, error: 'Connection lost during setup' })
         return
       }
+      // Setup watchdog: a cold car sometimes lets GATT discovery hang (no
+      // startListener callback, no CCCD) until it drops the link ~7s later, or
+      // drops instantly — either way the first attempt is dead. Rather than wait
+      // out the hang (or the 8s outer timeout), fail fast at setupWatchdogMs so
+      // the retry loop re-dials immediately (mirrors the Tesla Go SDK bounding each
+      // attempt). listenerReturned/cccdWritten are logged for attribution.
+      const setupMs = Date.now()
+      let listenerReturned = false
+      let cccdWritten = false
+      setupDiag.push(
+        setTimeout(() => {
+          if (done) return
+          console.log(
+            `[BLE] Setup watchdog (${CONNECTION_CONFIG.setupWatchdogMs}ms): ` +
+              `listenerReturned=${listenerReturned} cccdWritten=${cccdWritten} — failing fast for retry`,
+          )
+          this.connected = false
+          this._cleanup()
+          settle({ success: false, error: 'Vehicle disconnected during setup' })
+        }, CONNECTION_CONFIG.setupWatchdogMs),
+      )
       this.profile = this._ensureBLE().generateProfileObject(this.services, {
         [TESLA_WRITE_UUID]: { value: 0x04 }, // WRITE_WITHOUT_RESPONSE
       })
       this._ensureBLE().startListener(this.profile, (response) => {
         if (done) return
+        listenerReturned = true
+        console.log(`[BLE] startListener returned after ${Date.now() - setupMs}ms, success=${response.success}`)
         if (!response.success) {
           this.connected = false
           console.log('[BLE] Listener failed:', response.message)
@@ -344,7 +403,8 @@ class TeslaBLE {
           // payload, confirmed on device 2026-06-03: the vehicle streamed its 177-byte
           // SessionInfo back as nine 20-byte notifications, and our writes cap at 20
           // too. So fixed 20-byte chunking is mandatory, not a tunable.
-          console.log('[BLE] CCCD confirmed, ready')
+          cccdWritten = true
+          console.log(`[BLE] CCCD confirmed, ready (setup ${Date.now() - setupMs}ms)`)
           settle({ success: true, mac })
         }
         ble.on.descWriteComplete(this.writeCompleteHandler)
@@ -423,6 +483,27 @@ class TeslaBLE {
     this._sendMessage(_frame(data))
     return true
   }
+  // Send a frame that owns a per-request ROUTING ADDRESS (not the single response
+  // slot). `match(payload)` returns true for the car's reply addressed back to this
+  // request; matching frames are delivered to `callback` and the waiter STAYS armed
+  // (the car may send several frames per request) until the caller removes it via the
+  // returned token. Concurrent address-routed requests coexist without stealing each
+  // other's replies — that's the whole point. Returns a token for removeWaiter().
+  sendAddressed(data, match, callback) {
+    if (!this.connected) {
+      callback({ success: false, error: 'Not connected' })
+      return null
+    }
+    const token = { match, callback }
+    this._waiters.push(token)
+    this._sendMessage(_frame(data))
+    return token
+  }
+  removeWaiter(token) {
+    if (!token) return
+    const i = this._waiters.indexOf(token)
+    if (i !== -1) this._waiters.splice(i, 1)
+  }
   // Like sendNoReply, but writes EVERY chunk in this one JS turn (no setTimeout
   // pacing). For the app-close auto-lock only: onDestroy tears the process down
   // right after, so the normal chunk-at-a-time path (setTimeout 50ms × ~10) never
@@ -499,7 +580,7 @@ class TeslaBLE {
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)
-    if (!this.responseCallback && !this.idleCallback) return
+    if (!this.responseCallback && !this.idleCallback && this._waiters.length === 0) return
     if (this._rxBuf === null) {
       const now = Date.now()
       // Dedup guard for genuinely repeated indications. chunk[0]/chunk[1] are just
@@ -551,11 +632,25 @@ class TeslaBLE {
     const payload = this._rxBuf.slice(0, this._rxExpected)
     this._rxBuf = null
     this._rxExpected = 0
+    // Address-routed waiters first: a frame addressed back to a specific request's
+    // routing address belongs to THAT request, regardless of what else holds the
+    // single response slot. Stays armed (multi-response); the registrant removes it.
+    for (let i = 0; i < this._waiters.length; i++) {
+      const w = this._waiters[i]
+      let matched = false
+      try { matched = w.match(payload) } catch (_e) {}
+      if (matched) {
+        console.log('[BLE] Got complete response:', payload.length, 'bytes (addr-matched)')
+        w.callback({ success: true, data: payload })
+        return
+      }
+    }
     // An in-flight command/session responseCallback takes priority and is one-shot
     // (nulled after delivery). When idle, the persistent idleCallback receives the
     // frame and stays armed for the next unsolicited push.
     const cb = this.responseCallback || this.idleCallback
     if (this.responseCallback) this.responseCallback = null
+    if (!cb) return
     console.log('[BLE] Got complete response:', payload.length, 'bytes')
     cb({ success: true, data: payload })
   }

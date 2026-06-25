@@ -1,18 +1,26 @@
+// Screen-type-specific battery: `[pf]` resolves to battery.r.layout.js (round,
+// full charging arc) or battery.s.layout.js (square, text placeholder) at build
+// time. The `.[pf].layout.js` suffix is required by the zosLoader resolver.
+import { Battery } from 'zosLoader:./components/battery.[pf].layout.js'
 import { getDeviceInfo } from '@zos/device'
 import { setPageBrightTime, setWakeUpRelaunch } from '@zos/display'
 import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
 import { push } from '@zos/router'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
-
-import UI, { button, circle, img, page, rect, text } from '../../pages/ui'
+import UI, { button, img, page, rect } from '../../pages/ui'
 import vibrate from '../../pages/vibrate'
 import { keepScreenOn } from '../../zeppify/index.js'
 
+// ─── Backend toggle ─────────────────────────────────────────────────────────
+// REAL (device / on-car): the BLE + crypto lib. Active for testing on a Tesla.
 import Phone from '../lib/phone.js'
 import tesla from '../lib/tesla.js'
 import BLE from '../lib/tesla-ble/index.js'
 import teslaSession from '../lib/tesla-ble/session.js'
+// MOCK (simulator only — the real lib OOMs the SIM): comment the 4 imports above
+// and uncomment the line below to develop the UI without a car.
+// import { tesla, Phone, BLE, teslaSession } from './tesla-mock.js'
 
 const { height } = getDeviceInfo()
 
@@ -158,6 +166,16 @@ const render = () => {
     return
   }
 
+  // Battery readout (infotainment domain, pull-only). Loaded on connect — painted
+  // from cache instantly, refreshed by the live fetch. Tap to refresh on demand
+  // (no charge pushes exist, so an idle screen would otherwise go stale). Round
+  // screens get the full charging arc; square screens a text placeholder — the
+  // right one is bundled per device (see the zosLoader import above).
+  // DISABLED for now: charge runs over the infotainment (d3) BLE domain, which
+  // shares the single response slot with VCSEC and was starving status/commands.
+  // VCSEC-only until that's untangled. Re-enable this line + the charge button below.
+  // Battery(slide1, tesla.charge, tesla.primaryState, onChargeRefresh)
+
   // Online controls
   tesla.frunkOpen && button({ ...CLOSE, y: -150, w: 200, h: 160, click_func: onFrunk }, slide1)
   !tesla.frunkOpen && button({ ...OPEN, y: -160, w: 200, h: 160, click_func: onFrunk }, slide1)
@@ -166,19 +184,20 @@ const render = () => {
   tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock }, slide1)
   !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock }, slide1)
 
-  // Charge port (rear driver-side). VCSEC ClosureMoveRequest.chargePort (field 7) —
-  // same authenticated closure path as trunk/frunk. When closed, an OPEN button at
-  // the port location; when open, a cyan status dot (no PNG overlay for Model Y).
-  !tesla.chargePortOpen && button({ ...OPEN, x: -130, y: 40, w: 100, h: 100, click_func: onChargePort }, slide1)
-  tesla.chargePortOpen && circle({ centered: true, x: -110, y: 150, radius: 12, color: 0x00ccff }, slide1)
-
-  // Battery readout (infotainment domain, pull-only). Loaded on connect — painted
-  // from cache instantly, refreshed by the live fetch. Tap to refresh on demand
-  // (no charge pushes exist, so an idle screen would otherwise go stale). The
-  // capture timestamp dims a stale value so a cached "Charging" can't mislead.
-  renderCharge(slide1)
-
-  rect({ w: 40, h: 20, y: height / 2 - 18, color: 0x000000 }, slide1)
+  // Charge button (rear driver-side). Context-aware:
+  //  • cable UNPLUGGED → open/close the charge port (open_charger/close_charger).
+  //  • cable PLUGGED IN → start/stop charging (start_charge ▶ / stop_charge ■).
+  // DISABLED for now (infotainment d3 BLE shares the VCSEC response slot). Re-enable
+  // together with the Battery readout above.
+  // const chargeBtn = { x: -130, y: 110, w: 100, h: 100 }
+  // if (!tesla.pluggedIn) {
+  //   !tesla.chargePortOpen && button({ ...chargeBtn, src: 'open_charger', click_func: onChargePort }, slide1)
+  //   tesla.chargePortOpen && button({ ...chargeBtn, src: 'close_charger', click_func: onChargePort }, slide1)
+  // } else if (tesla.charge.state === 'Charging') {
+  //   button({ ...chargeBtn, src: 'stop_charge', click_func: onStopCharge }, slide1)
+  // } else {
+  //   button({ ...chargeBtn, src: 'start_charge', click_func: onStartCharge }, slide1)
+  // }
 
   // ── Screen 2: debug controls (scroll down from the car) ──────────────────
   const slide2 = page(0, 1)
@@ -246,28 +265,6 @@ const render = () => {
   }
 }
 
-// Battery % + charging state at the top of the car screen. Color: green while
-// charging, amber when low, white otherwise; greyed when the snapshot is stale
-// (> 1 h old) so a cached value reads as "old", not current. A wide transparent
-// button over the text makes the whole readout a tap-to-refresh target.
-const CHARGE_STALE_SEC = 3600
-const renderCharge = (slide1) => {
-  const c = tesla.charge
-  if (!c || typeof c.level !== 'number') return
-  const stale = Math.floor(Date.now() / 1000) - (c.ts || 0) > CHARGE_STALE_SEC
-  let color = 0xffffff
-  if (stale) color = 0x888888
-  else if (c.state === 'Charging') color = 0x44dd44
-  else if (c.level <= 20) color = 0xffaa33
-  const showState = c.state && c.state !== 'Disconnected' && c.state !== 'Unknown'
-  const label = showState ? c.level + '% · ' + c.state : c.level + '%'
-  // Tap target FIRST so the text draws on top and stays legible whether or not
-  // `alpha` is honored on a BUTTON (transparent target if it is; a thin status-
-  // bar-like strip behind the text if it isn't — either reads fine).
-  button({ centered: true, x: 0, y: -211, w: 320, h: 30, text: '', normal_color: 0x000000, press_color: 0x111111, alpha: 0, radius: 0, click_func: onChargeRefresh }, slide1)
-  text({ centered: true, x: 0, y: -211, w: 320, h: 30, text: label, text_size: 22, color }, slide1)
-}
-
 const onChargeRefresh = () => {
   if (tesla.connection.status !== 'online') return
   hmUI.updateStatusBarTitle('Charge…')
@@ -328,6 +325,24 @@ const onChargePort = () => {
   hmUI.updateStatusBarTitle('Charge port…')
   tesla.chargePort((r) => {
     hmUI.updateStatusBarTitle(r.success ? '✓ Charge port' : '✗ Error')
+    if (r.success) vibrate(24)
+    else hmUI.showToast({ text: r.error || 'Error' })
+  })
+}
+
+const onStartCharge = () => {
+  hmUI.updateStatusBarTitle('Start charge…')
+  tesla.startCharge((r) => {
+    hmUI.updateStatusBarTitle(r.success ? '✓ Charging' : '✗ Error')
+    if (r.success) vibrate(24)
+    else hmUI.showToast({ text: r.error || 'Error' })
+  })
+}
+
+const onStopCharge = () => {
+  hmUI.updateStatusBarTitle('Stop charge…')
+  tesla.stopCharge((r) => {
+    hmUI.updateStatusBarTitle(r.success ? '✓ Stopped' : '✗ Error')
     if (r.success) vibrate(24)
     else hmUI.showToast({ text: r.error || 'Error' })
   })

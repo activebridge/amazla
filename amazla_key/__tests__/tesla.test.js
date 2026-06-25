@@ -412,43 +412,23 @@ describe('refresh()', () => {
     expect(tesla.connection.error).toBe('BLE timeout')
   })
 
-  test('"disconnected during setup" → auto-retries once and connects', () => {
-    jest.useFakeTimers()
-    try {
-      let calls = 0
-      jest.spyOn(teslaSession, 'ensureSessionEstablished').mockImplementation((cb) => {
-        calls++
-        if (calls === 1) cb({ success: false, error: 'Vehicle disconnected during setup' })
-        else cb({ success: true })
-      })
-      mockGetStatus()
+  test('"disconnected during setup" that bubbles up → offline, no retry at this layer', () => {
+    // Cold-connect drops are now retried INSIDE the connect path (session.js
+    // _doConnect re-dials up to MAX_CONNECT_ATTEMPTS, each bounded by the ble.js
+    // setup watchdog). By the time a "during setup" failure reaches refresh(), the
+    // connect loop has already exhausted its attempts, so refresh reports offline
+    // immediately — it must NOT add a second retry layer of its own.
+    let calls = 0
+    jest.spyOn(teslaSession, 'ensureSessionEstablished').mockImplementation((cb) => {
+      calls++
+      cb({ success: false, error: 'Vehicle disconnected during setup' })
+    })
 
-      tesla.refresh()
-      // First attempt failed transiently → stays in "checking", not "offline".
-      expect(tesla.connection.status).toBe('checking')
+    tesla.refresh()
 
-      jest.advanceTimersByTime(800) // fire the retry
-      expect(calls).toBe(2)
-      expect(tesla.connection.status).toBe('online')
-    } finally {
-      jest.useRealTimers()
-    }
-  })
-
-  test('"disconnected during setup" twice → gives up after one retry (offline)', () => {
-    jest.useFakeTimers()
-    try {
-      jest.spyOn(teslaSession, 'ensureSessionEstablished')
-        .mockImplementation((cb) => cb({ success: false, error: 'Vehicle disconnected during setup' }))
-
-      tesla.refresh()
-      jest.advanceTimersByTime(800)
-      // Only one retry; the second failure is terminal.
-      expect(tesla.connection.status).toBe('offline')
-      expect(tesla.connection.error).toMatch(/during setup/)
-    } finally {
-      jest.useRealTimers()
-    }
+    expect(calls).toBe(1) // single attempt — no tesla-level re-refresh
+    expect(tesla.connection.status).toBe('offline')
+    expect(tesla.connection.error).toMatch(/during setup/)
   })
 
   test('status fail stays ONLINE (session up) — state loads from live pushes', () => {
@@ -471,43 +451,40 @@ describe('refresh()', () => {
   // GET_STATUS answers only once the passive-entry handshake progresses (device
   // 2026-06-15: first status ~21s after Established). A single attempt timed out long
   // before that and left a STALE lock state shown — which misfires the toggle button.
-  // So we poll until a status lands (re-waking each round), bounded by a budget; and
-  // charge loads whether status succeeds or the budget runs out (never gated).
-  test('silent status → polls to budget, then loads charge (decoupled)', () => {
+  // ONE read in a beacon-suppressed window (no poll loop): the car won't serve a read
+  // while we answer passive-entry beacons, so extra polls were futile + congested the
+  // link. Charge still loads whether the read lands or not (never gated).
+  test('silent status → single read, then charge loads (decoupled)', () => {
     mockEstablished()
-    const timeouts = []
+    const args = []
     let calls = 0
     jest.spyOn(teslaSession, 'getVehicleStatus')
-      .mockImplementation((cb, timeoutMs) => { timeouts.push(timeoutMs); calls++; cb({ success: false, error: 'Vehicle status timed out' }) })
+      .mockImplementation((cb, timeoutMs, suppressMs) => { args.push({ timeoutMs, suppressMs }); calls++; cb({ success: false, error: 'Vehicle status timed out' }) })
     const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
     const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
       .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
 
     tesla.refresh()
 
-    expect(timeouts[0]).toBe(3000) // short per-poll deadline — fall through fast
-    expect(wakeSpy).toHaveBeenCalled()
-    expect(calls).toBe(6) // bounded retry loop (MAX_POLLS), no infinite spin
-    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loads despite status never answering
+    expect(calls).toBe(1) // single read — no poll loop
+    expect(args[0].suppressMs).toBeGreaterThan(0) // beacon-suppression window opened
+    expect(wakeSpy).toHaveBeenCalledTimes(1) // wake fired exactly once
+    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loads despite the read not answering
   })
 
-  // A status that lands stops the poll loop immediately and applies fresh lock state.
-  test('status answered on 2nd poll → applies state, stops polling, loads charge', () => {
+  // A status that lands in the read window applies fresh lock state and loads charge.
+  test('status answered in the read window → applies state, loads charge', () => {
     mockEstablished()
     let calls = 0
     jest.spyOn(teslaSession, 'getVehicleStatus')
-      .mockImplementation((cb) => {
-        calls++
-        if (calls === 1) { cb({ success: false, error: 'timed out' }); return }
-        cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }) // unlocked
-      })
+      .mockImplementation((cb) => { calls++; cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }) }) // unlocked
     jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
     const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
       .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
 
     tesla.refresh()
 
-    expect(calls).toBe(2) // stopped as soon as status landed
+    expect(calls).toBe(1) // single read
     expect(tesla.locked).toBe(false) // fresh state applied (fixes the toggle)
     expect(chargeSpy).toHaveBeenCalledTimes(1)
   })

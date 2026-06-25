@@ -1,6 +1,6 @@
 import Phone from '../phone.js'
 import store from '../store.js'
-import teslaBLE from './ble.js'
+import teslaBLE, { CONNECTION_CONFIG } from './ble.js'
 import { computeTeslaBLEName } from './ble-name.js'
 import { createSessionHmacs, createSessionInfoHmac } from './crypto/hmac.js'
 import { sha1, sha256 } from './crypto/sha256.js'
@@ -41,7 +41,13 @@ import {
 } from './protocol/vcsec.js'
 import { buildAesGcmCommand } from './infotainment.js'
 import { gcmDecrypt } from './crypto/aes-gcm.js'
-import { buildChargePortOpenAction, buildGetChargeStateAction, parseChargeStateResponse } from './protocol/carserver.js'
+import {
+  buildChargePortOpenAction,
+  buildChargeStartAction,
+  buildChargeStopAction,
+  buildGetChargeStateAction,
+  parseChargeStateResponse,
+} from './protocol/carserver.js'
 
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
@@ -62,6 +68,15 @@ const SESSION_INFO_AMBIENT_TIMEOUT_MS = 5000
 const SESSION_INFO_RESEND_TIMEOUT_MS = 3000
 const SESSION_INFO_RESENDS_PER_CONNECT = 2
 const SESSION_INFO_MAX_CONNECTS = 2
+// Cold-connect retry loop (mirrors the Tesla Go SDK's connect loop). The car
+// reliably drops the FIRST GATT connection of a session — instantly or after a
+// hang the ble.js setup watchdog now caps — then accepts the next. So we re-dial
+// the just-scanned MAC directly (no re-scan: within a connect burst the address
+// can't have rotated) up to MAX_CONNECT_ATTEMPTS, with only a brief settle so the
+// native stack drains between dials. Device data + Go SDK + ESPHome all agree the
+// first cold connect can't be made to stick; bounded-attempt + fast retry is the fix.
+const MAX_CONNECT_ATTEMPTS = 4
+const CONNECT_RETRY_SETTLE_MS = 150
 // Idle gap between tearing down the link and reconnecting on a Tier-1 recycle.
 // Lets the native BLE stack drain queued RX (stale notification fragments) while
 // nothing is attached — a back-to-back reconnect reuses that dirty state.
@@ -94,6 +109,7 @@ class TeslaSession {
     this.routingAddress = null
     this.established = false
     this._connecting = false // guard against duplicate connection attempts
+    this._suppressBeaconsUntil = 0 // epoch ms until which passive-entry replies are paused (clean status-read window)
     this.pendingCallbacks = null
     this._cmdHmacFn = null
     this._lastRequestUuid = null
@@ -194,18 +210,30 @@ class TeslaSession {
       }
     }, 3000, expectedName)
   }
-  _doConnect(mac, _attempt, callback) {
-    console.log(`[SESSION] Dialing vehicle: ${mac}`)
+  _doConnect(mac, attempt, callback) {
+    console.log(`[SESSION] Dialing vehicle: ${mac} (attempt ${attempt}/${MAX_CONNECT_ATTEMPTS})`)
+    // First dial gets the full timeout; re-dials get the shorter retryTimeoutMs (the car's
+    // already proven reachable, so a hung re-dial should fail fast for the next attempt).
+    const dialTimeoutMs = attempt === 1 ? CONNECTION_CONFIG.timeoutMs : CONNECTION_CONFIG.retryTimeoutMs
     teslaBLE.connect(mac, (result) => {
       console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
       if (!result.success) {
-        console.log(`[SESSION] ✗ Connection failed: ${result.error || 'unknown'}`)
+        // Expected on a cold car: it drops the first GATT connection of a session.
+        // ble.connect() has already run _cleanup() (fresh BLEMaster next dial), so
+        // just re-dial the same MAC after a brief settle. No re-scan — the address
+        // was freshly scanned at the start of this burst and can't have rotated yet.
+        if (attempt < MAX_CONNECT_ATTEMPTS) {
+          console.log(`[SESSION] ⟳ Connect failed (${result.error || 'unknown'}) — re-dialing (${attempt + 1}/${MAX_CONNECT_ATTEMPTS})`)
+          setTimeout(() => this._doConnect(mac, attempt + 1, callback), CONNECT_RETRY_SETTLE_MS)
+          return
+        }
+        console.log(`[SESSION] ✗ Connection failed after ${attempt} attempts: ${result.error || 'unknown'}`)
         callback({ success: false, error: `BLE connection failed: ${result.error || 'unknown'}` })
         return
       }
-      console.log('[SESSION] ✓ Connected to vehicle, proceeding')
+      console.log(`[SESSION] ✓ Connected to vehicle (attempt ${attempt}), proceeding`)
       this._proceedWithSession(callback)
-    })
+    }, dialTimeoutMs)
   }
   _proceedWithSession(callback) {
     // Stored vehicle pubkey isn't required at this point — SessionInfo will
@@ -483,7 +511,7 @@ class TeslaSession {
   }
   // Shared auth message builder: counter++, HMAC tag, SignatureData, RoutableMessage.
   // Takes a pre-built UnsignedMessage; returns the RoutableMessage bytes ready to send.
-  _buildAuthMessage(unsignedMessage) {
+  _buildAuthMessage(unsignedMessage, routingAddressOverride) {
     this.counter++
     // The vehicle validates expiresAt against ITS clock, which keeps ticking after we
     // captured clockTime at connect. Using a static `clockTime + 60` means that ~60s
@@ -503,15 +531,28 @@ class TeslaSession {
     // the same bytes we put in the payload: the UnsignedMessage.
     const tag = this._buildHMACTag(this.epoch, this.counter, expiresAt, unsignedMessage)
     const signatureData = buildSignatureData(this.ephemeralPublicKey, this.epoch, this.counter, expiresAt, tag)
+    // Stash the uuid we put in field 51 so the command path can correlate the
+    // vehicle's reply: the car echoes it back as request_uuid (field 50). A clean
+    // RKE ack is an EMPTY FromVCSECMessage — identical in shape to the ack the car
+    // sends for the pre-command WAKE prod and for passive-entry handshake frames —
+    // so the ONLY way to tell "this is MY command's ack" from "this is the wake's
+    // ack" is the echoed uuid. Without it the command finishes on the wake's ack
+    // (instant false success, no actuation) or a status-poll frame (timeout).
+    const uuid = generateUUID()
+    this._lastBuiltUuid = uuid
+    // routingAddressOverride lets a single request own a UNIQUE return address (SDK
+    // dispatcher style) so its reply self-routes to that request's waiter instead of
+    // the shared slot. Falls back to the stable session address for the passive-entry
+    // responder and the wake prod, whose replies we don't correlate.
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
-      routingAddress: this.routingAddress,
+      routingAddress: routingAddressOverride || this.routingAddress,
       payload: unsignedMessage,
       signatureData,
-      uuid: generateUUID(),
+      uuid,
     })
   }
-  buildAuthenticatedCommand(rkeActionOrClosure) {
+  buildAuthenticatedCommand(rkeActionOrClosure, routingAddressOverride) {
     if (!this.established) {
       throw new Error('Session not established')
     }
@@ -521,16 +562,31 @@ class TeslaSession {
       typeof rkeActionOrClosure === 'number'
         ? buildUnsignedMessage({ rkeAction: rkeActionOrClosure })
         : buildUnsignedMessage(rkeActionOrClosure) // { closureMoveRequest: <Uint8Array> }
-    return this._buildAuthMessage(unsignedMessage)
+    return this._buildAuthMessage(unsignedMessage, routingAddressOverride)
   }
   sendCommand(rkeActionOrClosure, callback, timeoutMs) {
     const doSend = () => {
       // Fire the terminal result exactly once and tear down all command state:
-      // both timers, the waiting flag, and the BLE callback (so a late frame
-      // after a timeout can't double-deliver). Non-terminal requeues do NOT go
-      // through here — they call callback(result) directly and keep listening.
+      // both timers, the waiting flag, and the address-routed waiter (so a late
+      // frame after a timeout can't double-deliver). Non-terminal frames return
+      // early and leave the waiter armed.
       let settled = false
-      let ownCb = null // this command's BLE registration — release only our own
+      let waiterToken = null // this command's address-routed BLE waiter — remove only our own
+      // Per-request routing address (SDK dispatcher style): the command + its resends all
+      // carry this as from_destination, the car echoes it as to_destination, and our waiter
+      // matches on it. So the command's reply self-routes to THIS request and can't be eaten
+      // by a concurrent status poll / passive-entry frame on the shared response slot.
+      const cmdAddr = generateRoutingAddress()
+      const _cmdAddressed = (payload) => {
+        try {
+          const dst = parseRoutableMessage(payload).toRoutingAddress
+          if (!dst || dst.length !== cmdAddr.length) return false
+          for (let i = 0; i < cmdAddr.length; i++) if (dst[i] !== cmdAddr[i]) return false
+          return true
+        } catch (_e) {
+          return false
+        }
+      }
       this._commandInFlight = true // gate the passive-entry responder off the shared slot
       const finish = (result) => {
         if (settled) return
@@ -543,23 +599,58 @@ class TeslaSession {
           this._secondResponseTimer = null
         }
         this._waitingForSecondResponse = false
-        if (teslaBLE.responseCallback === ownCb) teslaBLE.responseCallback = null
+        teslaBLE.removeWaiter(waiterToken)
         callback(result)
       }
+      const _hex = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : 'none')
+      // The uuids of every frame WE sent for THIS command (initial + each resend).
+      // The car's terminal ack echoes one of them as request_uuid; only a reply whose
+      // request_uuid is in here is genuinely our actuation ack (not the wake's ack or
+      // a passive-entry frame, which carry different uuids).
+      const myUuids = []
+      const _uuidMatches = (u) => {
+        if (!u) return false
+        for (let i = 0; i < myUuids.length; i++) {
+          const m = myUuids[i]
+          if (m && m.length === u.length) {
+            let eq = true
+            for (let j = 0; j < u.length; j++) if (m[j] !== u[j]) { eq = false; break }
+            if (eq) return true
+          }
+        }
+        return false
+      }
       try {
-        const message = this.buildAuthenticatedCommand(rkeActionOrClosure)
-
-        // Track if we received the first response (status push)
-        this._waitingForSecondResponse = false
-
-        // Prod the radio awake first. The phone unlocks a DOZING car instantly:
-        // VCSEC actuates RKE while dozing (only GET_STATUS needs a full wake), but
-        // a cold radio can drop the first frame. Fire a wake (fire-and-forget — a
-        // deep-asleep car never ACKs it, the effect is on TX) before the command so
-        // VCSEC is listening when the command lands.
+        // Prod the radio awake FIRST. The phone unlocks a DOZING car instantly: VCSEC
+        // actuates RKE while dozing (only GET_STATUS needs a full wake), but a cold
+        // radio can drop the first frame, so fire a wake (fire-and-forget — a deep
+        // asleep car never ACKs it, the effect is on TX) ahead of the command.
+        //
+        // ORDER IS LOAD-BEARING: the anti-replay counter is assigned at BUILD time, and
+        // the vehicle rejects any message whose counter isn't strictly above the last it
+        // accepted (MESSAGEFAULT_ERROR_INVALID_TOKEN_OR_COUNTER = 6). If the wake were
+        // built AFTER the command it would carry the HIGHER counter; whenever its frame
+        // won the TX race the car would accept the wake then reject the command's lower
+        // counter as a replay — exactly the fault-6 we saw on whichever command lost the
+        // race. Build+send the wake first so the command always holds the higher counter.
         try {
           teslaBLE.sendNoReply(this._buildAuthMessage(buildUnsignedMessage({ rkeAction: RKE_ACTION_WAKE_VEHICLE })))
         } catch (_e) {}
+
+        const message = this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)
+        myUuids.push(this._lastBuiltUuid) // record THIS command's uuid (built after the wake → higher counter)
+
+        // DIAG: label the command so the terminal log below can be tied to it.
+        console.log(
+          `[SESSION] TX command: ${
+            typeof rkeActionOrClosure === 'number'
+              ? `RKE=${rkeActionOrClosure}`
+              : `closureMoveRequest=${_hex(rkeActionOrClosure.closureMoveRequest)}`
+          }`,
+        )
+
+        // Track if we received the first response (status push)
+        this._waitingForSecondResponse = false
 
         // Overall deadline: covers "no response at all" and "only unsolicited
         // pushes" — neither arms _secondResponseTimer (that only starts after a
@@ -578,9 +669,8 @@ class TeslaSession {
         // the command every RESEND_MS until the car ACKs or the deadline fires.
         // Each resend is REBUILT (fresh counter) — a replayed identical counter
         // can be rejected as anti-replay; re-actuation is idempotent for LOCK /
-        // UNLOCK and explicit-OPEN trunk/frunk. Fire-and-forget so the original
-        // responseCallback (ownCb) below stays registered to catch whichever ACK
-        // lands (all carry our stable routingAddress).
+        // UNLOCK and explicit-OPEN trunk/frunk. Fire-and-forget on the SAME cmdAddr so
+        // whichever resend the car finally acks still routes to this command's waiter.
         this._clearResendTimer()
         let resends = 0
         const RESEND_MS = 1500
@@ -592,15 +682,19 @@ class TeslaSession {
             resends++
             try {
               console.log(`[SESSION] Command resend ${resends}/${MAX_RESENDS} (no ACK yet)`)
-              teslaBLE.sendNoReply(this.buildAuthenticatedCommand(rkeActionOrClosure))
+              teslaBLE.sendNoReply(this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)) // same cmdAddr → its ack matches our waiter
+              myUuids.push(this._lastBuiltUuid) // the car may ack THIS resend's uuid
             } catch (_e) {}
             scheduleResend()
           }, RESEND_MS)
         }
         scheduleResend()
 
-        // Use BLE layer's wrapper to handle multi-response
-        ownCb = teslaBLE.send(message, (result) => {
+        // Address-routed waiter: the car's reply to THIS command comes back addressed to
+        // cmdAddr (which only this command uses), so the waiter delivers exactly this
+        // command's frames — no concurrent status poll / passive-entry frame can be
+        // mistaken for the ack, and the ack can't be stolen by them holding the slot.
+        waiterToken = teslaBLE.sendAddressed(message, _cmdAddressed, (result) => {
           if (!result.success) {
             finish({ success: false, error: result.error })
             return
@@ -608,54 +702,36 @@ class TeslaSession {
           try {
             const response = parseRoutableMessage(result.data)
 
-            // Tesla streams unsolicited pushes (periodic VehicleStatus etc.) on the
-            // same characteristic. They're addressed to a domain, not our routing
-            // address, so they'd otherwise be consumed as the command's response and
-            // steal a response slot. Drop them and keep listening (the command
-            // deadline above still bounds an endless stream of them).
-            const ra = this.routingAddress
-            const dst = response.toRoutingAddress
-            const addressedToUs = ra && dst && dst.length === ra.length && (() => {
-              for (let i = 0; i < ra.length; i++) if (ra[i] !== dst[i]) return false
-              return true
-            })()
-            if (!addressedToUs) {
-              result._requeue = true // unsolicited push (not addressed to this command) — keep waiting
-              callback(result)
-              return
-            }
-
-            // Vehicle sends up to two responses per authenticated command:
-            //   1. SessionInfo-only push (field 15, no field 10) — non-terminal,
-            //      updates counter/epoch/clock; keep waiting.
-            //   2. FromVCSECMessage (field 10) or auth-fault (field 12) — TERMINAL.
-            // The terminal FromVCSECMessage is success when it carries no commandStatus
-            // — mirrors Tesla SDK executeRKEAction (done := commandStatus == nil). The
-            // car acks an RKE action with an EMPTY FromVCSECMessage (field 10, len 0),
-            // so detect terminal by the PRESENCE of the payload, not commandStatus.
-            const isTerminal = !!(response.payload || response.signedMessageStatus)
-            if (!isTerminal && !this._waitingForSecondResponse) {
-              this._waitingForSecondResponse = true
-              console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
-              // The car answered — it heard us, so stop prodding the radio (further
-              // resends would only risk extra actuations) and hand the deadline off
-              // to the tighter second-response timer; the overall command timer is
-              // no longer the right bound now that the link is proven alive.
-              this._clearResendTimer()
-              this._clearCommandTimer()
-              if (this._secondResponseTimer) clearTimeout(this._secondResponseTimer)
-              this._secondResponseTimer = setTimeout(() => {
-                if (this._waitingForSecondResponse) {
-                  console.log('[SESSION] Second response timeout — clearing waiting state')
-                  this._secondResponseTimer = null
-                  finish({ success: false, error: 'Second response timeout' })
-                }
-              }, 10000)
-
-              // Pass _requeue back through result so BLE wrapper re-registers callback
-              result._requeue = true
-              callback(result)
-              return
+            // The frame is already matched to this command's address — it IS our reply.
+            // The car sends up to two: a SessionInfo-only push (field 15, no field 10),
+            // then the terminal ack (field 10, possibly EMPTY) or an auth fault (field 12).
+            // Now that address routing guarantees ownership, an empty field-10 here is
+            // genuinely OUR ack (the wake prod uses the stable address, so its ack never
+            // lands here). uuid match is kept as a redundant positive signal.
+            const isTerminal =
+              !!response.payload ||
+              !!response.signedMessageStatus ||
+              !!response.commandStatus ||
+              _uuidMatches(response.requestUuid)
+            if (!isTerminal) {
+              // SessionInfo-only push: the car heard us and the action ack follows. Stop
+              // prodding the radio and hand the deadline to the tighter second-response
+              // timer. The waiter stays armed for the ack.
+              if (response.sessionInfo && !this._waitingForSecondResponse) {
+                this._waitingForSecondResponse = true
+                console.log('[SESSION] Got SessionInfo status push, waiting for action response...')
+                this._clearResendTimer()
+                this._clearCommandTimer()
+                if (this._secondResponseTimer) clearTimeout(this._secondResponseTimer)
+                this._secondResponseTimer = setTimeout(() => {
+                  if (this._waitingForSecondResponse) {
+                    console.log('[SESSION] Second response timeout — clearing waiting state')
+                    this._secondResponseTimer = null
+                    finish({ success: false, error: 'Second response timeout' })
+                  }
+                }, 10000)
+              }
+              return // waiter stays armed
             }
 
             // Auth-layer fault (counter/epoch mismatch, invalid signature, etc.)
@@ -669,6 +745,13 @@ class TeslaSession {
               finish({ success: false, error: 'Command rejected by vehicle', response })
               return
             }
+            // DIAG: what the car actually returned. An EMPTY field-10 payload = clean
+            // RKE-style ack (actuated). A NON-empty payload here on a closure that
+            // didn't move means the car answered with a status/other message we're
+            // treating as success — decode these bytes to see why frunk/trunk no-op.
+            console.log(
+              `[SESSION] cmd terminal ✓: field10=${_hex(response.payload)} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : 'none'}`,
+            )
             finish({ success: true, response })
           } catch (e) {
             finish({ success: false, error: e.message })
@@ -693,7 +776,7 @@ class TeslaSession {
   // timeoutMs (optional) overrides the default deadline — the initial app-load
   // fetch uses a short one so a dozing car (which never answers) falls through
   // to wake()+refetch quickly instead of burning the full 15s.
-  getVehicleStatus(callback, timeoutMs) {
+  getVehicleStatus(callback, timeoutMs, suppressBeaconsMs) {
     if (!this.established) {
       callback({ success: false, error: 'Session not established' })
       return
@@ -701,113 +784,78 @@ class TeslaSession {
     const unsignedMessage = buildUnsignedMessage({
       informationRequest: buildInformationRequest(INFO_REQUEST_GET_STATUS),
     })
-    // GET_STATUS is a READ — send it UNSIGNED (no signature_data), exactly as the
-    // official Tesla SDK does (pkg/vehicle/vcsec.go getVCSECInfo → connector.
-    // AuthMethodNone). A SIGNED status request rides on our session counter/clock; a
-    // dozing/busy car silently drops it (device 2026-06-15: signed GET_STATUS ignored
-    // ~20s, stale lock state shown, toggle button misfired). Unsigned VCSEC status is
-    // "safe to poll when asleep" — the official app & ESPHome poll it ~every 10s and
-    // the car answers even sleeping. routingAddress so the reply is addressed to us;
-    // no counter is consumed (unsigned doesn't touch _buildAuthMessage's counter).
+    // GET_STATUS is a READ — sent UNSIGNED (no signature_data), exactly as the official
+    // Tesla SDK does (pkg/vehicle/vcsec.go getVCSECInfo → connector.AuthMethodNone).
+    //
+    // Addressed exactly like the SDK's dispatcher: for a VEHICLE_SECURITY request it
+    // generates a random per-request routing address, sets it as from_destination, and
+    // registers a receiver keyed {domain, address}; the car echoes the address back as the
+    // reply's to_destination and the dispatcher matches on it (internal/dispatcher).
+    //
+    // The hard part isn't the addressing — a busy car ignored BOTH the addressed and a
+    // bare read on device (2026-06-25). The real divergence from the SDK is that we ALSO
+    // act as a passive-entry key (answering AuthenticationRequest beacons), and the car
+    // won't service a read while we're in that beacon loop. The SDK never does passive
+    // entry, so it gets a clean read conversation. We mimic that on connect by suppressing
+    // beacon responses for `suppressBeaconsMs` (see _suppressBeaconsUntil) — giving the car
+    // the same quiet window to answer the read — then passive entry resumes.
+    const statusAddr = generateRoutingAddress()
     const message = buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
-      routingAddress: this.routingAddress,
+      routingAddress: statusAddr,
       payload: unsignedMessage,
       uuid: generateUUID(),
     })
+    if (suppressBeaconsMs > 0) {
+      this._suppressBeaconsUntil = Date.now() + suppressBeaconsMs
+      console.log(`[SESSION] status read: suppressing beacon responses ${suppressBeaconsMs}ms for a clean read window`)
+    }
+    const _statusAddressed = (payload) => {
+      try {
+        const dst = parseRoutableMessage(payload).toRoutingAddress
+        if (!dst || dst.length !== statusAddr.length) return false
+        for (let i = 0; i < statusAddr.length; i++) if (dst[i] !== statusAddr[i]) return false
+        return true
+      } catch (_e) {
+        return false
+      }
+    }
 
-    // Fire the terminal result exactly once and tear down command state.
-    // NOTE: deliberately does NOT take the _commandInFlight gate. This is a
-    // best-effort fetch, not a user command — and while it owns the response
-    // slot the idle listener never sees the passive-entry beacons streaming
-    // underneath. An enrolled key that ignores IDENTIFICATION beacons gets the
-    // link DROPPED by the car in ~8s (device captures 2026-06-11: established →
-    // status TX → beacons requeued unanswered → disconnect before the deadline).
-    // Beacons are dispatched to the responder below instead.
     let settled = false
     let statusTimer = null
-    let ownCb = null // this fetch's BLE registration — release only our own
+    let waiterToken = null
     const finish = (result) => {
       if (settled) return
       settled = true
       if (statusTimer) { clearTimeout(statusTimer); statusTimer = null }
-      // Only clear the slot we still own. A blanket clear here clobbered the
-      // charge-port command that registered 1ms before this deadline fired
-      // (device capture 2026-06-11) — its d3 reply then fell to the idle
-      // listener and the command timed out.
-      if (teslaBLE.responseCallback === ownCb) teslaBLE.responseCallback = null
+      teslaBLE.removeWaiter(waiterToken)
       callback(result)
     }
-    // Overall deadline: covers "no response" and "only unsolicited pushes"
-    // (neither finishes below), so a dropped request can't hang the caller.
+    // Overall deadline: the car may answer GET_STATUS only after the passive-entry
+    // handshake escalates (it's a passive read a dozing car deprioritizes), so a fetch
+    // can legitimately get no addressed reply. The deadline bounds the callback; the UI
+    // also gets live VehicleStatus pushes via the idle listener meanwhile.
     statusTimer = setTimeout(() => {
       statusTimer = null
       console.log('[SESSION] getVehicleStatus timeout — no addressed response')
       finish({ success: false, error: 'Vehicle status timed out' })
     }, timeoutMs || this.commandTimeoutMs)
 
-    ownCb = teslaBLE.send(message, (result) => {
+    waiterToken = teslaBLE.sendAddressed(message, _statusAddressed, (result) => {
       if (!result.success) {
         finish({ success: false, error: result.error })
         return
       }
       try {
-        if (!result.data) {
-          finish({ success: false, error: 'No data in vehicle status response' })
-          return
-        }
         const response = parseRoutableMessage(result.data)
-
-        // Tesla streams unsolicited pushes (periodic VehicleStatus/VCSEC frames)
-        // on the same characteristic. They're addressed to a domain, not our
-        // routing address, so without this filter the first one is consumed as
-        // our reply — and parseVehicleStatus(null) then throws. Drop them and
-        // keep listening (the deadline above still bounds an endless stream).
-        const ra = this.routingAddress
-        const dst = response.toRoutingAddress
-        const addressedToUs = ra && dst && dst.length === ra.length && (() => {
-          for (let i = 0; i < ra.length; i++) if (ra[i] !== dst[i]) return false
-          return true
-        })()
-        // DIAGNOSTIC (3s→20s status regression, 2026-06-11): one line per frame in
-        // the status window — proves whether the car answers GET_STATUS at all
-        // (addressed or as a status-carrying push) or only streams beacons.
-        try {
-          console.log(`[SESSION] status RX ${result.data.length}B fields=[${Object.keys(decodeMessage(result.data)).join(',')}] addressed=${addressedToUs ? 'yes' : 'no'} status=${response.vehicleStatus ? 'yes' : 'no'}`)
-        } catch (_e) {}
-        if (!addressedToUs) {
-          // The car answers GET_STATUS by PUSHING VehicleStatus unsolicited (addressed
-          // to a domain, not our routing address) rather than as an addressed reply, and
-          // meanwhile floods auth beacons. Accept any frame that actually carries a status
-          // snapshot so the initial load resolves instead of timing out on the flood;
-          // only genuinely status-less pushes (auth beacons etc.) are ignored.
-          if (response.vehicleStatus) {
-            finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
-            return
-          }
-          // A passive-entry request (auth beacon / AppDeviceInfoRequest) must be
-          // answered even though this fetch owns the response slot — unanswered
-          // beacons cost us the link. The responder's signed reply seizes the
-          // slot, and the car answers it with a VehicleStatus the reply-chain
-          // hands to the UI — so the state this fetch wanted arrives anyway,
-          // while the deadline above still bounds this callback.
-          if (this._respondToVcsecRequest(response)) return
-          result._requeue = true // unsolicited push (not a status reply) — keep waiting
-          callback(result)
-          return
-        }
-
-        // Addressed to us, but a SessionInfo-only push (counter/epoch refresh)
-        // carries no VCSEC payload — non-terminal, keep waiting for the status.
+        // A SessionInfo-only reply (counter/epoch refresh) carries no VCSEC status —
+        // keep the waiter armed for the real status reply addressed to us.
         if (!response.vehicleStatus) {
-          console.log('[SESSION] Addressed reply without vehicleStatus, waiting...')
-          result._requeue = true
-          callback(result)
+          console.log('[SESSION] addressed reply without vehicleStatus, waiting...')
           return
         }
-
-        const vehicleStatus = parseVehicleStatus(response.vehicleStatus)
-        finish({ success: true, status: vehicleStatus })
+        console.log(`[SESSION] status RX ${result.data.length}B (addressed) — applying VehicleStatus`)
+        finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
       } catch (e) {
         console.log(`[SESSION] getVehicleStatus error: ${e.message}`)
         finish({ success: false, error: e.message })
@@ -1128,6 +1176,14 @@ class TeslaSession {
   chargePortInfotainment(callback) {
     this._infotainmentCommand(buildChargePortOpenAction(), 'ChargePortOpen', callback)
   }
+  // Start/stop charging — same infotainment (AES-GCM, domain 3) actuation path as
+  // the charge port. Only meaningful when a cable is connected.
+  chargeStart(callback) {
+    this._infotainmentCommand(buildChargeStartAction(), 'ChargeStart', callback)
+  }
+  chargeStop(callback) {
+    this._infotainmentCommand(buildChargeStopAction(), 'ChargeStop', callback)
+  }
   // Read charge state (battery %, range, charging status) over the infotainment
   // domain. Data reads REQUIRE an encrypted reply — without FLAG_ENCRYPT_RESPONSE
   // the car answers MESSAGEFAULT_ERROR_REQUIRES_RESPONSE_ENCRYPTION (28, device
@@ -1150,8 +1206,11 @@ class TeslaSession {
         callback({ success: false, error: charge.error || 'charge decode failed' })
         return
       }
-      console.log(`[INF] charge: level=${charge.level}% range=${charge.range} state=${charge.state}`)
-      callback({ success: true, charge: { level: charge.level, range: charge.range, state: charge.state } })
+      console.log(`[INF] charge: level=${charge.level}% range=${charge.range} limit=${charge.limit} mins=${charge.minsToFull} state=${charge.state}`)
+      callback({
+        success: true,
+        charge: { level: charge.level, range: charge.range, limit: charge.limit, minsToFull: charge.minsToFull, state: charge.state },
+      })
     }, { encryptResponse: true, timeoutMs: timeoutMs })
   }
   remoteDrive(callback) {
@@ -1190,6 +1249,15 @@ class TeslaSession {
   // answers each response with the NEXT request, so every reply is re-dispatched).
   _respondToVcsecRequest(response) {
     if (!this.established) return false
+    // Beacon-suppression window: on connect we briefly go quiet (answer no
+    // AuthenticationRequest) so the car gets a clean read conversation for GET_STATUS —
+    // the same conversation the Tesla Go SDK has by never doing passive entry at all. The
+    // car withholds a status read while it's mid passive-entry beaconing; pausing our
+    // replies for a couple seconds lets it answer, then passive entry resumes. Safe: the
+    // car only drops the link after ~8s of starved beacons (device captures), well over
+    // this window. Skip WITHOUT marking the request answered, so we reply on the next
+    // beacon once the window closes.
+    if (Date.now() < this._suppressBeaconsUntil) return false
     // Never fire while a user command (lock/unlock/drive/infotainment) owns the BLE
     // response slot — a signed reply here would seize that slot and steal the frame the
     // command is waiting for, starving it into a timeout. Skip WITHOUT marking the token

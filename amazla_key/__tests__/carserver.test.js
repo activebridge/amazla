@@ -1,6 +1,8 @@
 import {
   buildChargePortOpenAction,
   buildChargePortCloseAction,
+  buildChargeStartAction,
+  buildChargeStopAction,
   buildGetChargeStateAction,
   buildHvacAutoAction,
   decodeFloat32LE,
@@ -19,10 +21,12 @@ const float32LE = (v) => { const b = new Uint8Array(4); const dv = new DataView(
 // unset, so it's not GCM-encrypted). Response{2 vehicleData}→VehicleData{3
 // charge_state}→ChargeState{1 charging_state, 111 battery_range f32, 114 level i32}.
 const concat = (...parts) => parts.reduce((a, b) => { const r = new Uint8Array(a.length + b.length); r.set(a); r.set(b, a.length); return r }, new Uint8Array(0))
-const buildChargeResponse = ({ level, range, chargingStateField, errorStatus } = {}) => {
+const buildChargeResponse = ({ level, range, limit, minsToFull, chargingStateField, errorStatus } = {}) => {
   let cs = new Uint8Array(0)
   // charging_state(1) = ChargingState message; its oneof member's field number is the state
   if (chargingStateField != null) cs = concat(cs, encodeBytes(1, encodeBytes(chargingStateField, new Uint8Array(0))))
+  if (limit != null) cs = concat(cs, encodeVarintField(104, limit)) // charge_limit_soc
+  if (minsToFull != null) cs = concat(cs, encodeVarintField(123, minsToFull)) // minutes_to_full_charge
   if (range != null) cs = concat(cs, new Uint8Array([0xfd, 0x06]), float32LE(range)) // field 111 (111*8+5=893 → fd 06), wire type 5
   if (level != null) cs = concat(cs, encodeVarintField(114, level))
   const vehicleData = encodeBytes(3, cs)               // VehicleData.charge_state(3)
@@ -42,6 +46,18 @@ describe('carserver action payloads', () => {
     const va = vehicleAction(buildChargePortCloseAction())
     expect(61 in va).toBe(true)
     expect(62 in va).toBe(false)
+  })
+
+  test('ChargeStart → chargingStartStopAction(6) → start(2)', () => {
+    const va = vehicleAction(buildChargeStartAction())
+    expect(6 in va).toBe(true)
+    expect(2 in decodeMessage(va[6])).toBe(true) // charging_action = start
+  })
+
+  test('ChargeStop → chargingStartStopAction(6) → stop(5)', () => {
+    const va = vehicleAction(buildChargeStopAction())
+    expect(6 in va).toBe(true)
+    expect(5 in decodeMessage(va[6])).toBe(true) // charging_action = stop
   })
 
   test('GetChargeState → VehicleAction.getVehicleData(1) → GetVehicleData.getChargeState(2)', () => {
@@ -75,6 +91,16 @@ describe('parseChargeStateResponse', () => {
     expect(r.level).toBe(70)
     expect(r.range).toBeCloseTo(198.5, 2)
     expect(r.state).toBe('Disconnected')
+  })
+
+  test('decodes charge_limit_soc (field 104) when present, null when absent', () => {
+    expect(parseChargeStateResponse(buildChargeResponse({ level: 70, limit: 80 })).limit).toBe(80)
+    expect(parseChargeStateResponse(buildChargeResponse({ level: 70 })).limit).toBe(null)
+  })
+
+  test('decodes minutes_to_full_charge (field 123) when present, null when absent', () => {
+    expect(parseChargeStateResponse(buildChargeResponse({ level: 70, minsToFull: 135 })).minsToFull).toBe(135)
+    expect(parseChargeStateResponse(buildChargeResponse({ level: 70 })).minsToFull).toBe(null)
   })
 
   test('maps each ChargingState oneof member to its name', () => {
