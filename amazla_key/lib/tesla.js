@@ -8,6 +8,13 @@ import teslaSession from './tesla-ble/session.js'
 // in a separate `charge` block with its own capture time (see _applyChargeState).
 var VCSEC_STATE_KEYS = ['locked', 'df', 'dr', 'pf', 'pr', 'trunkOpen', 'frunkOpen', 'chargePortOpen', 'sleeping', 'userPresent']
 
+// Read-first: fire a clean GET_STATUS on a virgin connection (no beacons answered yet) to
+// get SDK-style fast status, before passive entry starts. Flip ENABLED to false to revert
+// to push-only status. WINDOW is how long we stay silent waiting for the read before
+// resuming walk-up. See _loadInitialState.
+var READ_FIRST_ENABLED = true
+var READ_FIRST_WINDOW_MS = 2500
+
 class Tesla {
   constructor() {
     // Vehicle state — flat properties, mirrors BLE state
@@ -35,6 +42,9 @@ class Tesla {
     this.busy = false
 
     this._listeners = []
+    this._passiveListeners = []
+    // Relay passive-entry handshake milestones from the session up to the UI (toasts).
+    teslaSession.onPassiveEvent((evt) => this._emitPassive(evt))
   }
 
   // Paint the last-known state immediately on load. The car can take 10–20s to
@@ -110,6 +120,18 @@ class Tesla {
   onChange(fn) {
     this._listeners.push(fn)
   }
+  // Passive-entry milestone observers (initiated / approaching / authorized). Separate
+  // from onChange — these are transient events for toasts, not state the page renders.
+  onPassiveEvent(fn) {
+    this._passiveListeners.push(fn)
+  }
+  _emitPassive(evt) {
+    for (var i = 0; i < this._passiveListeners.length; i++) {
+      try {
+        this._passiveListeners[i](evt)
+      } catch (_e) {}
+    }
+  }
   offChange(fn) {
     var arr = []
     for (var i = 0; i < this._listeners.length; i++) {
@@ -121,6 +143,9 @@ class Tesla {
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   connect() {
+    this._connectStartedAt = Date.now() // DIAG: measure time-to-first-real-status
+    this._realStatusPainted = false
+    this._realStatusReceived = false
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
   }
@@ -128,19 +153,22 @@ class Tesla {
   // ── Car actions ───────────────────────────────────────────────────────
 
   lock(cb) {
-    this._runAction((done) => teslaSession.lock(done), cb)
+    this._runAction((done) => teslaSession.lock(done), cb, { locked: true })
   }
 
   unlock(cb) {
-    this._runAction((done) => teslaSession.unlock(done), cb)
+    // gate:false — keep answering the car's AuthenticationRequest beacons WHILE the unlock
+    // is in flight (the phone does both at once). Gating the responder silences the presence
+    // handshake the car needs before it actuates a sleeping car, which deadlocks the unlock.
+    this._runAction((done) => teslaSession.unlock(done, { gate: false }), cb, { locked: false })
   }
 
   trunk(cb) {
-    this._runAction((done) => teslaSession.trunk(done), cb)
+    this._runAction((done) => teslaSession.trunk(done), cb, { trunkOpen: true })
   }
 
   frunk(cb) {
-    this._runAction((done) => teslaSession.frunk(done), cb)
+    this._runAction((done) => teslaSession.frunk(done), cb, { frunkOpen: true })
   }
 
   chargePort(cb) {
@@ -190,54 +218,44 @@ class Tesla {
   }
 
   // Load live state on connect. Cached state (lock/doors/charge) is already painted
-  // at the ~3s "connected" mark by _hydrateCachedState; this refreshes it.
+  // at the ~3s "connected" mark by _hydrateCachedState; the live-push listener (armed in
+  // refresh() before this) refreshes it.
   //
   // CRITICAL — the displayed lock state drives the toggle button (page renders LOCK
   // whose action is unlock, and vice versa). A STALE lock state silently misfires the
   // button (device 2026-06-15: cache said locked, car was unlocked → tapping "lock"
-  // sent unlock to an already-unlocked car, nothing happened). So getting fresh VCSEC
-  // status is not cosmetic — it's correctness.
+  // sent unlock to an already-unlocked car, nothing happened). So fresh VCSEC status is
+  // not cosmetic — it's correctness.
   //
-  // GET_STATUS is slow on this car: it answers only once the passive-entry handshake
-  // progresses — device 2026-06-15 saw the first status ~21s after Established. A
-  // single short attempt (the previous version) timed out long before that and left
-  // the stale cache uncorrected. So we POLL with short deadlines until a status lands,
-  // re-waking each round; the polls dispatch passive-entry beacons (handshake advances,
-  // walk-up stays alive), and any status volunteered between polls is caught by
-  // _startLivePushes. Charge runs AFTER status settles — running it during load gated
-  // the handshake responder and pushed the status out even later.
-  //   • GetChargeState (d3) is RELIABLE (~3s) but DECOUPLED: it runs whether status
-  //     succeeded or the poll budget ran out, so charge never silently fails to load.
+  // READ-FIRST gets fresh status in ~1s (device 2026-06-29). Device 2026-06-26 had
+  // concluded the car never serves an addressed read to a passive-entry key (status only
+  // via a car-paced 8–31s push) — but that only held because we were ALREADY answering
+  // beacons. On a VIRGIN connection (responder suppressed, no beacon answered yet) the car
+  // serves the addressed GET_STATUS, exactly like the Go SDK (which gets clean reads
+  // because it never does passive entry). So we read first, then start walk-up. The live
+  // push (_startLivePushes → _applyStatus) still backstops it if the read misses.
   _loadInitialState() {
-    // ONE read, mimicking the Tesla Go SDK. The SDK gets a clean read conversation by
-    // never doing passive entry; we can't drop passive entry, but we pause our beacon
-    // replies for a short window (session.js _suppressBeaconsUntil) so the car gets the
-    // same quiet moment to answer this single read.
-    //
-    // No poll loop: device 2026-06-25 proved the car will NOT serve a read while we're
-    // answering passive-entry beacons, so attempts 2..N (with beacons active again) were
-    // guaranteed futile — and worse, each fired a signed wake + status that queued ahead
-    // of the AuthenticationResponse the car needs for walk-up unlock, congesting the one
-    // link they share. So we take the single quiet-window shot; if it misses, fresh state
-    // arrives via the reply-chain instead (command acks + handshake escalation feed
-    // _applyStatus through the idle/push listener). Cached state shows meanwhile.
-    var STATUS_READ_WINDOW_MS = 2500
-    var READ_DEADLINE_MS = 3000 // ≥ window, so the read spans the whole quiet period
-    var self = this
-    var done = false
-    teslaSession.wake(function () {}) // one prod for a dozing car (signed; fire-and-forget)
-    teslaSession.getVehicleStatus(
-      function (r) {
-        if (r && r._requeue) return // beacon notification, not terminal — keep waiting
-        if (done) return
-        done = true
-        if (r.success) self._applyStatus(r.status) // fresh lock/door state — fixes the toggle
-        // Charge is decoupled and runs whether or not the read landed (best-effort).
+    // READ-FIRST. On a VIRGIN connection — before we've answered a single passive-entry
+    // beacon — fire ONE GET_STATUS and keep the responder silent until it lands. This
+    // mimics the Go SDK, which gets clean ~1s reads precisely because it never does passive
+    // entry: a key that isn't actively answering beacons is served the addressed read.
+    // Device 2026-06-29 measured the passive-entry push at 22–40s (car-paced, unfixable via
+    // the handshake), so this is the only path to fast status. If the read misses the short
+    // window we drop suppression and fall back to today's behaviour — walk-up resumes and
+    // status arrives via the (slow) live push. Earlier "suppression windows" were disproven,
+    // but those suppressed AFTER we'd answered beacons (already a passive-entry key to the
+    // car); this is read-FIRST, the SDK's exact precondition.
+    if (READ_FIRST_ENABLED) {
+      var self = this
+      teslaSession.suppressPassive(true)
+      teslaSession.getVehicleStatus(function (r) {
+        teslaSession.suppressPassive(false) // resume walk-up regardless of outcome
+        if (r && r.success) self._applyStatus(r.status)
         self._loadChargeState(null, 4000)
-      },
-      READ_DEADLINE_MS,
-      STATUS_READ_WINDOW_MS,
-    )
+      }, READ_FIRST_WINDOW_MS)
+      return
+    }
+    this._loadChargeState(null, 4000)
   }
 
   // Fetch the charge snapshot (infotainment domain) AFTER the VCSEC status work
@@ -298,6 +316,13 @@ class Tesla {
     // no-op, not an error, and throwing here surfaced as a bogus
     // "getVehicleStatus error: closureStatuses of undefined" up the callback.
     if (!status) return
+    // DIAG: first VehicleStatus actually RECEIVED this connection (vs "painted" below,
+    // which only fires when it CHANGES the display). The gap between the two tells us
+    // whether status is arriving late, or arriving on time but matching the cache.
+    if (!this._realStatusReceived && this._connectStartedAt) {
+      this._realStatusReceived = true
+      console.log('[Tesla] real status received +' + (Date.now() - this._connectStartedAt) + 'ms')
+    }
     var cs = status.closureStatuses || {}
     var next = {
       locked: status.vehicleLockState === 1,
@@ -322,6 +347,11 @@ class Tesla {
       }
     }
     if (changed) {
+      // DIAG: time from connect() to the FIRST real VehicleStatus push painting the UI.
+      if (!this._realStatusPainted && this._connectStartedAt) {
+        this._realStatusPainted = true
+        console.log('[Tesla] real status painted +' + (Date.now() - this._connectStartedAt) + 'ms (locked=' + next.locked + ')')
+      }
       // Persist the snapshot so the next app load paints it instantly
       // (see _hydrateCachedState). Preserves the charge block.
       this._persistState()
@@ -348,7 +378,7 @@ class Tesla {
     if (changed) this._notify()
   }
 
-  _runAction(fn, cb) {
+  _runAction(fn, cb, optimistic) {
     if (this.busy) {
       if (cb) cb({ success: false, error: 'Busy' })
       return
@@ -369,22 +399,39 @@ class Tesla {
       self.busy = false
 
       if (!result.success) {
-        self._setConnection({ status: 'offline', error: result.error || 'Command failed' })
+        // A command failing (e.g. no ack within the deadline) does NOT mean the BLE link
+        // dropped — the session is still established. Don't flip the connection to
+        // "offline" (that was the bogus "connection failed" on a slow/ignored command);
+        // just clear busy and surface the error to the caller, which toasts it. A real
+        // link loss is reported by the BLE/session layer, not by a command outcome.
         self._notify()
         if (cb) cb(result)
         return
       }
 
-      self._notify() // clear busy indicator immediately
-      setTimeout(() => {
-        if (self.busy) {
-          if (cb) cb({ success: true })
-          return
+      // Command succeeded. Do NOT re-run refresh() to reload state — that re-enters
+      // ensureSessionEstablished and, if the session is momentarily not established, flips
+      // the UI to "Connection Failed" even though the link is fine (and the car just
+      // actuated). Fresh state arrives via the live-push listener instead.
+      //
+      // OPTIMISTIC state update: a terminal success ack means the car actuated, but the
+      // ack carries no VehicleStatus (empty field10 — device-confirmed) and a fresh push
+      // may never arrive in a short session. So apply what we KNOW we did (e.g. unlock →
+      // locked:false) and persist it. Without this, after an unlock the displayed lock
+      // state stays stale "locked" — both in this session and (via store.lastVehicleState)
+      // the next one — which misfires the toggle button. A later real push corrects drift.
+      if (optimistic) {
+        var dirty = false
+        for (var k in optimistic) {
+          if (self[k] !== optimistic[k]) {
+            self[k] = optimistic[k]
+            dirty = true
+          }
         }
-        self.refresh(() => {
-          if (cb) cb({ success: true })
-        })
-      }, 1000)
+        if (dirty) self._persistState()
+      }
+      self._notify() // clear busy indicator + repaint optimistic state
+      if (cb) cb({ success: true })
     })
   }
 }

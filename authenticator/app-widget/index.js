@@ -1,5 +1,5 @@
 import { push } from '@zos/router'
-import { text, button, img, rect, width, prop, getAppWidgetSize, setAppWidgetSize } from './../../pages/ui.js'
+import { text, button, img, rect, width, getAppWidgetSize, setAppWidgetSize } from './../../pages/ui.js'
 import { localStorage } from './../page/utils.js'
 import { getCode, getTimeRemaining } from './../page/libs/totp.js'
 import { Card } from './../page/components/card.js'
@@ -145,8 +145,14 @@ AppWidget({
     const barInset = CARD_W * 0.15 | 0
     const barW = CARD_W - barInset * 2
     const progress = (remaining / 30) * barW
-    cover.setProperty(prop.X, (margin + barInset + progress) | 0)
-    cover.setProperty(prop.W, (barW - progress + 10) | 0)
+    cover.set({
+      centered: false,
+      x: (margin + barInset + progress) | 0,
+      y: 0,
+      w: (barW - progress + 10) | 0,
+      h: 5,
+      color: 0x3a3a3a,
+    })
   },
 
   startTimer() {

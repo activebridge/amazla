@@ -295,11 +295,12 @@ const onLock = () => {
 }
 
 const onUnlock = () => {
-  hmUI.updateStatusBarTitle('Unlocking…')
+  // Toasts (not updateStatusBarTitle — the status bar is hidden via setStatusBarVisible(false),
+  // so those titles never show). Toast on send, then on the result.
+  hmUI.showToast({ text: 'Unlocking…' })
   tesla.unlock((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Unlocked' : '✗ Error')
+    hmUI.showToast({ text: r.success ? '✓ Unlocked' : (r.error || '✗ Error') })
     if (r.success) vibrate(24)
-    else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
@@ -356,6 +357,25 @@ Page({
     phone = new Phone()
 
     tesla.onChange(render)
+
+    // Passive-entry handshake toasts: show the user the walk-up handshake progressing
+    // (car detected the key → accepted it). One toast per milestone per connection.
+    tesla.onPassiveEvent((evt) => {
+      const TXT = {
+        initiated: 'Passive entry…',
+        approaching: 'Approaching — authorizing',
+        authorized: '✓ Key authorized',
+      }
+      const text = TXT[evt.type]
+      if (text) hmUI.showToast({ text })
+    })
+
+    // No auto-unlock on connect. Firing an explicit unlock the instant we go online raced
+    // the passive-entry handshake: on anything but a strong signal the car stays at reason-1
+    // IDENTIFICATION for ~10-13s and ignores the signed command until it escalates, so the
+    // auto-unlock timed out / reported failure (device 2026-06-29, correlated with RSSI).
+    // Walk-up unlock is the car's job via passive entry (we answer its AuthenticationRequest
+    // beacons); an explicit unlock is a deliberate user action — the button / SELECT key.
 
     // Auto-establish the BLE session on open and pull the live car state. If not
     // paired/in range, refresh() lands the offline overlay (Retry / BLE Setup).

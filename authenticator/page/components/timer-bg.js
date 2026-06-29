@@ -1,4 +1,4 @@
-import { rect, img, prop, width, height } from './../../../pages/ui.js'
+import { rect, img, width, height } from './../../../pages/ui.js'
 
 // v2/v3 timer background in 2 widgets: a solid FILL_RECT in the current timer
 // color + a static vignette PNG (black side edges -> transparent center) on top.
@@ -37,7 +37,7 @@ export const Timer = (h = height) => {
       const t = remaining >= WARN_AT ? 0 : 1 - remaining / WARN_AT // 0 calm -> 1 warning
       const color = lerp(GREEN, PINK, t)
       const dimFactor = DIM_DARK + (DIM_BRIGHT - DIM_DARK) * t // darker until the last 5s
-      bar.setProperty(prop.MORE, { x: 0, y: -OVER, w: width, h: h + OVER, color: dim(color, dimFactor) })
+      bar.set({ centered: false, x: 0, y: -OVER, w: width, h: h + OVER, color: dim(color, dimFactor) })
     },
   }
 }

@@ -642,10 +642,10 @@ describe('getVehicleStatus — sends UNSIGNED GET_STATUS request (SDK AuthMethod
     expect(capturedMsg).toBeUndefined()
   })
 
-  test('does NOT increment the session counter (unsigned read)', () => {
+  test('increments the session counter (signed read)', () => {
     const s = makeSession()
     s.getVehicleStatus(() => {})
-    expect(s.counter).toBe(5) // unchanged — an unsigned status request consumes no counter
+    expect(s.counter).toBe(6) // signed (like a command) — consumes a counter so the car serves it
   })
 
   test('RoutableMessage has DOMAIN_VEHICLE_SECURITY at field 6', () => {
@@ -666,9 +666,9 @@ describe('getVehicleStatus — sends UNSIGNED GET_STATUS request (SDK AuthMethod
   // (pkg/vehicle/vcsec.go getVCSECInfo → connector.AuthMethodNone). A SIGNED status
   // request rides on the session counter/clock and a dozing car silently drops it
   // (device 2026-06-15: signed GET_STATUS ignored ~20s → stale lock state → toggle misfired).
-  test('has NO signature_data (field 13) — unsigned, matches SDK AuthMethodNone', () => {
+  test('HAS signature_data (field 13) — signed so the car serves a passive-entry key', () => {
     makeSession().getVehicleStatus(() => {})
-    expect(decodeMessage(capturedMsg)[13]).toBeUndefined()
+    expect(decodeMessage(capturedMsg)[13]).toBeDefined()
   })
 
   test('payload(10) is a bare UnsignedMessage carrying informationRequest (field 1)', () => {
@@ -1076,26 +1076,19 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
     }
   })
 
-  // Connect-time clean read window: with suppressBeaconsMs set, the fetch pauses our
-  // passive-entry replies so the car gets a quiet conversation to answer the read (the
-  // Go SDK gets this for free by never doing passive entry). After the window, beacons
-  // are answered again.
-  test('suppressBeaconsMs pauses the responder, then it resumes', () => {
+  // No beacon suppression: device 2026-06-26 proved the car never serves an addressed
+  // read to a passive-entry key, and pausing our replies only DELAYED the VehicleStatus
+  // push (the real status channel, which advances as we answer beacons). So a beacon
+  // during a status fetch is answered immediately — no quiet window.
+  test('a beacon during a status fetch is answered immediately (no suppression)', () => {
     jest.useFakeTimers()
     try {
       const s = makeSession()
       s.startStatusPushListener(() => {}) // arms idleCallback
-      s.getVehicleStatus(() => {}, 5000, 2500) // 2.5s suppression window
-      expect(s._suppressBeaconsUntil).toBeGreaterThan(Date.now())
-
-      // A beacon inside the window → NOT answered (no AuthenticationResponse sent).
-      teslaBLE.idleCallback({ success: true, data: authFrame(0xcd, 1) })
-      expect(sent.length).toBe(1) // only the GET_STATUS went out; beacon was suppressed
-
-      // After the window, the same beacon IS answered.
-      jest.advanceTimersByTime(2501)
-      teslaBLE.idleCallback({ success: true, data: authFrame(0xce, 1) })
-      expect(sent.length).toBe(2) // AuthenticationResponse now sent
+      s.getVehicleStatus(() => {})
+      const before = sent.length
+      teslaBLE.idleCallback({ success: true, data: authFrame(0xcd, 1) }) // AuthenticationRequest
+      expect(sent.length).toBe(before + 1) // AuthenticationResponse sent right away
     } finally {
       jest.clearAllTimers()
       jest.useRealTimers()

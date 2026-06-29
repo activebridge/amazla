@@ -12,9 +12,12 @@ const BLE_CHUNK_SIZE = 20
 // ambient frames (the intermittent "ambient-only" failure). Observed link
 // cadence in device logs is ~one 20-byte packet per ~90ms, so pacing our writes
 // near that avoids over-queueing. Tunable — lower if reliability holds, raise if
-// drops persist. Costs ~(chunks × this) ms per request (e.g. 10×50 ≈ 450ms).
-// Trying 50ms (was 90) to cut command latency; watch for ambient-only failures.
-const BLE_CHUNK_INTERVAL_MS = 50
+// drops persist. Costs ~(chunks × this) ms per request (e.g. 10×20 ≈ 200ms).
+// 20ms (history 90→50→10→20): 10ms was over the line — device 2026-06-29 saw a SessionInfo
+// request lose a chunk (car streamed only ambient `fields:[3]` acks until the resend
+// recovered it, +8s connect). 20ms keeps ~2.5× the speedup of the old 50ms with double the
+// margin of 10ms. Raise back toward 50 if the intermediate-ack-only loop recurs.
+const BLE_CHUNK_INTERVAL_MS = 20
 // Upper bound on a reassembled Tesla response frame. The largest we ever see is
 // SessionInfo (~177B); commands/status are <60B. A declared length above this
 // means the chunk is an orphan fragment (e.g. the tail of a frame whose head

@@ -1,4 +1,4 @@
-import { text, prop } from './../../../../pages/ui.js'
+import { text } from './../../../../pages/ui.js'
 import { GRADIENT_COLORS } from './../../../shared/colors.js'
 
 const font = 'fonts/Jua.ttf'
@@ -34,15 +34,15 @@ export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size
 
   const update = (code, newColorIndex) => {
     const [p1, p2] = parse(code)
-    first.lightShadow.setProperty(prop.TEXT, p1)
-    first.darkShadow.setProperty(prop.TEXT, p1)
-    first.main.setProperty(prop.TEXT, p1)
-    second.lightShadow.setProperty(prop.TEXT, p2)
-    second.darkShadow.setProperty(prop.TEXT, p2)
-    second.main.setProperty(prop.TEXT, p2)
+    first.lightShadow.set({ text: p1 })
+    first.darkShadow.set({ text: p1 })
+    first.main.set({ text: p1 })
+    second.lightShadow.set({ text: p2 })
+    second.darkShadow.set({ text: p2 })
+    second.main.set({ text: p2 })
     if (newColorIndex !== undefined) {
-      first.main.setProperty(prop.COLOR, GRADIENT_COLORS[(newColorIndex * 2) % 34])
-      second.main.setProperty(prop.COLOR, GRADIENT_COLORS[(newColorIndex * 2 + 1) % 34])
+      first.main.set({ color: GRADIENT_COLORS[(newColorIndex * 2) % 34] })
+      second.main.set({ color: GRADIENT_COLORS[(newColorIndex * 2 + 1) % 34] })
     }
   }
 

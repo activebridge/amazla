@@ -54,10 +54,17 @@ function mockEstablished() {
     .mockImplementation(cb => cb({ success: true }))
 }
 
-/** Make getVehicleStatus resolve with a status */
+/** Make getVehicleStatus resolve with a status (manual-refresh path only) */
 function mockGetStatus(statusPatch = {}) {
   jest.spyOn(teslaSession, 'getVehicleStatus')
     .mockImplementation(cb => cb({ success: true, status: makeStatus(statusPatch) }))
+}
+
+/** Simulate the connect-time live-push channel firing a VehicleStatus immediately.
+ *  Status on connect now arrives via startStatusPushListener (not a connect-time read). */
+function mockPush(statusPatch = {}) {
+  jest.spyOn(teslaSession, 'startStatusPushListener')
+    .mockImplementation(onStatus => onStatus(makeStatus(statusPatch)))
 }
 
 /** Make sendCommand call its callback once with a successful result */
@@ -74,11 +81,14 @@ beforeEach(() => {
   resetTesla()
   Object.keys(_fsStore).forEach(k => delete _fsStore[k])
   store.reset()
-  // refresh() now always fires wake() before polling status, and loads charge
-  // after. Default both to no-op successes so the connect-path tests don't hit
-  // the real BLE implementations; tests that assert on them override these.
+  // Default the session calls to no-ops so connect-path tests don't hit the real BLE;
+  // tests that assert on them override these.
   jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
   jest.spyOn(teslaSession, 'getChargeState').mockImplementation(cb => cb({ success: false }))
+  // Read-first fires a connect-time getVehicleStatus; default it to a clean miss so
+  // connect-path tests don't hit real BLE. Tests asserting status behaviour override this.
+  jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation(cb => cb({ success: false }))
+  jest.spyOn(teslaSession, 'suppressPassive').mockImplementation(() => {})
 })
 
 afterEach(() => {
@@ -359,14 +369,13 @@ describe('charge state snapshot', () => {
     expect(tesla.charge.level).toBe(90) // unchanged
   })
 
-  test('refresh loads charge after a successful status fetch', () => {
+  test('refresh invokes charge load (charge disabled → getChargeState not called)', () => {
     mockEstablished()
-    mockGetStatus({ vehicleLockState: 1 })
     const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 71, range: 200, state: 'Charging' } }))
     tesla.refresh()
-    expect(chargeSpy).toHaveBeenCalled()
-    expect(tesla.charge.level).toBe(71)
+    // _loadInitialState calls _loadChargeState, which is currently disabled (VCSEC only)
+    // and returns without hitting the session — so getChargeState must NOT be called.
+    expect(chargeSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -391,7 +400,7 @@ describe('connect()', () => {
 describe('refresh()', () => {
   test('success path: connection becomes online, state applied', () => {
     mockEstablished()
-    mockGetStatus({ vehicleLockState: 0 })
+    mockPush({ vehicleLockState: 0 }) // status arrives via the live-push channel, not a connect read
 
     const listener = jest.fn()
     tesla.onChange(listener)
@@ -448,75 +457,43 @@ describe('refresh()', () => {
     expect(liveSpy).toHaveBeenCalled()
   })
 
-  // GET_STATUS answers only once the passive-entry handshake progresses (device
-  // 2026-06-15: first status ~21s after Established). A single attempt timed out long
-  // before that and left a STALE lock state shown — which misfires the toggle button.
-  // ONE read in a beacon-suppressed window (no poll loop): the car won't serve a read
-  // while we answer passive-entry beacons, so extra polls were futile + congested the
-  // link. Charge still loads whether the read lands or not (never gated).
-  test('silent status → single read, then charge loads (decoupled)', () => {
+  // READ-FIRST: connect fires ONE GET_STATUS with the passive-entry responder suppressed,
+  // so the car serves a clean SDK-style read before walk-up starts. The passive-entry push
+  // is car-paced 22–40s (device 2026-06-29); the read is the fast path. Suppression is
+  // dropped (walk-up resumes) regardless of the read's outcome, and a successful read
+  // applies fresh lock state immediately.
+  test('connect fires a read-first GET_STATUS, suppressing passive entry around it', () => {
     mockEstablished()
-    const args = []
-    let calls = 0
-    jest.spyOn(teslaSession, 'getVehicleStatus')
-      .mockImplementation((cb, timeoutMs, suppressMs) => { args.push({ timeoutMs, suppressMs }); calls++; cb({ success: false, error: 'Vehicle status timed out' }) })
-    const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
-    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
+    const statusSpy = jest.spyOn(teslaSession, 'getVehicleStatus')
+      .mockImplementation(cb => cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }))
+    const suppressSpy = jest.spyOn(teslaSession, 'suppressPassive').mockImplementation(() => {})
 
     tesla.refresh()
 
-    expect(calls).toBe(1) // single read — no poll loop
-    expect(args[0].suppressMs).toBeGreaterThan(0) // beacon-suppression window opened
-    expect(wakeSpy).toHaveBeenCalledTimes(1) // wake fired exactly once
-    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loads despite the read not answering
+    expect(statusSpy).toHaveBeenCalled()
+    expect(suppressSpy).toHaveBeenCalledWith(true)  // silent during the read
+    expect(suppressSpy).toHaveBeenCalledWith(false) // walk-up resumes after
+    expect(tesla.locked).toBe(false)                // fresh state applied from the read
   })
 
-  // A status that lands in the read window applies fresh lock state and loads charge.
-  test('status answered in the read window → applies state, loads charge', () => {
+  test('read-first miss still drops suppression (walk-up resumes)', () => {
     mockEstablished()
-    let calls = 0
-    jest.spyOn(teslaSession, 'getVehicleStatus')
-      .mockImplementation((cb) => { calls++; cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }) }) // unlocked
-    jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
-    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
+    jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation(cb => cb({ success: false }))
+    const suppressSpy = jest.spyOn(teslaSession, 'suppressPassive').mockImplementation(() => {})
 
     tesla.refresh()
 
-    expect(calls).toBe(1) // single read
-    expect(tesla.locked).toBe(false) // fresh state applied (fixes the toggle)
-    expect(chargeSpy).toHaveBeenCalledTimes(1)
+    expect(suppressSpy).toHaveBeenLastCalledWith(false)
   })
 
-  test('wake is fired on connect, then charge loads after status settles', () => {
+  // A status pushed over the live channel applies fresh lock state (fixes the toggle).
+  test('a pushed VehicleStatus applies fresh state', () => {
     mockEstablished()
-    mockGetStatus({ vehicleLockState: 1 })
-    const wakeSpy = jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
-    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 60, range: 150, state: 'Disconnected' } }))
-    tesla.refresh()
-    expect(wakeSpy).toHaveBeenCalled()   // wake always fires (handles the dozing-car case)
-    expect(tesla.locked).toBe(true)      // status applied
-    expect(chargeSpy).toHaveBeenCalledTimes(1) // charge loaded once
-  })
+    mockPush({ vehicleLockState: 0 }) // unlocked, via the live-push channel
 
-  // getVehicleStatus re-invokes its callback with _requeue on every unsolicited
-  // beacon. Device 2026-06-12: refresh treated those as terminal and fired a fresh
-  // charge fetch per beacon, each grabbing the BLE slot for ~15s and starving the
-  // status request — so live state never loaded and the UI stayed on stale cache.
-  test('beacon (_requeue) frames during status do NOT trigger charge fetches', () => {
-    mockEstablished()
-    jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation((cb) => {
-      cb({ success: true, _requeue: true })            // beacon
-      cb({ success: true, _requeue: true })            // beacon
-      cb({ success: true, status: makeStatus({ vehicleLockState: 1 }) }) // terminal
-    })
-    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 50, range: 120, state: 'Disconnected' } }))
     tesla.refresh()
-    expect(chargeSpy).toHaveBeenCalledTimes(1) // once, only after the terminal status
-    expect(tesla.locked).toBe(true)
+
+    expect(tesla.locked).toBe(false) // fresh state applied
   })
 
   test('calls optional callback with success', () => {
@@ -641,6 +618,8 @@ describe('unlock()', () => {
     expect(teslaSession.sendCommand).toHaveBeenCalledWith(
       0, // RKE_ACTION_UNLOCK
       expect.any(Function),
+      3000, // 3s fail-fast deadline (not the 15s command default)
+      { gate: false }, // keep answering beacons while the unlock is in flight
     )
   })
 })
@@ -759,7 +738,7 @@ describe('two-response pattern', () => {
 // ─── command failure ──────────────────────────────────────────────────────────
 
 describe('command failure', () => {
-  test('failed sendCommand sets connection offline and calls cb with error', () => {
+  test('failed sendCommand stays online (link is fine) and calls cb with error', () => {
     tesla.connection.status = 'online'
     jest.spyOn(teslaSession, 'sendCommand')
       .mockImplementation((_action, done) => done({ success: false, error: 'HMAC failed' }))
@@ -767,7 +746,8 @@ describe('command failure', () => {
     const cb = jest.fn()
     tesla.lock(cb)
 
-    expect(tesla.connection.status).toBe('offline')
+    // A command failing does NOT drop the connection — session is still established.
+    expect(tesla.connection.status).toBe('online')
     expect(tesla.busy).toBe(false)
     expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: false }))
   })

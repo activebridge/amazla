@@ -1,4 +1,4 @@
-import { rect, prop, width, height } from "../../../../pages/ui.js";
+import { rect, width, height } from "../../../../pages/ui.js";
 
 // v1 timer: a horizontal gradient built from solid FILL_RECT columns (rects
 // scale to any height for free, unlike images which can't scale and OOM when
@@ -46,7 +46,8 @@ export const Timer = (h = height) => {
       const dimFactor = DIM_DARK + (DIM_BRIGHT - DIM_DARK) * t; // darker until the last 5s
       for (let i = 0; i < COLS; i++) {
         // pass the full property set: some devices ignore a color-only MORE update
-        cols[i].rect.setProperty(prop.MORE, {
+        cols[i].rect.set({
+          centered: false,
           x: cols[i].x,
           y: -OVER,
           w: colW,

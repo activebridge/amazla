@@ -1,4 +1,4 @@
-import { rect, text, prop } from './../../../../pages/ui.js'
+import { rect, text } from './../../../../pages/ui.js'
 
 export const Title = (title, { x, y, w, h, text_size, radius: radiusProp }) => {
   const c = { centered: false }
@@ -18,7 +18,7 @@ export const Title = (title, { x, y, w, h, text_size, radius: radiusProp }) => {
   const name = text({ x: titleX, y, w: titleW, h, text: title, text_size, char_space: 3, ...c })
 
   const update = (newName) => {
-    name.setProperty(prop.TEXT, newName)
+    name.set({ text: newName })
   }
 
   return { update }

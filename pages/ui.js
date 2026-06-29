@@ -1,33 +1,71 @@
-// v1-native UI helper: uses ONLY the hmUI / hmSetting globals (no @zos imports —
-// the v1 runtime can't load @zos/*). On v2/v3 these globals are supplied by the
-// zos-globals shim, which the app imports before any page loads ui.js.
+// NO @zos imports here. This file is shared by v1 (native hmUI/hmSetting globals)
+// and v2/v3 (globals seeded by zeppify/zos-globals.js, imported first in app.js).
+// Any `import ... from '@zos/*'` compiles to a top-level __$$RQR$$__(...) that the
+// v1 runtime can't load and that breaks zeus's v1 context extraction
+// ("ReferenceError: '__$$RQR$$__' is not defined"). The @zos imports for v2/v3
+// live in the shim, not here. Top-level hmUI.*/hmSetting.* access is fine — those
+// globals always exist by the time this module evaluates.
+import * as hmUI from '@zos/ui'
+import * as hmSetting from '@zos/device'
+
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
 
-// Permanent dimension log. getDeviceInfo() is reliable on both simulator and
-// hardware; getAppWidgetSize() is NOT (see DEVICES.md). Keep this so device vs
-// simulator geometry is always visible in the console.
-console.log('[ui] getDeviceInfo: w=' + width + ' h=' + height + ' shape=' + screenShape + ' source=' + deviceSource)
+// app-widget size APIs routed through the global so v1-API builds can reach the
+// v2 APIs without importing @zos/* (which the v1 runtime can't load).
+// export const getAppWidgetSize = () => {
+//   const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
+//   return sz || { w: width, margin: 0 }
+// }
+// export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
 
-// align/prop wired through here so components stay v1/v3 agnostic
-// (hmUI is the global on v1, the @zos/ui namespace on v3)
-export const align = hmUI.align
-export const prop = hmUI.prop
-
-// app-widget size + navigation, routed through the global so v1-API builds can
-// reach the v2 APIs without importing @zos/* (which the v1 runtime can't load)
-export const getAppWidgetSize = () => {
-  const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
-  // Permanent log: getAppWidgetSize() differs sim vs device (see DEVICES.md).
-  // undefined at module-eval, real slot {w,h,margin} only inside build() on
-  // hardware; simulator typically reports full device width with margin 0.
-  console.log('[ui] getAppWidgetSize: ' + (sz ? 'w=' + sz.w + ' h=' + sz.h + ' margin=' + sz.margin + ' radius=' + sz.radius : String(sz)))
-  return sz || { w: width, margin: 0 }
-}
-export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
 export const push = (o) => { if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o) }
 
 let widgets = []
+
+const track = (w) => { widgets.push(w); return w }
+
+// Give every widget a `.set(props)` so callers update through our layer and
+// never import @zos `prop`. It routes to the right property:
+//   { text }            -> TEXT
+//   { color } alone     -> COLOR (e.g. a text widget's color)
+//   anything geometric  -> MORE, re-aligned through the same center() pipeline
+//                          used at creation (alignment stays under the hood).
+const attach = (w) => {
+  w.set = (props = {}) => {
+    const { text, ...rest } = props
+    if (text !== undefined) w.setProperty(hmUI.prop.TEXT, text)
+    const keys = Object.keys(rest)
+    if (keys.length === 1 && keys[0] === 'color') w.setProperty(hmUI.prop.COLOR, rest.color)
+    else if (keys.length) w.setProperty(hmUI.prop.MORE, { ...rest, ...center(rest) })
+    return w
+  }
+  return w
+}
+
+// Accept friendly string alignment so callers never import @zos `align`.
+// Numbers (the raw enum) pass through untouched.
+const ALIGN_H = { left: hmUI.align.LEFT, center: hmUI.align.CENTER_H, right: hmUI.align.RIGHT }
+const ALIGN_V = { top: hmUI.align.TOP, center: hmUI.align.CENTER_V, bottom: hmUI.align.BOTTOM }
+const normalizeAlign = (o) => {
+  if (typeof o.align_h === 'string') o.align_h = ALIGN_H[o.align_h]
+  if (typeof o.align_v === 'string') o.align_v = ALIGN_V[o.align_v]
+  return o
+}
+
+// Most widget factories share one shape: merge defaults, caller props, and the
+// computed center box, then track for reset(). `define` captures that.
+// - defaults may be an object or a fn(props) when defaults depend on props.
+// - after(widget) runs post-create for one-off setup (e.g. circle's setEnable).
+const define = (type, defaults = {}, after) => (props = {}, group = hmUI) => {
+  const w = group.createWidget(hmUI.widget[type], normalizeAlign({
+    ...(typeof defaults === 'function' ? defaults(props) : defaults),
+    ...props,
+    ...center(props),
+  }))
+  if (after) after(w)
+  return track(attach(w))
+}
 
 export const page = (x = 0, y = 0) => {
   const page = hmUI.createWidget(hmUI.widget.GROUP, {
@@ -65,29 +103,15 @@ const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0,
   return { x, y, w, h, center_x, center_y }
 }
 
-export const img = (props = {}, group = hmUI) => {
-  const img = group.createWidget(hmUI.widget.IMG, {
-    auto_scale: true,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(img)
-  return img
-}
+export const img = define('IMG', { auto_scale: true })
 
-export const text = (props = {}, group = hmUI) => {
-  const text = group.createWidget(hmUI.widget.TEXT, {
-    color: 0xffffff,
-    align_h: hmUI.align.CENTER_H,
-    align_v: hmUI.align.CENTER_V,
-    text_style: hmUI.text_style.NONE,
-    text_size: 20,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(text)
-  return text
-}
+export const text = define('TEXT', {
+  color: 0xffffff,
+  align_h: hmUI.align.CENTER_H,
+  align_v: hmUI.align.CENTER_V,
+  text_style: hmUI.text_style.NONE,
+  text_size: 20,
+})
 
 export const button = (props = {}, group = hmUI) => {
   const { src } = props
@@ -106,71 +130,30 @@ export const button = (props = {}, group = hmUI) => {
   return button
 }
 
-export const circle = (props = {}, group = hmUI) => {
-  const circle = group.createWidget(hmUI.widget.CIRCLE, {
-    color: 0x000000,
-    radius: Math.floor(height / 2),
-    alpha: 150,
-    ...props,
-    ...center({ radius: props.radius, ...props }),
-  })
-  circle.setEnable(false)
-  widgets.push(circle)
-  return circle
-}
+export const circle = define('CIRCLE', {
+  color: 0x000000,
+  radius: Math.floor(height / 2),
+  alpha: 150,
+}, (w) => w.setEnable(false))
 
-export const rect = (props = {}, group = hmUI) => {
-  const rect = group.createWidget(hmUI.widget.FILL_RECT, {
-    color: 0xFFFFFF,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(rect)
-  return rect
-}
+export const rect = define('FILL_RECT', { color: 0xFFFFFF })
 
-export const stroke = (props = {}, group = hmUI) => {
-  const rect = group.createWidget(hmUI.widget.STROKE_RECT, {
-    color: 0xFFFFFF,
-    line_width: 10,
-    angle: 0,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(rect)
-  return rect
-}
+export const stroke = define('STROKE_RECT', {
+  color: 0xFFFFFF,
+  line_width: 10,
+  angle: 0,
+})
 
-export const progress = (props = {}, group = hmUI) => {
-  const progress = group.createWidget(hmUI.widget.ARC_PROGRESS, {
-    ...props,
-    ...center(props),
-  })
-  widgets.push(progress)
-  return progress
-}
+export const progress = define('ARC_PROGRESS')
 
-export const animation = (props = {}, group = hmUI) => {
-  const animation = group.createWidget(hmUI.widget.IMG_ANIM, {
-    ...props,
-    ...center(props),
-  })
-  widgets.push(animation)
-  return animation
-}
+export const animation = define('IMG_ANIM')
 
-export const arc = (props = {}, group = hmUI) => {
-  const arcWidget = group.createWidget(hmUI.widget.ARC, {
-    color: 0x1a73e8,
-    line_width: 8,
-    start_angle: 0,
-    end_angle: 360,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(arcWidget)
-  return arcWidget
-}
+export const arc = define('ARC', {
+  color: 0x1a73e8,
+  line_width: 8,
+  start_angle: 0,
+  end_angle: 360,
+})
 
 export const scrollBar = (props = {}, group = hmUI) => {
   const { target, ...rest } = props
@@ -235,14 +218,7 @@ export const editable = (props = {}) => {
   return w
 }
 
-export const level = (props = {}, group = hmUI) => {
-  const levelWidget = group.createWidget(hmUI.widget.IMG_LEVEL, {
-    ...props,
-    ...center(props),
-  })
-  widgets.push(levelWidget)
-  return levelWidget
-}
+export const level = define('IMG_LEVEL')
 
 export const weather = (props = {}, group = hmUI) => {
   const { folder = "weather", ...rest } = props
@@ -278,14 +254,7 @@ export const time = (props = {}, group = hmUI) => {
   return timeWidget
 }
 
-export const status = (props = {}, group = hmUI) => {
-  const statusWidget = group.createWidget(hmUI.widget.IMG_STATUS, {
-    ...props,
-    ...center(props),
-  })
-  widgets.push(statusWidget)
-  return statusWidget
-}
+export const status = define('IMG_STATUS')
 
 export const alarm = (props = {}, group = hmUI) => {
   return status({ type: hmUI.system_status.CLOCK, src: 'status/alarm.png', ...props }, group)
@@ -303,33 +272,21 @@ export const lock = (props = {}, group = hmUI) => {
   return status({ type: hmUI.system_status.LOCK, src: 'status/lock.png', ...props }, group)
 }
 
-export const textImg = (props = {}, group = hmUI) => {
-  const textImgWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
-    font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
-    align_h: hmUI.align.CENTER_H,
-    h_space: 1,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(textImgWidget)
-  return textImgWidget
-}
+export const textImg = define('TEXT_IMG', {
+  font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+  align_h: hmUI.align.CENTER_H,
+  h_space: 1,
+})
 
-export const temperature = (props = {}, group = hmUI) => {
-  const tempWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
-    type: hmUI.data_type.WEATHER_CURRENT,
-    font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
-    negative_image: 'fonts/minus.png',
-    unit_sc: 'fonts/degree.png',
-    unit_en: 'fonts/degree.png',
-    align_h: hmUI.align.CENTER_H,
-    h_space: 1,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(tempWidget)
-  return tempWidget
-}
+export const temperature = define('TEXT_IMG', {
+  type: hmUI.data_type.WEATHER_CURRENT,
+  font_array: Array.from({ length: 10 }, (_, i) => `fonts/${i}.png`),
+  negative_image: 'fonts/minus.png',
+  unit_sc: 'fonts/degree.png',
+  unit_en: 'fonts/degree.png',
+  align_h: hmUI.align.CENTER_H,
+  h_space: 1,
+})
 
 export const battery = (props = {}, group = hmUI) => {
   const outline = group.createWidget(hmUI.widget.IMG, {
@@ -348,30 +305,18 @@ export const battery = (props = {}, group = hmUI) => {
   return fill
 }
 
-export const charge = (props = {}, group = hmUI) => {
-  const chargeWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
-    type: hmUI.data_type.BATTERY,
-    font_array: Array.from({ length: 10 }, (_, i) => `battery/font/${i}.png`),
-    align_h: hmUI.align.CENTER_H,
-    h_space: 1,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(chargeWidget)
-  return chargeWidget
-}
+export const charge = define('TEXT_IMG', {
+  type: hmUI.data_type.BATTERY,
+  font_array: Array.from({ length: 10 }, (_, i) => `battery/font/${i}.png`),
+  align_h: hmUI.align.CENTER_H,
+  h_space: 1,
+})
 
-export const label = (props = {}, group = hmUI) => {
-  const labelWidget = group.createWidget(hmUI.widget.TEXT_IMG, {
-    font_array: Array.from({ length: 10 }, (_, i) => `label-font/${i}.png`),
-    align_h: hmUI.align.CENTER_H,
-    h_space: -4,
-    ...props,
-    ...center(props),
-  })
-  widgets.push(labelWidget)
-  return labelWidget
-}
+export const label = define('TEXT_IMG', {
+  font_array: Array.from({ length: 10 }, (_, i) => `label-font/${i}.png`),
+  align_h: hmUI.align.CENTER_H,
+  h_space: -4,
+})
 
 export const click = (props = {}, group = hmUI) => {
   const { x, y, w, h } = center(props)
@@ -516,7 +461,6 @@ export default {
   reset: () => {
     // widgets.map(w => w.setProperty(prop.VISIBLE, false))
     widgets.map(w => hmUI.deleteWidget(w))
-    // redraw()
     widgets = []
     return widgets
   }
