@@ -66,3 +66,9 @@ msgstr "Out of range"
 
 msgid "status_failed"
 msgstr "Disconnected"
+
+msgid "reset_btn"
+msgstr "Reset"
+
+msgid "reset_confirm"
+msgstr "Reset and unpair this watch? Also remove the key on your Tesla: Locks → remove key."

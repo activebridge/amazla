@@ -95,6 +95,11 @@ class Tesla {
   get isPaired() {
     return store.isPaired
   }
+  // Enrolled = has the watch keypair + a synced VIN (i.e. set up, even if the session
+  // key isn't cached yet). The main page routes an unenrolled watch to pairing.
+  get isEnrolled() {
+    return store.isEnrolled
+  }
   get name() {
     return store.vehicleName
   }
@@ -308,6 +313,17 @@ class Tesla {
   shutdown() {
     try {
       this.lockOnClose()
+    } catch (_e) {}
+    teslaSession.shutdown()
+  }
+
+  // Full unpair on the watch: wipe stored enrollment + cached state (store.reset) and
+  // tear down the live session + native BLE (teslaSession.shutdown). The phone-side
+  // settingsStorage is cleared separately via phone.reset(). After this the watch is
+  // unenrolled → the main page routes to pairing.
+  reset() {
+    try {
+      store.reset()
     } catch (_e) {}
     teslaSession.shutdown()
   }

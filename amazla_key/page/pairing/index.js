@@ -124,7 +124,7 @@ function startPairing() {
     // confirming = waiting for the key-card tap; everything else upstream of
     // 'done' is the indeterminate "connecting/pairing" screen.
     onState: (s) => setScreen(s === 'confirming' ? 'nfc' : 'pairing'),
-    onLog: (m) => hmUI.updateStatusBarTitle(m),
+    onLog: (m) => console.log('[pairing] ' + m),
     onError: (m) => {
       errorMsg = m
       setScreen('error')

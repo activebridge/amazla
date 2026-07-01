@@ -1426,7 +1426,7 @@ class TeslaSession {
     // derived BY the connect this allows, so requiring it would deadlock the
     // first-connect bootstrap.
     if (!store.isEnrolled) {
-      callback({ success: false, error: 'Not paired - go to BLE page first' })
+      callback({ success: false, error: 'Not paired - complete setup first' })
       return
     }
     // If already connecting, queue callback instead of creating duplicate connection

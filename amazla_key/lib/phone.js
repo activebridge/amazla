@@ -92,6 +92,12 @@ class Phone {
     this._call('SAVE_VEHICLE_MAC', { mac }, cb, () => {})
   }
 
+  // Unpair: clear the tesla enrollment/vehicle data from the phone's settingsStorage.
+  // The watch clears its own storage separately (tesla.reset()).
+  reset(cb) {
+    this._call('RESET', {}, cb, () => {})
+  }
+
   // No-op: pair just enrolls the watch key with the vehicle. The vehicle's
   // actual session EC pubkey is NOT in the pair response (field 17 holds a
   // signer/admin key from WhitelistInfo, not the runtime key). We get the

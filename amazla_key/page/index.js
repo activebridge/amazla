@@ -1,16 +1,12 @@
-// Screen-type-specific battery: `[pf]` resolves to battery.r.layout.js (round,
-// full charging arc) or battery.s.layout.js (square, text placeholder) at build
-// time. The `.[pf].layout.js` suffix is required by the zosLoader resolver.
-import { Battery } from 'zosLoader:./components/battery.[pf].layout.js'
 import { Connecting } from 'zosLoader:./components/connecting.[pf].layout.js'
 import Status from 'zosLoader:./components/status.[pf].layout.js'
-import { getDeviceInfo } from '@zos/device'
 import { setPageBrightTime, setWakeUpRelaunch } from '@zos/display'
-import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
-import { push } from '@zos/router'
+import { getText } from '@zos/i18n'
+import { KEY_EVENT_CLICK, KEY_SELECT, MODAL_CONFIRM, createModal, onKey } from '@zos/interaction'
+import { replace } from '@zos/router'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
-import UI, { button, img, page, rect } from '../../pages/ui'
+import UI, { button, height, img } from '../../pages/ui'
 import { keepScreenOn, vibro } from '../../zeppify/index.js'
 
 // ─── Backend toggle ─────────────────────────────────────────────────────────
@@ -19,11 +15,10 @@ import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // no longer imports teslaSession/BLE directly.
 import Phone from '../lib/phone.js'
 import tesla from '../lib/tesla.js'
+
 // MOCK (simulator only — the real lib OOMs the SIM): comment the 2 imports above
 // and uncomment the line below to develop the UI without a car.
 // import { tesla, Phone } from './tesla-mock.js'
-
-const { height } = getDeviceInfo()
 
 var phone = null
 // Connection-status arc label at 6 o'clock. render() repaints it last (after
@@ -39,171 +34,59 @@ const statusKey = () => {
   return tesla.connection.error ? 'failed' : 'offline'
 }
 
-// Tracks the scroll-view page count we last configured (1 = offline single
-// screen, 2 = online car + debug). render() runs on every state change incl.
-// live status pushes; we only (re)configure scroll — and snap to page 0 — when
-// this count actually changes, so a push never yanks the user off the debug
-// screen they scrolled to.
-var scrollPages = 0
-
 const render = () => {
   UI.reset()
-  // Status arc FIRST (before slide1), so it's the bottom of the z-stack — the whole
-  // slide1 group (car images + lock/unlock/frunk/trunk buttons) renders on top and
-  // receives taps. Painting it last made its full-screen text box steal button taps.
+  // Single screen — no groups, no scroll. Status arc first so it's the bottom of the
+  // z-stack; the car images and buttons paint on top of it and receive taps.
   status && status.update(statusKey())
-  const slide1 = page(0, 0)
 
-  // Car state images
-  tesla.locked && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' }, slide1)
-  !tesla.locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' }, slide1)
-  tesla.frunkOpen && img({ w: 352, h: 460, src: 'Y_Frunk.png' }, slide1)
-  tesla.trunkOpen && img({ w: 352, h: 460, src: 'Y_Trunk.png' }, slide1)
-  tesla.pf && img({ w: 352, h: 460, src: 'Y_Right_Front_Door.png' }, slide1)
-  tesla.pr && img({ w: 352, h: 460, src: 'Y_Right_Back_Door.png' }, slide1)
-  tesla.df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' }, slide1)
-  tesla.dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' }, slide1)
+  // Car state images (top level).
+  tesla.locked && img({ w: 352, h: 460, src: 'Y_Top_View_Dark.png' })
+  !tesla.locked && img({ w: 352, h: 460, src: 'Y_Top_View.png' })
+  tesla.frunkOpen && img({ w: 352, h: 460, src: 'Y_Frunk.png' })
+  tesla.trunkOpen && img({ w: 352, h: 460, src: 'Y_Trunk.png' })
+  tesla.pf && img({ w: 352, h: 460, src: 'Y_Right_Front_Door.png' })
+  tesla.pr && img({ w: 352, h: 460, src: 'Y_Right_Back_Door.png' })
+  tesla.df && img({ w: 352, h: 460, src: 'Y_Left_Front_Door.png' })
+  tesla.dr && img({ w: 352, h: 460, src: 'Y_Left_Back_Door.png' })
 
-  // Offline overlay — single screen, no scroll.
+  // Reset/unpair — one full screen-height down (y: height centers it on the next page),
+  // so it's out of the way but reachable by scrolling. Shown in every state (added
+  // before the offline early-return) so the watch can always be unpaired.
+  button({
+    centered: true,
+    x: 0,
+    y: height,
+    w: 260,
+    h: 64,
+    text: getText('reset_btn'),
+    text_size: 18,
+    color: 0xff6666,
+    normal_color: 0x330000,
+    press_color: 0x440000,
+    radius: 10,
+    click_func: confirmReset,
+  })
+
+  // Not online: while CONNECTING show the dim veil + spinner over the cached car;
+  // otherwise (offline/failed) just the cached car under the status arc. No buttons.
   if (tesla.connection.status !== 'online') {
-    if (scrollPages !== 1) {
-      hmUI.setScrollView(false)
-      scrollPages = 1
-    }
-    // While CONNECTING: the dim-circle overlay + animated spinner, no buttons. The
-    // status component (bottom arc) shows "Connecting". On a FAILED/offline state:
-    // the dim rect + Pair / Test Purchase actions.
-    if (tesla.connection.status === 'checking') {
-      Connecting(slide1)
-    } else {
-      rect({ w: 352, h: 460, color: 0x000000, alpha: 0.6 }, slide1)
-
-      button(
-        {
-          centered: true,
-          x: 0,
-          y: 310,
-          w: 280,
-          h: 50,
-          text: 'Pair',
-          text_size: 16,
-          color: 0xaaffaa,
-          normal_color: 0x113311,
-          press_color: 0x224422,
-          radius: 6,
-          click_func: () => push({ url: 'page/pairing/index' }),
-        },
-        slide1,
-      )
-
-      button(
-        {
-          centered: true,
-          x: 0,
-          y: 375,
-          w: 280,
-          h: 50,
-          text: 'Test Purchase',
-          text_size: 16,
-          color: 0xffcc66,
-          normal_color: 0x332200,
-          press_color: 0x443300,
-          radius: 6,
-          click_func: onTestPurchase,
-        },
-        slide1,
-      )
-    }
-
+    if (tesla.connection.status === 'checking') Connecting()
     return
   }
 
-  // Battery readout (infotainment domain, pull-only). Loaded on connect — painted
-  // from cache instantly, refreshed by the live fetch. Tap to refresh on demand
-  // (no charge pushes exist, so an idle screen would otherwise go stale). Round
-  // screens get the full charging arc; square screens a text placeholder — the
-  // right one is bundled per device (see the zosLoader import above).
-  // DISABLED for now: charge runs over the infotainment (d3) BLE domain, which
-  // shares the single response slot with VCSEC and was starving status/commands.
-  // VCSEC-only until that's untangled. Re-enable this line + the charge button below.
-  // Battery(slide1, tesla.charge, tesla.primaryState, onChargeRefresh)
-
   // Online controls
-  tesla.frunkOpen && button({ ...CLOSE, y: -150, w: 200, h: 160, click_func: onFrunk }, slide1)
-  !tesla.frunkOpen && button({ ...OPEN, y: -160, w: 200, h: 160, click_func: onFrunk }, slide1)
-  tesla.trunkOpen && button({ ...CLOSE, y: 160, w: 200, h: 160, click_func: onTrunk }, slide1)
-  !tesla.trunkOpen && button({ ...OPEN, y: 150, w: 200, h: 160, click_func: onTrunk }, slide1)
-  tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock }, slide1)
-  !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock }, slide1)
-
-  // Charge button (rear driver-side). Context-aware:
-  //  • cable UNPLUGGED → open/close the charge port (open_charger/close_charger).
-  //  • cable PLUGGED IN → start/stop charging (start_charge ▶ / stop_charge ■).
-  // DISABLED for now (infotainment d3 BLE shares the VCSEC response slot). Re-enable
-  // together with the Battery readout above.
-  // const chargeBtn = { x: -130, y: 110, w: 100, h: 100 }
-  // if (!tesla.pluggedIn) {
-  //   !tesla.chargePortOpen && button({ ...chargeBtn, src: 'open_charger', click_func: onChargePort }, slide1)
-  //   tesla.chargePortOpen && button({ ...chargeBtn, src: 'close_charger', click_func: onChargePort }, slide1)
-  // } else if (tesla.charge.state === 'Charging') {
-  //   button({ ...chargeBtn, src: 'stop_charge', click_func: onStopCharge }, slide1)
-  // } else {
-  //   button({ ...chargeBtn, src: 'start_charge', click_func: onStartCharge }, slide1)
-  // }
-
-  // ── Screen 2: debug controls (scroll down from the car) ──────────────────
-  const slide2 = page(0, 1)
-
-  button(
-    {
-      centered: true,
-      x: 0,
-      y: -150,
-      w: 200,
-      h: 36,
-      text: 'Debug',
-      text_size: 18,
-      color: 0x666666,
-      normal_color: 0x000000,
-      press_color: 0x000000,
-      radius: 0,
-    },
-    slide2,
-  )
-
-  button(
-    {
-      centered: true,
-      x: 0,
-      y: -80,
-      w: 280,
-      h: 56,
-      text: 'KPAY',
-      text_size: 16,
-      color: 0xffcc66,
-      normal_color: 0x332200,
-      press_color: 0x443300,
-      radius: 8,
-      click_func: onTestPurchase,
-    },
-    slide2,
-  )
-
-  // Two vertically-stacked, full-height pages; start on the car (page 0). Only
-  // reconfigure when we first go online (offline→online) — re-running this on
-  // every status push would snap the user back to the car off the debug screen.
-  if (scrollPages !== 2) {
-    hmUI.setScrollView(true, height, 2, true)
-    hmUI.scrollToPage(0, false)
-    scrollPages = 2
-  }
+  tesla.frunkOpen && button({ ...CLOSE, y: -150, w: 200, h: 160, click_func: onFrunk })
+  !tesla.frunkOpen && button({ ...OPEN, y: -160, w: 200, h: 160, click_func: onFrunk })
+  tesla.trunkOpen && button({ ...CLOSE, y: 160, w: 200, h: 160, click_func: onTrunk })
+  !tesla.trunkOpen && button({ ...OPEN, y: 150, w: 200, h: 160, click_func: onTrunk })
+  tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock })
+  !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock })
 }
 
-const onChargeRefresh = () => {
+const _onChargeRefresh = () => {
   if (tesla.connection.status !== 'online') return
-  hmUI.updateStatusBarTitle('Charge…')
   tesla.fetchChargeState((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Charge' : '✗ Charge')
     if (!r.success) hmUI.showToast({ text: r.error || 'Charge unavailable' })
   })
 }
@@ -229,15 +112,30 @@ const startPurchase = () => {
   kpay.startPurchase()
 }
 
-const onTestPurchase = () => {
-  hmUI.updateStatusBarTitle('Starting purchase…')
-  startPurchase()
+// Full unpair. Clears the phone's settingsStorage (RESET RPC) and the watch's storage +
+// live session (tesla.reset()), then routes back to pairing (now unenrolled → setup).
+const doReset = () => {
+  try {
+    if (phone) phone.reset(() => {})
+  } catch (_e) {}
+  tesla.reset()
+  replace({ url: 'page/pairing/index' })
+}
+
+// Confirm before wiping — a stray tap shouldn't unpair the car.
+const confirmReset = () => {
+  const dialog = createModal({
+    content: getText('reset_confirm'),
+    autoHide: true,
+    onClick: (keyName) => {
+      if (keyName === MODAL_CONFIRM) doReset()
+    },
+  })
+  dialog.show(true)
 }
 
 const onLock = () => {
-  hmUI.updateStatusBarTitle('Locking…')
   tesla.lock((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Locked' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
@@ -248,51 +146,41 @@ const onUnlock = () => {
   // so those titles never show). Toast on send, then on the result.
   hmUI.showToast({ text: 'Unlocking…' })
   tesla.unlock((r) => {
-    hmUI.showToast({ text: r.success ? '✓ Unlocked' : (r.error || '✗ Error') })
+    hmUI.showToast({ text: r.success ? '✓ Unlocked' : r.error || '✗ Error' })
     if (r.success) vibro.medium()
   })
 }
 
 const onTrunk = () => {
-  hmUI.updateStatusBarTitle('Trunk…')
   tesla.trunk((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Trunk' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
 const onFrunk = () => {
-  hmUI.updateStatusBarTitle('Frunk…')
   tesla.frunk((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Frunk' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
-const onChargePort = () => {
-  hmUI.updateStatusBarTitle('Charge port…')
+const _onChargePort = () => {
   tesla.chargePort((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Charge port' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
-const onStartCharge = () => {
-  hmUI.updateStatusBarTitle('Start charge…')
+const _onStartCharge = () => {
   tesla.startCharge((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Charging' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
-const onStopCharge = () => {
-  hmUI.updateStatusBarTitle('Stop charge…')
+const _onStopCharge = () => {
   tesla.stopCharge((r) => {
-    hmUI.updateStatusBarTitle(r.success ? '✓ Stopped' : '✗ Error')
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
@@ -302,6 +190,16 @@ Page({
   build() {
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
+
+    // Not fully paired → send the user to the pairing page (it lands on "setup" if no
+    // VIN yet, else "ready"). isPaired = enrolled + cached session key, so an INTERRUPTED
+    // pairing (EC key written but session never derived) correctly counts as not paired
+    // and re-enters the flow — no dead-end. This is a UI routing decision, which is what
+    // store.isPaired is for (see its comment; the connect gate stays isEnrolled).
+    if (!tesla.isPaired) {
+      replace({ url: 'page/pairing/index' })
+      return
+    }
 
     // Kezel/KPAY: no time-based trial, so start the purchase ourselves whenever the
     // app isn't licensed yet. Kezel shows its own dialog page — no redirect, the user
@@ -335,28 +233,20 @@ Page({
     // Walk-up unlock is the car's job via passive entry (we answer its AuthenticationRequest
     // beacons); an explicit unlock is a deliberate user action — the button / SELECT key.
 
-    // Auto-establish the BLE session on open and pull the live car state. If not
-    // paired/in range, refresh() lands the offline overlay (Retry / Pair).
-    // Once online this also arms the live-push listener so opening a door, etc.
-    // repaints the page without any user action.
+    // Auto-establish the BLE session on open and pull the live car state; once online
+    // this also arms the live-push listener so opening a door, etc. repaints the page.
     //
     // Settings sync (vehicle name/VIN from the companion) is a phone RPC that shares the
-    // single BLE radio with the car connection. When PAIRED, connect() does a real BLE
-    // scan/GATT/session, so defer the sync until that settles to avoid contention. When
-    // not paired, connect() fast-fails on the enrollment gate (no BLE) and lands the
-    // offline overlay (Retry / Pair) — no contention, so sync immediately.
-    // Gate auto-connect on isPaired, not just a cached VIN: a VIN can be synced without
-    // the enrolled keypair/session, and that can't establish a session.
-    if (tesla.isPaired) {
-      let synced = false
-      tesla.onChange(() => {
-        if (synced || tesla.connection.status === 'checking') return
-        synced = true
-        phone.syncSettings()
-      })
-    } else {
+    // single BLE radio with the car connection. We only reach here when PAIRED (unpaired
+    // was redirected to the pairing page above), and connect() does a real BLE
+    // scan/GATT/session — so defer the sync until that settles (first non-'checking'
+    // onChange) to avoid radio contention.
+    let synced = false
+    tesla.onChange(() => {
+      if (synced || tesla.connection.status === 'checking') return
+      synced = true
       phone.syncSettings()
-    }
+    })
     tesla.connect()
 
     onKey({

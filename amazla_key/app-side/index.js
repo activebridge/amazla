@@ -123,6 +123,16 @@ const actions = {
     return okBin(binaryStringToBytes(result.secret))
   },
 
+  // Full unpair: wipe the tesla enrollment/vehicle data from the phone's settingsStorage
+  // (keypair + vehicle identity). The watch clears its own localStorage separately. KPAY
+  // license keys are intentionally left alone — a reset unpairs, it doesn't un-purchase.
+  RESET: async () => {
+    console.log('[App] RESET: clearing tesla settings')
+    const keys = ['tesla_public_key', 'tesla_private_key', 'vehicleMac', 'vehiclePairedAt', 'vehicleName', 'vehicleVin']
+    for (let i = 0; i < keys.length; i++) settings.settingsStorage.removeItem(keys[i])
+    return { success: true }
+  },
+
 }
 
 AppSideService({

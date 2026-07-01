@@ -31,6 +31,7 @@ export const tesla = {
   stopCharge: (cb) => cb && cb({ success: true }),
   connection: { status: 'online', error: null },
   isPaired: true,
+  isEnrolled: true,
   onChange: noop,
   offChange: noop,
   connect: noop,
