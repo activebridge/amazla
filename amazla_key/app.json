@@ -24,7 +24,7 @@
     "common": {
       "module": {
         "page": {
-          "pages": ["page/index", "page/pairing/index", "page/ble/index", "page/kpay/index.page"]
+          "pages": ["page/index", "page/pairing/index", "page/kpay/index.page"]
         },
         "app-side": { "path": "app-side/index" },
         "setting": { "path": "setting/index" },

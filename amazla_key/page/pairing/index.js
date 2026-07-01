@@ -12,6 +12,7 @@ import { createPairingController } from './../../lib/tesla-ble/pairing.js'
 import teslaSession from './../../lib/tesla-ble/session.js'
 import { safe } from './../../shared/safe.js'
 import { Slide } from './components/slide.js'
+import { vibro } from './../../../zeppify/index.js'
 
 // Pairing flow — a single page that renders one Slide per visual state. The
 // whole flow lives on one page so the live BLE link, registered RX callbacks and
@@ -25,7 +26,8 @@ import { Slide } from './components/slide.js'
 //   pair     ready to pair — primary action "Pair" available
 //   pairing  scan/connect/pair/verify in progress (no action)
 //   nfc      tap key card on the console to authorise (no action)
-//   success  paired — "Done" returns to the main page
+//   success  paired — "Done" returns to the main page, which starts the Kezel
+//            purchase if the app isn't licensed yet (see page/index.js build()).
 //   error    failed — "Retry" restarts the flow
 const SLIDES = {
   setup: {
@@ -83,6 +85,7 @@ const slideFor = () => {
   if (base.button) slide.button = getText(base.button)
   if (screen === 'ready') slide.onClick = () => setScreen('pair')
   if (screen === 'pair') slide.onClick = startPairing
+  // Paired — go to the main app, which starts the Kezel purchase if not yet licensed.
   if (screen === 'success') slide.onClick = () => replace({ url: 'page/index' })
   return slide
 }
@@ -93,7 +96,15 @@ const render = () => {
 }
 
 const setScreen = (next) => {
+  const changed = next !== screen
   screen = next
+  // Haptic cues on entering a state (guarded so a repeated controller callback for
+  // the same state doesn't re-buzz): one short buzz when the user is asked to tap
+  // the key card, a double buzz (notification pattern) when pairing completes.
+  if (changed) {
+    if (next === 'nfc') vibro.medium()
+    else if (next === 'success') vibro.notification()
+  }
   render()
 }
 
@@ -118,7 +129,14 @@ function startPairing() {
       errorMsg = m
       setScreen('error')
     },
-    onSuccess: () => setScreen('success'),
+    onSuccess: () => {
+      setScreen('success')
+      // Fire an unlock so the car chirps/unlocks — a tangible "it works" confirmation
+      // that matches the success screen's "Tesla did an unlock sound?" prompt. The
+      // session key was just derived on the still-live BLE connection (pairing.js),
+      // so this reuses it. Best-effort: a failure doesn't undo a successful pairing.
+      safe('pairing.unlockConfirm', () => teslaSession.unlock(() => {}))
+    },
   })
   controller.start()
 }
@@ -129,6 +147,7 @@ Page({
     setPageBrightTime(300)
 
     phone = new Phone()
+
     screen = store.vehicleVin ? 'ready' : 'setup'
     render()
     hmUI.setStatusBarVisible(false)

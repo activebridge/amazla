@@ -3,3 +3,4 @@
  */
 
 export { keepScreenOn } from './screen.js'
+export { vibro } from './vibrate.js'

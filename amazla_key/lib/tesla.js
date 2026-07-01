@@ -300,6 +300,18 @@ class Tesla {
     return teslaSession.lockSyncFireAndForget()
   }
 
+  // App-close teardown. Auto-lock while the link is still up (must run first), then
+  // hand off to the session's shutdown(), which clears session state AND flushes the
+  // native BLE stack so the next launch doesn't inherit poisoned state (a stuck
+  // mstConnect returns "failed" for ~30s otherwise). tesla talks only to teslaSession
+  // — the native BLE reset lives behind it — so the UI depends only on this facade.
+  shutdown() {
+    try {
+      this.lockOnClose()
+    } catch (_e) {}
+    teslaSession.shutdown()
+  }
+
   // ── Internal helpers ──────────────────────────────────────────────────
 
   _notify() {
@@ -322,6 +334,9 @@ class Tesla {
     if (!this._realStatusReceived && this._connectStartedAt) {
       this._realStatusReceived = true
       console.log('[Tesla] real status received +' + (Date.now() - this._connectStartedAt) + 'ms')
+      // First real status of this connection — the car answered and we're synced.
+      // Emit once (not on every live push) so the page can give a short haptic ack.
+      this._emitPassive({ type: 'status' })
     }
     var cs = status.closureStatuses || {}
     var next = {

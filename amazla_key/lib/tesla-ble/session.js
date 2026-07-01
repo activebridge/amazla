@@ -160,6 +160,20 @@ class TeslaSession {
     this._clearSessionInfoTimer()
     this._clearCommandTimer()
   }
+
+  // Full app-close teardown: clear session state AND flush the native BLE stack.
+  // reset() alone intentionally leaves the native link (and its onDisconnect handler)
+  // alone; the native flush (teslaBLE.reset → ble.quit / mstDisconnect / stale-state
+  // clear) is what stops a poisoned mstConnect on the next launch. Owning teslaBLE
+  // here keeps the reset out of the tesla facade, which only talks to this session.
+  shutdown() {
+    try {
+      this.reset()
+    } catch (_e) {}
+    try {
+      teslaBLE.reset()
+    } catch (_e) {}
+  }
   _clearSessionInfoTimer() {
     if (this._sessionInfoTimer) {
       clearTimeout(this._sessionInfoTimer)
