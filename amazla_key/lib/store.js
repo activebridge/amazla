@@ -191,35 +191,6 @@ const store = {
     localStorage.removeItem(key)
   },
 
-  // Storage diagnostics: print byte counts for each persisted artifact.
-  // Reveals truncation (null-byte storage issues), missing files, and
-  // flag-vs-file mismatches in one pass. Call from BLE page on launch.
-  diag() {
-    const lsLen = (k) => {
-      try {
-        const s = localStorage.getItem(k)
-        return s == null ? 'null' : `len=${s.length}`
-      } catch (_e) {
-        return 'err'
-      }
-    }
-    const fileSize = (path) => {
-      try {
-        const raw = readFileSync({ path })
-        return raw ? raw.byteLength : 'null'
-      } catch (_e) {
-        return 'err'
-      }
-    }
-    console.log(`[STORE.diag] watchPublicKey:      ${lsLen('watchPublicKey')}`)
-    console.log(
-      `[STORE.diag] vehicle_ec_public_key.dat: ${fileSize('vehicle_ec_public_key.dat')} (legacy LS: ${lsLen('vehicleEcPublicKey')})`,
-    )
-    console.log(`[STORE.diag] session_key.dat:     ${fileSize('session_key.dat')}`)
-    console.log(`[STORE.diag] vehicleVin:          ${lsLen('vehicleVin')}`)
-    console.log(`[STORE.diag] vehicleMac:          ${lsLen('vehicleMac')}`)
-  },
-
   reset() {
     localStorage.removeItem('vehicleName')
     localStorage.removeItem('vehicleModel')

@@ -1,7 +1,7 @@
 // UI-only mock of the Tesla backend, used to develop the page in the simulator
 // without the heavy BLE/crypto lib (which OOMs the SIM). Mirrors the surface the
-// page touches: tesla state + actions, Phone, BLE, teslaSession. Toggle it in
-// page/index.js by swapping which backend block is imported — see the comment there.
+// page touches: the `tesla` facade + a `Phone`. Toggle it in page/index.js by
+// swapping which backend block is imported — see the comment there.
 const noop = () => {}
 
 export const tesla = {
@@ -31,22 +31,21 @@ export const tesla = {
   stopCharge: (cb) => cb && cb({ success: true }),
   connection: { status: 'online', error: null },
   isPaired: true,
-  isEnrolled: true,
   onChange: noop,
   offChange: noop,
+  onPassiveEvent: noop,
   connect: noop,
-  retry: noop,
+  shutdown: noop,
+  reset: noop,
   lock: (cb) => cb && cb({ success: true }),
   unlock: (cb) => cb && cb({ success: true }),
   trunk: (cb) => cb && cb({ success: true }),
   frunk: (cb) => cb && cb({ success: true }),
   chargePort: (cb) => cb && cb({ success: true }),
   fetchChargeState: (cb) => cb && cb({ success: true }),
-  lockOnClose: noop,
 }
 
 export function Phone() {
   this.syncSettings = noop
+  this.reset = noop
 }
-export const BLE = { reset: noop }
-export const teslaSession = { reset: noop }
