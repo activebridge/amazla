@@ -23,13 +23,13 @@ describe('lib/store.js', () => {
     store.vehicleMac   = 'MAC_123'
     store.vehicleVin   = '5YJ3E1EA6JF020598'
     store.vehicleName  = 'MyCar'
-    store.vehicleModel = 'Model S'
 
     expect(store.vehicleMac).toBe('MAC_123')
     expect(store.vehicleVin).toBeInstanceOf(Uint8Array)
     expect(store.vehicleVin.length).toBe(17)
     expect(store.vehicleName).toBe('MyCar')
-    expect(store.vehicleModel).toBe('Model S')
+    // Derived from VIN char 4 ('3'), not stored
+    expect(store.vehicleModel).toBe('Model 3')
   })
 
   test('removeItem deletes entries from local storage', () => {
@@ -200,8 +200,7 @@ describe('lib/store.js', () => {
 
   test('reset clears all localStorage keys without throwing', () => {
     store.vehicleName  = 'Car'
-    store.vehicleModel = 'Y'
-    store.vehicleVin   = 'VIN'
+    store.vehicleVin   = '5YJYE1EA6JF020598'
     store.vehicleMac   = 'MAC'
     store.vehicleEcPublicKey = new Uint8Array(65)
     store.watchPublicKey     = bytesToBinaryString(new Uint8Array(65))

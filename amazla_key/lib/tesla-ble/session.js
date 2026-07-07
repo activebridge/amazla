@@ -259,7 +259,7 @@ class TeslaSession {
         console.log(`[SESSION] ✗ ${expectedName} not in BLE range`)
         callback({
           success: false,
-          error: 'Vehicle not in BLE range. Wake the car (touch a door handle) and retry.',
+          error: 'Vehicle not in BLE range. Wake the car (touch a door handle) and retry. If it keeps failing, check the VIN in Settings.',
         })
       }
     }, 3000, expectedName)

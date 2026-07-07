@@ -171,11 +171,28 @@ const store = {
   set vehicleName(value) {
     set('vehicleName', value)
   },
+  // Derived from the VIN, not stored: char 4 is Tesla's model letter.
   get vehicleModel() {
-    return localStorage.getItem('vehicleModel')
+    const vin = this.vehicleVin
+    if (!vin || vin.length < 4) return null
+    const MODELS = { S: 'Model S', 3: 'Model 3', X: 'Model X', Y: 'Model Y', C: 'Cybertruck', R: 'Roadster' }
+    return MODELS[String.fromCharCode(vin[3])] || null
   },
-  set vehicleModel(value) {
-    set('vehicleModel', value)
+
+  // User prefs synced from the phone (GET_SETTINGS). Stored as '1'/'0'; never-synced
+  // (null) = OFF — both behaviors are opt-in (auto-unlock historically raced passive
+  // entry; auto-lock on close now requires an explicit choice too).
+  get autoUnlock() {
+    return localStorage.getItem('autoUnlock') === '1'
+  },
+  set autoUnlock(value) {
+    set('autoUnlock', value ? '1' : '0')
+  },
+  get autoLock() {
+    return localStorage.getItem('autoLock') === '1'
+  },
+  set autoLock(value) {
+    set('autoLock', value ? '1' : '0')
   },
 
   removeBinary: (key) => {
@@ -193,7 +210,6 @@ const store = {
 
   reset() {
     localStorage.removeItem('vehicleName')
-    localStorage.removeItem('vehicleModel')
     localStorage.removeItem('vehicleVin')
     localStorage.removeItem('vehicleMac')
     localStorage.removeItem('lastVehicleState')

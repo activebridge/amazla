@@ -58,12 +58,14 @@ class Phone {
       })
   }
 
-
-  // Sync vehicle name and VIN from companion settings. Writes store.vehicleName/vehicleVin.
+  // Sync vehicle name, VIN and user prefs from companion settings.
+  // Writes store.vehicleName/vehicleVin/autoUnlock/autoLock.
   syncSettings() {
     return this._call('GET_SETTINGS', {}, null, (r) => {
       store.vehicleName = r.vehicleName || null
       store.vehicleVin = r.vehicleVin || null
+      store.autoUnlock = !!r.autoUnlock
+      store.autoLock = !!r.autoLock
     })
   }
 
@@ -80,16 +82,24 @@ class Phone {
   // Writes store.watchPublicKey only. cb: { success, pairMsg, verifyMsg }
   pairSetup(cb) {
     this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
-      const _hex = (s) => { if (s == null) return '<null>'; let h=''; for (let i=0;i<s.length;i++) h += (s.charCodeAt(i)&0xff).toString(16).padStart(2,'0'); return h }
-      console.log(`[Watch.diag] r.watchPublicKey:  len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length} hex=${_hex(r.watchPublicKey)}`)
+      const _hex = (s) => {
+        if (s == null) return '<null>'
+        let h = ''
+        for (let i = 0; i < s.length; i++) h += (s.charCodeAt(i) & 0xff).toString(16).padStart(2, '0')
+        return h
+      }
+      console.log(
+        `[Watch.diag] r.watchPublicKey:  len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length} hex=${_hex(r.watchPublicKey)}`,
+      )
       store.watchPublicKey = r.watchPublicKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })
   }
 
-  // Persist Tesla MAC to companion settingsStorage so the settings page can show paired state.
-  saveVehicleMac(mac, cb) {
-    this._call('SAVE_VEHICLE_MAC', { mac }, cb, () => {})
+  // Mark paired in companion settingsStorage (vehiclePairedAt) so the settings page
+  // shows paired state. No MAC — Tesla rotates it, so it's never worth syncing.
+  savePaired(cb) {
+    this._call('SAVE_PAIRED', {}, cb, () => {})
   }
 
   // Unpair: clear the tesla enrollment/vehicle data from the phone's settingsStorage.
@@ -114,10 +124,8 @@ class Phone {
   // the 16 KB doublings table never crosses BLE. Returns 32-byte Uint8Array.
   computeSharedSecret(vehiclePubBytes) {
     const binStr = bytesToBinaryString(vehiclePubBytes)
-    return this._requestBin('BLE_COMPUTE_SHARED_SECRET', { vehiclePublicKeyBinary: binStr })
-      .then((body) => toU8(body))
+    return this._requestBin('BLE_COMPUTE_SHARED_SECRET', { vehiclePublicKeyBinary: binStr }).then((body) => toU8(body))
   }
-
 }
 
 export default Phone

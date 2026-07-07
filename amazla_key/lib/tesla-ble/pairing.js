@@ -73,7 +73,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         setTimeout(() => { doConnect(foundMAC, 0) }, 500)
       }
       if (result.type === 'complete' && !foundMAC) {
-        if (!cancelled) onError('No Tesla found. Make sure your car is awake.')
+        if (!cancelled) onError('No Tesla found. Make sure your car is awake and the VIN in Settings is correct.')
       }
     }, 15000, expectedName)
   }

@@ -131,6 +131,9 @@ function startPairing() {
     },
     onSuccess: () => {
       setScreen('success')
+      // Mark paired on the phone (settings page "Paired At"). Fire-and-forget: the
+      // phone is in range right now (it just did the pair RPCs).
+      phone.savePaired(() => {})
       // Fire an unlock so the car chirps/unlocks — a tangible "it works" confirmation
       // that matches the success screen's "Tesla did an unlock sound?" prompt. The
       // session key was just derived on the still-live BLE connection (pairing.js),

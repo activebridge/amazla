@@ -151,6 +151,9 @@ class Tesla {
     this._connectStartedAt = Date.now() // DIAG: measure time-to-first-real-status
     this._realStatusPainted = false
     this._realStatusReceived = false
+    // Arm opt-in auto-unlock for this explicit connect only — a later manual
+    // refresh() while parked must never unlock the car.
+    this._wantAutoUnlock = true
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
   }
@@ -219,6 +222,13 @@ class Tesla {
       this._startLivePushes()
       if (cb) cb({ success: true }) // online now; live state refines as it arrives
       this._loadInitialState()
+      // Opt-in auto-unlock (settings toggle, default OFF). Fires once per explicit
+      // connect/retry, after the read-first status fetch is registered. If passive
+      // entry already unlocked the car, the extra unlock is a harmless ack.
+      if (this._wantAutoUnlock) {
+        this._wantAutoUnlock = false
+        if (store.autoUnlock) this.unlock()
+      }
     })
   }
 
@@ -287,6 +297,7 @@ class Tesla {
   }
 
   retry() {
+    this._wantAutoUnlock = true // a retry is an explicit connect — same auto-unlock intent
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
   }
@@ -299,6 +310,7 @@ class Tesla {
   // ACK or pace chunks. Returns true if a lock was sent. Gating is conservative: it
   // never locks while someone's in the car (userPresent) or if already locked.
   lockOnClose() {
+    if (!store.autoLock) return false // settings toggle (default OFF — opt-in)
     if (this.connection.status !== 'online') return false
     if (this.locked) return false        // already locked — nothing to do
     if (this.userPresent) return false   // driver in the car — do not lock them in/out

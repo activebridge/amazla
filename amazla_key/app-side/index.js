@@ -91,11 +91,12 @@ const actions = {
     return okBin()
   },
 
-  SAVE_VEHICLE_MAC: async ({ mac }) => {
-    if (!mac) return { success: false, error: 'mac required' }
-    settings.settingsStorage.setItem('vehicleMac', mac)
+  // Mark the watch as paired (settings page shows "Paired At"). No MAC: Tesla
+  // rotates the BLE MAC every ~15 min, so a synced MAC is stale by design — the
+  // watch re-finds the car by advertised name (scan-by-name).
+  SAVE_PAIRED: async () => {
     settings.settingsStorage.setItem('vehiclePairedAt', String(Date.now()))
-    console.log('[App] SAVE_VEHICLE_MAC', mac)
+    console.log('[App] SAVE_PAIRED')
     return { success: true }
   },
 
@@ -104,8 +105,11 @@ const actions = {
       const vehicleName = settings.settingsStorage.getItem('vehicleName') || null
       const vehicleVin = settings.settingsStorage.getItem('vehicleVin')
       const vehicleVinBinary = vehicleVin ? bytesToBinaryString(new TextEncoder().encode(vehicleVin)) : null
-      console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin })
-      return { success: true, vehicleName, vehicleVin: vehicleVinBinary }
+      // User prefs (settings page toggles). Unset = OFF for both.
+      const autoUnlock = settings.settingsStorage.getItem('autoUnlock') === '1'
+      const autoLock = settings.settingsStorage.getItem('autoLock') === '1'
+      console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin, autoUnlock, autoLock })
+      return { success: true, vehicleName, vehicleVin: vehicleVinBinary, autoUnlock, autoLock }
     } catch (e) {
       return { success: false, error: e && e.message }
     }

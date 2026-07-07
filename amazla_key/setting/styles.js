@@ -26,118 +26,15 @@ export const MAIN = {
   margin: '0 auto',
   overflowY: 'auto',
   maxHeight: '100vh',
-  padding: '5% 5% calc(5% + 88px)',
+  padding: '5%',
   maxWidth: '500px',
 }
 
-const SECTION_BASE = {
+export const SECTION_SETUP = {
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'stretch',
   width: '100%',
-}
-
-export const SECTION_SETUP = { ...SECTION_BASE }
-export const SECTION_PAIR = { ...SECTION_BASE }
-export const SECTION_USE = { ...SECTION_BASE }
-
-export const PROGRESS_NAV = {
-  position: 'fixed',
-  bottom: '16px',
-  left: '50%',
-  transform: 'translateX(-50%)',
-  zIndex: '20',
-  display: 'flex',
-  alignItems: 'flex-start',
-  width: '220px',
-  maxWidth: '460px',
-  padding: '12px 12px 8px',
-  borderRadius: '14px',
-  backdropFilter: 'blur(18px) saturate(160%)',
-  WebkitBackdropFilter: 'blur(18px) saturate(160%)',
-  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
-}
-
-const BLUE_TINT = 'rgba(70, 140, 255, 0.35), rgba(70, 140, 255, 0.12)'
-const GREEN_TINT = 'rgba(60, 200, 120, 0.35), rgba(60, 200, 120, 0.12)'
-
-export const NAV_BG_BLUE = {
-  background: `linear-gradient(135deg, ${BLUE_TINT})`,
-  border: '1px solid rgba(120, 180, 255, 0.35)',
-}
-
-export const NAV_BG_HALF = {
-  background:
-    'linear-gradient(90deg, rgba(60, 200, 120, 0.35) 0%, rgba(60, 200, 120, 0.2) 30%, rgba(70, 140, 255, 0.2) 70%, rgba(70, 140, 255, 0.35) 100%)',
-  border: '1px solid rgba(140, 210, 200, 0.35)',
-}
-
-export const NAV_BG_GREEN = {
-  background: `linear-gradient(135deg, ${GREEN_TINT})`,
-  border: '1px solid rgba(120, 230, 160, 0.35)',
-}
-
-export const PROGRESS_STEP_ITEM = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  gap: '5px',
-  minWidth: '48px',
-  cursor: 'pointer',
-}
-
-export const PROGRESS_STEP = {
-  width: '26px',
-  height: '26px',
-  borderRadius: '50%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: '11px',
-  fontWeight: '700',
-  color: 'rgba(255, 255, 255, 0.55)',
-  border: '1px solid rgba(255, 255, 255, 0.18)',
-  background: 'rgba(255, 255, 255, 0.06)',
-  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-}
-
-export const PROGRESS_STEP_ACTIVE = {
-  color: 'white',
-  background: 'linear-gradient(135deg, rgba(120, 180, 255, 0.55), rgba(120, 180, 255, 0.2))',
-  borderColor: 'rgba(150, 195, 255, 0.6)',
-  boxShadow: '0 0 14px rgba(120, 180, 255, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
-}
-
-export const PROGRESS_STEP_DONE = {
-  color: 'white',
-  background: 'linear-gradient(135deg, rgba(80, 200, 140, 0.6), rgba(60, 180, 120, 0.25))',
-  borderColor: 'rgba(120, 230, 160, 0.6)',
-  boxShadow: '0 0 12px rgba(60, 200, 120, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
-}
-
-export const PROGRESS_LABEL = {
-  fontSize: '9px',
-  fontWeight: '700',
-  letterSpacing: '1.2px',
-  textTransform: 'uppercase',
-  color: 'rgba(255, 255, 255, 0.5)',
-}
-
-export const PROGRESS_LABEL_ACTIVE = {
-  color: 'rgba(220, 236, 255, 0.95)',
-}
-
-export const PROGRESS_CONNECT = {
-  flex: '1',
-  height: '2px',
-  marginTop: '12px',
-  borderRadius: '1px',
-  background: 'repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.22) 0 4px, transparent 4px 8px)',
-}
-
-export const PROGRESS_CONNECT_FILLED = {
-  background: 'linear-gradient(90deg, rgba(120, 230, 160, 0.85), rgba(80, 200, 140, 0.6))',
-  boxShadow: '0 0 8px rgba(80, 200, 140, 0.35)',
 }
 
 export const CARD = {
@@ -230,4 +127,133 @@ export const CARD_EDIT_TEXT = {
   color: 'white',
   letterSpacing: '0.3px',
   textTransform: 'uppercase',
+}
+
+// "Not Paired" value + inline "How to Pair" button (only while not paired)
+export const PAIRED_VALUE_ROW = {
+  display: 'flex',
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'flex-end',
+  gap: '10px',
+  flex: 1,
+  minWidth: 0,
+}
+
+export const PAIR_BUTTON = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '7px 14px',
+  borderRadius: '10px',
+  fontSize: '13px',
+  fontWeight: '700',
+  color: 'white',
+  cursor: 'pointer',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+  textShadow: '0 1px 0 rgba(0, 0, 0, 0.25)',
+  border: '1px solid rgba(150, 195, 255, 0.55)',
+  background: 'linear-gradient(180deg, rgba(120, 180, 255, 0.6), rgba(70, 140, 255, 0.35))',
+  boxShadow:
+    'inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.22), 0 4px 14px rgba(50, 120, 255, 0.4)',
+}
+
+// Floating FAQ button, bottom-right of the screen
+export const FAQ_FAB = {
+  position: 'fixed',
+  bottom: '16px',
+  right: '16px',
+  zIndex: '100',
+  width: '46px',
+  height: '46px',
+  borderRadius: '50%',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: '20px',
+  fontWeight: '700',
+  color: 'white',
+  cursor: 'pointer',
+  textShadow: '0 1px 0 rgba(0, 0, 0, 0.25)',
+  border: '1px solid rgba(150, 195, 255, 0.55)',
+  background: 'linear-gradient(180deg, rgba(120, 180, 255, 0.6), rgba(70, 140, 255, 0.35))',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  boxShadow:
+    'inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.22), 0 4px 14px rgba(50, 120, 255, 0.4)',
+}
+
+// Disabled (unpaired) state for setting cards: dimmed and visually inert
+export const CARD_DISABLED = {
+  opacity: '0.5',
+  pointerEvents: 'none',
+}
+
+// Setting rows with a toggle switch (inside the setup card)
+export const SETTING_ROW = {
+  display: 'flex',
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: '16px',
+}
+
+export const SETTING_ROW_DIVIDER = {
+  borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+  paddingTop: '14px',
+  marginTop: '2px',
+}
+
+export const SETTING_TEXTS = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '4px',
+  flex: '1',
+}
+
+export const SETTING_TITLE = {
+  fontWeight: 'bold',
+  fontSize: '15px',
+  color: 'white',
+}
+
+export const SETTING_DESC = {
+  fontSize: '13px',
+  color: 'rgba(255,255,255,0.75)',
+  lineHeight: '1.5',
+}
+
+export const SWITCH_TRACK = {
+  position: 'relative',
+  width: '46px',
+  height: '27px',
+  borderRadius: '100vw',
+  flexShrink: 0,
+  cursor: 'pointer',
+  border: '1px solid rgba(255, 255, 255, 0.25)',
+  background: 'rgba(255, 255, 255, 0.12)',
+  boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.35)',
+  transition: 'background 200ms ease, border-color 200ms ease, box-shadow 200ms ease',
+}
+
+export const SWITCH_TRACK_ON = {
+  border: '1px solid rgba(120, 230, 160, 0.6)',
+  background: 'linear-gradient(135deg, rgba(80, 200, 140, 0.75), rgba(60, 180, 120, 0.45))',
+  boxShadow: '0 0 12px rgba(60, 200, 120, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25)',
+}
+
+export const SWITCH_KNOB = {
+  position: 'absolute',
+  top: '2px',
+  left: '2px',
+  width: '21px',
+  height: '21px',
+  borderRadius: '50%',
+  background: 'white',
+  boxShadow: '0 1px 3px rgba(0, 0, 0, 0.4)',
+  transition: 'transform 200ms ease',
+}
+
+export const SWITCH_KNOB_ON = {
+  transform: 'translateX(19px)',
 }

@@ -6,17 +6,21 @@ const svg = (inner, stroke) =>
 
 const BLUE = 'rgb(180, 215, 255)'
 const GREEN = 'rgb(180, 245, 200)'
+const RED = 'rgb(255, 195, 190)'
 const WHITE = 'rgb(255, 255, 255)'
 
-export const ICON_BLUETOOTH = svg(
-  '<polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>',
-  BLUE,
-)
+export const ICON_BLUETOOTH = svg('<polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/>', BLUE)
 
 export const ICON_PENCIL = svg(
-  '<path d="M12 20h9"/>' +
-    '<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+  '<path d="M12 20h9"/>' + '<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
   WHITE,
+)
+
+export const ICON_NO_PHONE = svg(
+  '<rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>' +
+    '<line x1="12" y1="18" x2="12.01" y2="18"/>' +
+    '<line x1="1" y1="1" x2="23" y2="23"/>',
+  RED,
 )
 
 export const ICON_OFFLINE = svg(
