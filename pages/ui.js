@@ -5,8 +5,9 @@
 // ("ReferenceError: '__$$RQR$$__' is not defined"). The @zos imports for v2/v3
 // live in the shim, not here. Top-level hmUI.*/hmSetting.* access is fine — those
 // globals always exist by the time this module evaluates.
-import * as hmUI from '@zos/ui'
+
 import * as hmSetting from '@zos/device'
+import * as hmUI from '@zos/ui'
 
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
@@ -19,11 +20,16 @@ export const size = Math.min(width, height)
 // }
 // export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
 
-export const push = (o) => { if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o) }
+export const push = (o) => {
+  if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o)
+}
 
 let widgets = []
 
-const track = (w) => { widgets.push(w); return w }
+const track = (w) => {
+  widgets.push(w)
+  return w
+}
 
 // Give every widget a `.set(props)` so callers update through our layer and
 // never import @zos `prop`. It routes to the right property:
@@ -57,15 +63,20 @@ const normalizeAlign = (o) => {
 // computed center box, then track for reset(). `define` captures that.
 // - defaults may be an object or a fn(props) when defaults depend on props.
 // - after(widget) runs post-create for one-off setup (e.g. circle's setEnable).
-const define = (type, defaults = {}, after) => (props = {}, group = hmUI) => {
-  const w = group.createWidget(hmUI.widget[type], normalizeAlign({
-    ...(typeof defaults === 'function' ? defaults(props) : defaults),
-    ...props,
-    ...center(props),
-  }))
-  if (after) after(w)
-  return track(attach(w))
-}
+const define =
+  (type, defaults = {}, after) =>
+  (props = {}, group = hmUI) => {
+    const w = group.createWidget(
+      hmUI.widget[type],
+      normalizeAlign({
+        ...(typeof defaults === 'function' ? defaults(props) : defaults),
+        ...props,
+        ...center(props),
+      }),
+    )
+    if (after) after(w)
+    return track(attach(w))
+  }
 
 export const page = (x = 0, y = 0) => {
   const page = hmUI.createWidget(hmUI.widget.GROUP, {
@@ -78,7 +89,7 @@ export const page = (x = 0, y = 0) => {
   return page
 }
 
-export const group = (props = {}, group = hmUI) => {
+export const group = (props = {}, _group = hmUI) => {
   const stack = hmUI.createWidget(hmUI.widget.GROUP, {
     w: width,
     h: height,
@@ -92,13 +103,13 @@ export const group = (props = {}, group = hmUI) => {
 const center = ({ x = 0, y = 0, w = width, h = height, radius = height, bar = 0, centered = true }) => {
   // TODO: deprecate bar param
   if (!centered) {
-    return { x, y, w, h, center_x: x + w / 2 | 0, center_y: y + h / 2 | 0 }
+    return { x, y, w, h, center_x: (x + w / 2) | 0, center_y: (y + h / 2) | 0 }
   }
 
-  x = Math.floor(((width - w) / 2) + x)
-  y = Math.floor(((bar + height - h) / 2) + y)
-  const center_x = Math.floor((w / 2) + x)
-  const center_y = Math.floor(((h + bar + 1) / 2) + y)
+  x = Math.floor((width - w) / 2 + x)
+  y = Math.floor((bar + height - h) / 2 + y)
+  const center_x = Math.floor(w / 2 + x)
+  const center_y = Math.floor((h + bar + 1) / 2 + y)
 
   return { x, y, w, h, center_x, center_y }
 }
@@ -124,22 +135,26 @@ export const button = (props = {}, group = hmUI) => {
     normal_src: src ? `buttons/${src}.png` : undefined,
     press_src: src ? `buttons/_${src}.png` : undefined,
     ...props,
-    ...center({ w: 50, h: 50, ...props, }),
+    ...center({ w: 50, h: 50, ...props }),
   })
   widgets.push(button)
   return button
 }
 
-export const circle = define('CIRCLE', {
-  color: 0x000000,
-  radius: Math.floor(height / 2),
-  alpha: 150,
-}, (w) => w.setEnable(false))
+export const circle = define(
+  'CIRCLE',
+  {
+    color: 0x000000,
+    radius: Math.floor(height / 2),
+    alpha: 150,
+  },
+  (w) => w.setEnable(false),
+)
 
-export const rect = define('FILL_RECT', { color: 0xFFFFFF })
+export const rect = define('FILL_RECT', { color: 0xffffff })
 
 export const stroke = define('STROKE_RECT', {
-  color: 0xFFFFFF,
+  color: 0xffffff,
   line_width: 10,
   angle: 0,
 })
@@ -221,13 +236,16 @@ export const editable = (props = {}) => {
 export const level = define('IMG_LEVEL')
 
 export const weather = (props = {}, group = hmUI) => {
-  const { folder = "weather", ...rest } = props
-  return level({
-    image_array: Array.from({ length: 29 }, (_, i) => `${folder}/${i}.png`),
-    image_length: 29,
-    type: hmUI.data_type.WEATHER,
-    ...rest,
-  }, group)
+  const { folder = 'weather', ...rest } = props
+  return level(
+    {
+      image_array: Array.from({ length: 29 }, (_, i) => `${folder}/${i}.png`),
+      image_length: 29,
+      type: hmUI.data_type.WEATHER,
+      ...rest,
+    },
+    group,
+  )
 }
 
 export const time = (props = {}, group = hmUI) => {
@@ -322,7 +340,10 @@ export const click = (props = {}, group = hmUI) => {
   const { x, y, w, h } = center(props)
   const clickWidget = group.createWidget(hmUI.widget.IMG_CLICK, {
     ...props,
-    x, y, w, h,
+    x,
+    y,
+    w,
+    h,
   })
   widgets.push(clickWidget)
   return clickWidget
@@ -400,16 +421,18 @@ export const scrollList = (props = {}, group = hmUI) => {
     ...rest
   } = props
 
-  const itemConfig = [{
-    type_id: 1,
-    item_height: itemHeight,
-    item_bg_color: itemBgColor,
-    item_bg_radius: itemRadius,
-    text_view: textViews,
-    text_view_count: textViews.length,
-    image_view: imageViews,
-    image_view_count: imageViews.length,
-  }]
+  const itemConfig = [
+    {
+      type_id: 1,
+      item_height: itemHeight,
+      item_bg_color: itemBgColor,
+      item_bg_radius: itemRadius,
+      text_view: textViews,
+      text_view_count: textViews.length,
+      image_view: imageViews,
+      image_view_count: imageViews.length,
+    },
+  ]
 
   const listWidget = group.createWidget(hmUI.widget.SCROLL_LIST, {
     x,
@@ -419,9 +442,9 @@ export const scrollList = (props = {}, group = hmUI) => {
     item_space: itemSpace,
     item_config: itemConfig,
     item_config_count: itemConfig.length,
-    data_array: data.map(item => ({ ...item, type: 1 })),
+    data_array: data.map((item) => ({ ...item, type: 1 })),
     data_count: data.length,
-    item_click_func: (list, index, key) => onClick(index, data[index], key),
+    item_click_func: (_list, index, key) => onClick(index, data[index], key),
     item_focus_change_func: onFocusChange,
     ...rest,
   })
@@ -433,16 +456,16 @@ export const scrollList = (props = {}, group = hmUI) => {
 export const timePointer = (props = {}) => {
   const { center_x: cx, center_y: cy } = center(props)
   const widget = hmUI.createWidget(hmUI.widget.TIME_POINTER, {
-    hour_centerX:   cx,
-    hour_centerY:   cy,
-    hour_path:      'pointer/hour.png',
+    hour_centerX: cx,
+    hour_centerY: cy,
+    hour_path: 'pointer/hour.png',
     minute_centerX: cx,
     minute_centerY: cy,
-    minute_path:    'pointer/minute.png',
+    minute_path: 'pointer/minute.png',
     second_centerX: cx,
     second_centerY: cy,
-    second_path:    'pointer/seconds.png',
-    show_level:     hmUI.show_level.ONLY_NORMAL,
+    second_path: 'pointer/seconds.png',
+    show_level: hmUI.show_level.ONLY_NORMAL,
     ...props,
   })
   widgets.push(widget)
@@ -457,11 +480,13 @@ export const delegate = (onResume, onPause) => {
 }
 
 export default {
-  get widgets() { return widgets },
+  get widgets() {
+    return widgets
+  },
   reset: () => {
     // widgets.map(w => w.setProperty(prop.VISIBLE, false))
-    widgets.map(w => hmUI.deleteWidget(w))
+    widgets.map((w) => hmUI.deleteWidget(w))
     widgets = []
     return widgets
-  }
+  },
 }
