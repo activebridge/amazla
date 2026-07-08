@@ -351,14 +351,17 @@ describe('charge state snapshot', () => {
     expect(tesla.charge).toBeNull()
   })
 
-  test('fetchChargeState applies a successful session result', () => {
-    jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: true, charge: { level: 64, range: 175, state: 'Disconnected' } }))
+  // CHARGE DISABLED (VCSEC only) — _loadChargeState is stubbed to fail without
+  // touching the d3 session (it was starving GET_STATUS / RKE; see lib/tesla.js).
+  // When charge is re-enabled, restore the old spec from git history: a successful
+  // getChargeState result must be applied to tesla.charge and cb'd success:true.
+  test('fetchChargeState reports charge disabled and never opens a d3 session', () => {
+    const spy = jest.spyOn(teslaSession, 'getChargeState')
     const cb = jest.fn()
     tesla.fetchChargeState(cb)
-    expect(tesla.charge.level).toBe(64)
-    expect(tesla.charge.state).toBe('Disconnected')
-    expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: true }))
+    expect(spy).not.toHaveBeenCalled()
+    expect(tesla.charge).toBeNull()
+    expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: expect.stringMatching(/disabled/) }))
   })
 
   test('fetchChargeState failure leaves existing charge untouched', () => {
@@ -756,6 +759,15 @@ describe('command failure', () => {
 // ─── app-close auto-lock ────────────────────────────────────────────────────────
 
 describe('lockOnClose', () => {
+  // Auto-lock is an opt-in settings toggle (default OFF) — enable it for the
+  // gating tests below; the toggle itself is covered by the last test.
+  beforeEach(() => {
+    store.autoLock = true
+  })
+  afterEach(() => {
+    store.autoLock = false
+  })
+
   test('online + unlocked + no driver → fires synchronous lock', () => {
     tesla.connection.status = 'online'
     tesla.locked = false
@@ -764,6 +776,17 @@ describe('lockOnClose', () => {
 
     expect(tesla.lockOnClose()).toBe(true)
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  test('autoLock setting off (default) → no lock even when conditions match', () => {
+    store.autoLock = false
+    tesla.connection.status = 'online'
+    tesla.locked = false
+    tesla.userPresent = false
+    const spy = jest.spyOn(teslaSession, 'lockSyncFireAndForget').mockReturnValue(true)
+
+    expect(tesla.lockOnClose()).toBe(false)
+    expect(spy).not.toHaveBeenCalled()
   })
 
   test('already locked → no lock', () => {

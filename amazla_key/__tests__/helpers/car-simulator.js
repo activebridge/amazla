@@ -201,6 +201,19 @@ export class CarSimulator {
   // ── Authenticated command dispatch ────────────────────────────────────────
 
   _handleCommand(payloadBytes, harness) {
+    // RoutableMessage.protobuf_message_as_bytes IS the vcsec.UnsignedMessage directly
+    // (no ToVCSECMessage/SignedMessage wrapper) — matches Tesla SDK executeRKEAction.
+    const unsigned = decodeMessage(payloadBytes)
+
+    // Wake prod (RKE_ACTION_WAKE_VEHICLE = 30): the watch fires one before every
+    // command. It is NOT the command under test — it must not consume the one-shot
+    // drop/error injections below. Model a dozing car (the production rationale for
+    // the prod): no ack. The command that follows gets the real treatment.
+    if (unsigned[2] === 30) {
+      this.state.sleeping = false
+      return
+    }
+
     // Simulate a dropped command write (unacked WRITE_WITHOUT_RESPONSE truncated
     // in flight): the car never sees a complete command, so it never replies.
     // Exercises the watch's overall command-timeout deadline.
@@ -208,10 +221,6 @@ export class CarSimulator {
       this._dropCommands--
       return
     }
-
-    // RoutableMessage.protobuf_message_as_bytes IS the vcsec.UnsignedMessage directly
-    // (no ToVCSECMessage/SignedMessage wrapper) — matches Tesla SDK executeRKEAction.
-    const unsigned = decodeMessage(payloadBytes)
 
     // Error injection
     if (this._nextCommandError) {
@@ -346,11 +355,13 @@ export class CarSimulator {
   }
 
   _deliver(harness, responseBytes) {
-    if (this._responseDelay > 0) {
-      setTimeout(() => harness.notify(this._frame(responseBytes)), this._responseDelay)
-    } else {
-      harness.notify(this._frame(responseBytes))
-    }
+    // ALWAYS deliver asynchronously — never inside the requester's call stack.
+    // A real BLE notification is a later event; delivering synchronously (from
+    // within the watch's own chunk write) lands the response BEFORE ble.js has
+    // registered its response callback, and _handleResponse silently drops
+    // frames that arrive with no callback armed. The RKE tests only passed via
+    // state leaked from earlier tests catching the frame, and failed in isolation.
+    setTimeout(() => harness.notify(this._frame(responseBytes)), this._responseDelay)
   }
 
   // ── Pairing message handling ──────────────────────────────────────────────

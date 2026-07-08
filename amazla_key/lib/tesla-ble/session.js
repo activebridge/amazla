@@ -111,6 +111,7 @@ class TeslaSession {
     this.sessionInfoResendTimeoutMs = SESSION_INFO_RESEND_TIMEOUT_MS
     this.recycleSettleMs = RECYCLE_SETTLE_MS
     this.commandTimeoutMs = COMMAND_TIMEOUT_MS
+    this.secondResponseTimeoutMs = 10000
     this._passiveEventCb = null // UI hook for passive-entry events (set by the Tesla facade)
   }
   // Register a single observer for passive-entry handshake milestones (initiated /
@@ -779,7 +780,7 @@ class TeslaSession {
                     this._secondResponseTimer = null
                     finish({ success: false, error: 'Second response timeout' })
                   }
-                }, 10000)
+                }, this.secondResponseTimeoutMs)
               }
               return // waiter stays armed
             }

@@ -25,19 +25,30 @@ import store from '../lib/store.js'
 import { bleHarness, _fsStore } from '../__mocks__/zos.js'
 import { CarSimulator } from './helpers/car-simulator.js'
 import { lockedCar, unlockedCar, allDoorsOpen, sleeping } from './helpers/scenarios.js'
-import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
+import { bytesToBinaryString, binaryStringToBytes } from '../app-side/ble-crypto.js'
 import { encodeBytes, encodeVarintField, concat } from '../lib/tesla-ble/protocol/protobuf.js'
 import { createECDH } from 'crypto'
 import Phone from '../lib/phone.js'
 
 // The phone owns the enrolled private key (the watch never holds it). The
-// fixture stashes it here so the Phone.computeSharedSecret stub can run the same
-// bleCrypto ECDH the companion would — without a working messageBuilder.
+// fixture stashes it here so the Phone.computeSharedSecret stub can compute the
+// ECDH the companion would — without a working messageBuilder.
+// Node's native ECDH, NOT bleCrypto.computeSharedSecret: the production BigInt
+// implementation uses affine double-and-add (a modular inversion per point op)
+// and costs seconds per call — it made this suite take ~99% of the whole test
+// run and blow the 30s per-test cap under load. The outputs are identical
+// (32-byte shared-secret X coordinate); bleCrypto's own math is covered by
+// ble-crypto.test.js.
 let _phonePrivateKey = null
 Phone.prototype.computeSharedSecret = function (vehiclePubBytes) {
-  const r = bleCrypto.computeSharedSecret(_phonePrivateKey, bytesToBinaryString(vehiclePubBytes))
-  if (!r.success) return Promise.reject(new Error(r.error))
-  return Promise.resolve(binaryStringToBytes(r.secret))
+  try {
+    const ecdh = createECDH('prime256v1')
+    ecdh.setPrivateKey(Buffer.from(binaryStringToBytes(_phonePrivateKey)))
+    const secret = ecdh.computeSecret(Buffer.from(vehiclePubBytes))
+    return Promise.resolve(new Uint8Array(secret))
+  } catch (e) {
+    return Promise.reject(e)
+  }
 }
 
 // Track real timers created by production code (e.g., CCCD fallback) so tests can clear them.
@@ -96,10 +107,13 @@ function setupStore(sim) {
 let sim
 let session
 
+// NO jest.useFakeTimers() anywhere in this file: under the ESM vm-modules runner,
+// useRealTimers() after useFakeTimers() DELETES global setTimeout instead of
+// restoring it — every later test then crashed the zos-mock scan auto-emit and
+// hung for the full 30s jest timeout (the suite took ~396s of pure timeouts).
+// Timeout-path tests shrink the session's *TimeoutMs knobs and run on real timers.
+
 beforeEach(() => {
-  // Ensure real timers and no leftover timers from previous tests (fake timers can leak)
-  jest.useRealTimers()
-  jest.clearAllTimers()
   // Clear all persisted state
   Object.keys(_fsStore).forEach((k) => delete _fsStore[k])
   store.reset()
@@ -121,9 +135,6 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  // Restore real timers and clear any remaining timeouts
-  try { jest.useRealTimers() } catch (e) {}
-  try { jest.clearAllTimers() } catch (e) {}
   // Clear any tracked native timers created by production code
   for (const t of Array.from(_trackedTimers)) try { _realClearTimeout(t) } catch (e) {}
   _trackedTimers.clear()
@@ -279,37 +290,27 @@ describe('getVehicleStatus', () => {
 
 describe('second-response timeout', () => {
   test('skipSecondResponse → session times out and returns error', async () => {
-    jest.useFakeTimers()
-    try {
-      // Session setup: advance timers alongside await to flush 20ms BLE chunk pacing
-      const [r] = await Promise.all([
-        p((cb) => session.requestSessionInfo(cb)),
-        jest.advanceTimersByTimeAsync(500),
-      ])
-      if (!r.success) throw new Error('Session setup: ' + r.error)
+    // Real timers: shrink the second-response deadline instead of faking the clock.
+    const r = await p((cb) => session.requestSessionInfo(cb))
+    if (!r.success) throw new Error('Session setup: ' + r.error)
 
-      sim.skipSecondResponse()
+    session.secondResponseTimeoutMs = 50
+    sim.skipSecondResponse()
 
-      let cbResult = null
-      const cmdPromise = new Promise((resolve) => {
-        session.sendCommand(1 /* LOCK */, (res) => {
-          // First call: intermediate ack with _requeue — session is waiting
-          if (res._requeue) return
-          // Second call: from timeout path
-          cbResult = res
-          resolve()
-        })
+    let cbResult = null
+    await new Promise((resolve) => {
+      session.sendCommand(1 /* LOCK */, (res) => {
+        // First call: intermediate ack with _requeue — session is waiting.
+        if (res._requeue) return
+        // Second call: from the timeout path.
+        cbResult = res
+        resolve()
       })
+    })
 
-      // Advance past chunk pacing (~80ms) + 10-second command timeout
-      await Promise.all([cmdPromise, jest.advanceTimersByTimeAsync(11000)])
-
-      expect(cbResult).not.toBeNull()
-      expect(cbResult.success).toBe(false)
-      expect(cbResult.error).toMatch(/timeout/i)
-    } finally {
-      jest.useRealTimers()
-    }
+    expect(cbResult).not.toBeNull()
+    expect(cbResult.success).toBe(false)
+    expect(cbResult.error).toMatch(/timeout/i)
   })
 })
 
@@ -317,38 +318,29 @@ describe('second-response timeout', () => {
 
 describe('command timeout', () => {
   test('car never answers a command → command deadline fires → error, no hang', async () => {
-    jest.useFakeTimers()
-    try {
-      const [r] = await Promise.all([
-        p((cb) => session.requestSessionInfo(cb)),
-        jest.advanceTimersByTimeAsync(500),
-      ])
-      if (!r.success) throw new Error('Session setup: ' + r.error)
+    const r = await p((cb) => session.requestSessionInfo(cb))
+    if (!r.success) throw new Error('Session setup: ' + r.error)
 
-      // Shrink the overall deadline so the test runs fast, then drop the command.
-      session.commandTimeoutMs = 200
-      sim.setDropCommands(1)
+    // Real timers: shrink the overall deadline so the test runs fast, then drop
+    // the command.
+    session.commandTimeoutMs = 100
+    sim.setDropCommands(1)
 
-      let cbResult = null
-      const cmdPromise = new Promise((resolve) => {
-        session.sendCommand(1 /* LOCK */, (res) => {
-          if (res._requeue) return
-          cbResult = res
-          resolve()
-        })
+    let cbResult = null
+    await new Promise((resolve) => {
+      session.sendCommand(1 /* LOCK */, (res) => {
+        if (res._requeue) return
+        cbResult = res
+        resolve()
       })
+    })
 
-      await Promise.all([cmdPromise, jest.advanceTimersByTimeAsync(400)])
-
-      expect(cbResult).not.toBeNull()
-      expect(cbResult.success).toBe(false)
-      expect(cbResult.error).toMatch(/timed out|timeout/i)
-      // State fully cleared so the next command isn't blocked.
-      expect(session._waitingForSecondResponse).toBe(false)
-      expect(session._commandTimer).toBeNull()
-    } finally {
-      jest.useRealTimers()
-    }
+    expect(cbResult).not.toBeNull()
+    expect(cbResult.success).toBe(false)
+    expect(cbResult.error).toMatch(/timed out|timeout/i)
+    // State fully cleared so the next command isn't blocked.
+    expect(session._waitingForSecondResponse).toBe(false)
+    expect(session._commandTimer).toBeNull()
   })
 
   test('command deadline cleared on a normal successful command (no late fire)', async () => {
@@ -491,10 +483,11 @@ describe('getVehicleStatus', () => {
 
   test('propagates BLE send error', async () => {
     await p((cb) => session.requestSessionInfo(cb))
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: false, error: 'BLE write failed' })
+    // Status/commands TX via sendAddressed (addressed waiters), not send()
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => cb({ success: false, error: 'BLE write failed' })
     const result = await p((cb) => session.getVehicleStatus(cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/BLE write failed/)
   })
@@ -562,12 +555,14 @@ describe('connection error paths', () => {
     expect(result.error).toMatch(/VIN not set/i)
   })
 
-  test('disconnect during GATT setup → fails (single-attempt connect, no retry)', async () => {
+  test('disconnect during GATT setup → re-dial loop recovers on the next attempt', async () => {
+    // Cold-connect fix (device-validated): a mid-GATT-setup drop is retried up to
+    // MAX_CONNECT_ATTEMPTS on the same MAC. The harness flag is one-shot, so
+    // attempt 1 drops and attempt 2 must succeed.
     bleHarness._disconnectDuringPrepare = true
     const result = await p((cb) => session.requestSessionInfo(cb))
-    expect(result.success).toBe(false)
-    expect(result.error).toMatch(/disconnected during setup/i)
-    expect(session.established).toBe(false)
+    expect(result.success).toBe(true)
+    expect(session.established).toBe(true)
   })
 })
 
@@ -832,30 +827,33 @@ describe('sendCommand error paths', () => {
   })
 
   test('BLE send failure → reports error, clears waiting state', async () => {
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: false, error: 'TX failed' })
+    // Commands TX via sendAddressed (addressed waiters), not send()
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => cb({ success: false, error: 'TX failed' })
     const result = await p((cb) => session.sendCommand(1, cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
     expect(result.success).toBe(false)
     expect(result.error).toBe('TX failed')
     expect(session._waitingForSecondResponse).toBe(false)
   })
 
-  test('null result.data in getVehicleStatus → reports no-data error', async () => {
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: true, data: null })
+  test('null result.data in getVehicleStatus → reports an error, does not hang', async () => {
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => cb({ success: true, data: null })
     const result = await p((cb) => session.getVehicleStatus(cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
+    // The addressed-waiter path can't produce a null payload in production; the
+    // synthetic null is caught by the handler's try/catch and reported.
     expect(result.success).toBe(false)
-    expect(result.error).toMatch(/no data/i)
+    expect(result.error).toBeTruthy()
   })
 
   test('sendCommand: null result.data → inner catch reports error and clears waiting state', async () => {
-    // parseRoutableMessage(null) throws → inner catch in sendCommand (lines 311-316)
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: true, data: null })
+    // parseRoutableMessage(null) throws → inner catch in sendCommand
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => cb({ success: true, data: null })
     const result = await p((cb) => session.sendCommand(1, cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
     expect(result.success).toBe(false)
     expect(result.error).toBeTruthy()
     expect(session._waitingForSecondResponse).toBe(false)
@@ -888,10 +886,10 @@ describe('sendCommand error paths', () => {
     const fromVcsec = encodeBytes(1, badVehicleStatus)              // FromVCSECMessage.vehicleStatus
     const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
     const responseBytes = concat(toDest, encodeBytes(10, fromVcsec))
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => cb({ success: true, data: responseBytes })
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => cb({ success: true, data: responseBytes })
     const result = await p((cb) => session.getVehicleStatus(cb))
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
     expect(result.success).toBe(false)
     expect(result.error).toBeTruthy()
   })
@@ -900,8 +898,8 @@ describe('sendCommand error paths', () => {
     // First response: non-terminal (no commandStatus / signedMessageStatus) → waiting.
     // Second response: FromVCSECMessage { commandStatus { operationStatus=OK } } → clearTimeout + success.
     let capturedHandler = null
-    const origSend = teslaBLE.send.bind(teslaBLE)
-    teslaBLE.send = (_msg, cb) => { capturedHandler = cb }
+    const origSend = teslaBLE.sendAddressed.bind(teslaBLE)
+    teslaBLE.sendAddressed = (_msg, _match, cb) => { capturedHandler = cb }
 
     let cmdResult = null
     session.sendCommand(1, (r) => {
@@ -915,8 +913,11 @@ describe('sendCommand error paths', () => {
     // treats them as unsolicited pushes and keeps listening.
     const toDest = encodeBytes(6, encodeBytes(2, session.routingAddress))
 
-    // First: bare field-5 → no commandStatus, no signedMessageStatus → waiting
-    capturedHandler({ success: true, data: concat(toDest, encodeVarintField(5, 0)) })
+    // First: SessionInfo-only push (field 15, no commandStatus/payload) — the
+    // car heard us, the action ack follows → arms the second-response wait.
+    // Needs an epoch: the parser only surfaces sessionInfo when epoch/publicKey present.
+    const siPush = concat(encodeVarintField(1, 2), encodeBytes(3, new Uint8Array(16).fill(0xab)))
+    capturedHandler({ success: true, data: concat(toDest, encodeBytes(15, siPush)) })
     expect(session._waitingForSecondResponse).toBe(true)
     expect(session._secondResponseTimer).not.toBeNull()
 
@@ -928,6 +929,6 @@ describe('sendCommand error paths', () => {
     expect(cmdResult).not.toBeNull()
     expect(cmdResult.success).toBe(true)
 
-    teslaBLE.send = origSend
+    teslaBLE.sendAddressed = origSend
   })
 })

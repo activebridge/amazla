@@ -23,6 +23,14 @@ export const ICON_NO_PHONE = svg(
   RED,
 )
 
+// Tesla-style circled-i info icon (muted)
+export const ICON_INFO = svg(
+  '<circle cx="12" cy="12" r="10"/>' +
+    '<line x1="12" y1="11" x2="12" y2="16.5"/>' +
+    '<line x1="12" y1="7" x2="12" y2="7.02"/>',
+  'rgba(255, 255, 255, 0.65)',
+)
+
 export const ICON_OFFLINE = svg(
   '<line x1="1" y1="1" x2="23" y2="23"/>' +
     '<path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/>' +

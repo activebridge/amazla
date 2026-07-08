@@ -1,20 +1,24 @@
-import { BG } from './bg.js'
+// Flat dark theme in Tesla's in-car UI language: solid surfaces, pill controls,
+// blue accent toggles, hairline dividers — no gradients, blur, or glow.
+const BG = '#171a1c'
+const PANEL = '#24272b'
+const CONTROL = '#3a3e44'
+const BUTTON = '#393c41'
+const BLUE = '#3e6ae1'
+const TEXT = '#e8eaed'
+const TEXT_DIM = 'rgba(255, 255, 255, 0.55)'
 
 export const BODY = {
   position: 'relative',
   display: 'flex',
-  flexWrap: 'wrap',
   flexDirection: 'column',
   alignItems: 'stretch',
   fontFamily: 'Circular,Helvetica,Arial,sans-serif',
   fontSize: '14px',
   fontWeight: '400',
   minHeight: '100vh',
-  backgroundImage: `linear-gradient(#14171d 5%, rgba(0,0,0,0.5)), url('${BG}')`,
-  backgroundSize: 'cover',
-  backgroundPosition: 'center',
-  backgroundAttachment: 'fixed',
-  backdropFilter: 'blur(3px)',
+  background: BG,
+  color: TEXT,
   overflowY: 'hidden',
 }
 
@@ -43,38 +47,12 @@ export const CARD = {
   flexDirection: 'column',
   alignItems: 'stretch',
   padding: '20px',
-  color: 'white',
+  color: TEXT,
   gap: '12px',
   marginBottom: '16px',
-  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2)',
-  backdropFilter: 'blur(20px)',
-  borderRadius: '16px',
-  border: '1px solid rgba(255, 255, 255, 0.25)',
-  background: 'rgba(255, 255, 255, 0.15)',
+  borderRadius: '12px',
+  background: PANEL,
   width: '100%',
-}
-
-export const CARD_DONE = {
-  border: '1px solid rgba(120, 230, 160, 0.4)',
-  background: 'linear-gradient(135deg, rgba(60, 200, 120, 0.22), rgba(60, 200, 120, 0.08))',
-  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.2), 0 0 18px rgba(60, 200, 120, 0.2)',
-}
-
-export const STEP_BADGE = {
-  background: 'rgba(255, 255, 255, 0.9)',
-  color: '#1a1a2e',
-  width: '24px',
-  height: '24px',
-  borderRadius: '50%',
-  fontWeight: 'bold',
-  fontSize: '16px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  flexShrink: 0,
-  minWidth: '24px',
-  textAlign: 'center',
-  lineHeight: '24px',
 }
 
 export const VEHICLE_ROW = {
@@ -86,14 +64,14 @@ export const VEHICLE_ROW = {
 }
 
 export const VEHICLE_LABEL = {
-  fontSize: '16px',
-  color: 'rgba(255, 255, 255, 0.7)',
+  fontSize: '15px',
+  color: TEXT_DIM,
   fontWeight: '500',
 }
 
 export const VEHICLE_VALUE = {
-  fontSize: '18px',
-  color: 'white',
+  fontSize: '17px',
+  color: TEXT,
   fontWeight: '600',
   fontFamily: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
   letterSpacing: '2px',
@@ -104,6 +82,11 @@ export const VEHICLE_VALUE = {
   whiteSpace: 'nowrap',
 }
 
+// Paired date gets a quiet green confirmation tint
+export const VEHICLE_VALUE_OK = {
+  color: 'rgb(120, 230, 160)',
+}
+
 export const CARD_EDIT_HINT = {
   position: 'absolute',
   top: '-20px',
@@ -112,7 +95,8 @@ export const CARD_EDIT_HINT = {
   flexDirection: 'row',
   alignItems: 'center',
   gap: '5px',
-  opacity: '0.75',
+  opacity: '0.65',
+  cursor: 'pointer',
 }
 
 export const CARD_EDIT_ICON = {
@@ -124,12 +108,12 @@ export const CARD_EDIT_ICON = {
 export const CARD_EDIT_TEXT = {
   fontSize: '12px',
   fontWeight: '600',
-  color: 'white',
+  color: TEXT,
   letterSpacing: '0.3px',
   textTransform: 'uppercase',
 }
 
-// "Not Paired" value + inline "How to Pair" button (only while not paired)
+// "Not set"/"Not Paired" value + inline action button
 export const PAIRED_VALUE_ROW = {
   display: 'flex',
   flexDirection: 'row',
@@ -140,23 +124,51 @@ export const PAIRED_VALUE_ROW = {
   minWidth: 0,
 }
 
+// Footer feature line: inline icons + muted copy text
+export const FOOTER_FEATURES = {
+  display: 'flex',
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexWrap: 'wrap',
+  gap: '6px',
+  fontSize: '12px',
+  color: 'rgba(255, 255, 255, 0.4)',
+  textAlign: 'center',
+  marginBottom: '16px',
+}
+
+export const FOOTER_FEATURE_ICON = {
+  width: '13px',
+  height: '13px',
+  flexShrink: 0,
+  opacity: '0.75',
+}
+
+// Tap target around the ⓘ info icon (opens the pairing steps)
+export const INFO_ICON_BUTTON = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '4px',
+  cursor: 'pointer',
+  flexShrink: 0,
+}
+
+// Flat gray action button (Tesla secondary action, e.g. "Ausschalten")
 export const PAIR_BUTTON = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  padding: '7px 14px',
-  borderRadius: '10px',
+  padding: '8px 16px',
+  borderRadius: '8px',
   fontSize: '13px',
-  fontWeight: '700',
-  color: 'white',
+  fontWeight: '500',
+  color: TEXT,
   cursor: 'pointer',
   flexShrink: 0,
   whiteSpace: 'nowrap',
-  textShadow: '0 1px 0 rgba(0, 0, 0, 0.25)',
-  border: '1px solid rgba(150, 195, 255, 0.55)',
-  background: 'linear-gradient(180deg, rgba(120, 180, 255, 0.6), rgba(70, 140, 255, 0.35))',
-  boxShadow:
-    'inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.22), 0 4px 14px rgba(50, 120, 255, 0.4)',
+  background: BUTTON,
 }
 
 // Floating FAQ button, bottom-right of the screen
@@ -172,34 +184,30 @@ export const FAQ_FAB = {
   alignItems: 'center',
   justifyContent: 'center',
   fontSize: '20px',
-  fontWeight: '700',
-  color: 'white',
+  fontWeight: '600',
+  color: TEXT,
   cursor: 'pointer',
-  textShadow: '0 1px 0 rgba(0, 0, 0, 0.25)',
-  border: '1px solid rgba(150, 195, 255, 0.55)',
-  background: 'linear-gradient(180deg, rgba(120, 180, 255, 0.6), rgba(70, 140, 255, 0.35))',
-  backdropFilter: 'blur(12px)',
-  WebkitBackdropFilter: 'blur(12px)',
-  boxShadow:
-    'inset 0 1px 0 rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.22), 0 4px 14px rgba(50, 120, 255, 0.4)',
+  background: PANEL,
+  border: `1px solid ${CONTROL}`,
+  boxShadow: '0 2px 10px rgba(0, 0, 0, 0.4)',
 }
 
-// Disabled (unpaired) state for setting cards: dimmed and visually inert
+// Disabled (unpaired) state for setting rows: dimmed and visually inert
 export const CARD_DISABLED = {
   opacity: '0.5',
   pointerEvents: 'none',
 }
 
-// Setting rows with a toggle switch (inside the setup card)
+// Setting rows: Tesla layout — toggle on the left, label + helper on the right
 export const SETTING_ROW = {
   display: 'flex',
   flexDirection: 'row',
-  alignItems: 'center',
-  gap: '16px',
+  alignItems: 'flex-start',
+  gap: '14px',
 }
 
 export const SETTING_ROW_DIVIDER = {
-  borderTop: '1px solid rgba(255, 255, 255, 0.12)',
+  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
   paddingTop: '14px',
   marginTop: '2px',
 }
@@ -212,17 +220,18 @@ export const SETTING_TEXTS = {
 }
 
 export const SETTING_TITLE = {
-  fontWeight: 'bold',
+  fontWeight: '500',
   fontSize: '15px',
-  color: 'white',
+  color: TEXT,
 }
 
 export const SETTING_DESC = {
   fontSize: '13px',
-  color: 'rgba(255,255,255,0.75)',
+  color: TEXT_DIM,
   lineHeight: '1.5',
 }
 
+// Tesla-style toggle: gray pill → blue when on, flat white knob
 export const SWITCH_TRACK = {
   position: 'relative',
   width: '46px',
@@ -230,22 +239,18 @@ export const SWITCH_TRACK = {
   borderRadius: '100vw',
   flexShrink: 0,
   cursor: 'pointer',
-  border: '1px solid rgba(255, 255, 255, 0.25)',
-  background: 'rgba(255, 255, 255, 0.12)',
-  boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.35)',
-  transition: 'background 200ms ease, border-color 200ms ease, box-shadow 200ms ease',
+  background: CONTROL,
+  transition: 'background 200ms ease',
 }
 
 export const SWITCH_TRACK_ON = {
-  border: '1px solid rgba(120, 230, 160, 0.6)',
-  background: 'linear-gradient(135deg, rgba(80, 200, 140, 0.75), rgba(60, 180, 120, 0.45))',
-  boxShadow: '0 0 12px rgba(60, 200, 120, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25)',
+  background: BLUE,
 }
 
 export const SWITCH_KNOB = {
   position: 'absolute',
-  top: '2px',
-  left: '2px',
+  top: '3px',
+  left: '3px',
   width: '21px',
   height: '21px',
   borderRadius: '50%',

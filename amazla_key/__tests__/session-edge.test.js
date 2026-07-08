@@ -65,7 +65,16 @@ describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => 
   })
 
   test('Tier 1: resends exhausted but connects remain → disconnect + flush, reconnect after settle', () => {
-    jest.useFakeTimers()
+    // Manual setTimeout capture instead of jest.useFakeTimers(): under the ESM
+    // vm-modules runner, useRealTimers() fails to restore the global — setTimeout
+    // was left undefined and every later connect() in this suite crashed with
+    // "setTimeout is not defined". Same pattern as second-response-timeout.test.js.
+    const origSetTimeout = global.setTimeout
+    let settleCb = null
+    global.setTimeout = (fn, _ms) => {
+      settleCb = fn
+      return 0
+    }
     try {
       teslaBLE.isConnected = () => true
       teslaBLE.disconnect = jest.fn()
@@ -85,11 +94,12 @@ describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => 
       expect(session._ensureConnected).not.toHaveBeenCalled() // deferred past settle
       expect(cbResult).toBe('NOT_CALLED')
 
-      jest.advanceTimersByTime(600)
+      expect(settleCb).not.toBeNull() // the settle timer was armed
+      settleCb() // fire it
       expect(session._ensureConnected).toHaveBeenCalledTimes(1)
       expect(session._ensureConnected).toHaveBeenCalledWith(cb)
     } finally {
-      jest.useRealTimers()
+      global.setTimeout = origSetTimeout
     }
   })
 

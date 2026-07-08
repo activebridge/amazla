@@ -586,12 +586,17 @@ class TeslaBLE {
     if (!this.responseCallback && !this.idleCallback && this._waiters.length === 0) return
     if (this._rxBuf === null) {
       const now = Date.now()
-      // Dedup guard for genuinely repeated indications. chunk[0]/chunk[1] are just
-      // the frame-length prefix, so sampling only those collides for any two distinct
-      // messages of equal length (e.g. a command response followed by a same-length
-      // status push). Sample payload bytes (first two after the prefix + last byte) too.
-      const last = chunk[chunk.length - 1] || 0
-      const sig = `${chunk.length}_${chunk[2] || 0}_${chunk[3] || 0}_${last}`
+      // Dedup guard for genuinely repeated indications. Hash the WHOLE chunk
+      // (FNV-1a): sampling a few bytes collides for distinct same-length frames
+      // that differ only in the middle — e.g. the wake prod's ack vs the command's
+      // ack, identical except for the echoed routing address. That collision
+      // silently ate the command's terminal ack.
+      let h = 0x811c9dc5
+      for (let i = 0; i < chunk.length; i++) {
+        h ^= chunk[i]
+        h = (h * 0x01000193) >>> 0
+      }
+      const sig = `${chunk.length}_${h}`
       if (sig === this._lastResponseData && now - this._lastResponseTime < 200) {
         return // duplicate first chunk
       }

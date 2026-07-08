@@ -12,20 +12,27 @@ import teslaBLE from '../../lib/tesla-ble/ble.js'
 import { computeTeslaBLEName } from '../../lib/tesla-ble/ble-name.js'
 import { bleHarness, _fsStore } from '../../__mocks__/zos.js'
 import { CarSimulator } from './car-simulator.js'
-import bleCrypto, { bytesToBinaryString, binaryStringToBytes } from '../../app-side/ble-crypto.js'
+import { bytesToBinaryString, binaryStringToBytes } from '../../app-side/ble-crypto.js'
 import Phone from '../../lib/phone.js'
 
 // Stub Phone.computeSharedSecret: the phone derives the ECDH shared secret from
 // its private key + the SessionInfo vehicle pubkey. The watch never holds the
-// private key, so the fixture stashes it phone-side (_phonePrivateKey) and we run
-// the real bleCrypto.computeSharedSecret against it — session.js gets a genuine
-// secret (→ real sessionKey) without a working messageBuilder. Tests that want to
-// simulate phone unavailability override this per-case.
+// private key, so the fixture stashes it phone-side (_phonePrivateKey) — session.js
+// gets a genuine secret (→ real sessionKey) without a working messageBuilder.
+// Node's native ECDH, NOT bleCrypto.computeSharedSecret: the production BigInt
+// implementation costs seconds per call (affine double-and-add) and dominated the
+// test-run time. Identical output (32-byte X); bleCrypto's math is covered by
+// ble-crypto.test.js. Tests that simulate phone unavailability override per-case.
 let _phonePrivateKey = null
 Phone.prototype.computeSharedSecret = function (vehiclePubBytes) {
-  const r = bleCrypto.computeSharedSecret(_phonePrivateKey, bytesToBinaryString(vehiclePubBytes))
-  if (!r.success) return Promise.reject(new Error(r.error))
-  return Promise.resolve(binaryStringToBytes(r.secret))
+  try {
+    const ecdh = createECDH('prime256v1')
+    ecdh.setPrivateKey(Buffer.from(binaryStringToBytes(_phonePrivateKey)))
+    const secret = ecdh.computeSecret(Buffer.from(vehiclePubBytes))
+    return Promise.resolve(new Uint8Array(secret))
+  } catch (e) {
+    return Promise.reject(e)
+  }
 }
 
 /** Wrap a callback-style function as a Promise */
