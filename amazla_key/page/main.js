@@ -30,11 +30,17 @@ import tesla from '../lib/tesla.js'
 let phone = null
 let status = null
 let navigate = null
+// Unlicensed = KiezelPay reports no license. It's a terminal render state (no BLE,
+// no controls) rather than a connection state, so it's tracked separately and wins
+// in statusKey below — see build().
+let unlicensed = false
 
 // Map the live BLE connection state (tesla.js: checking → online → offline/error)
 // to a status-component key. Driven by tesla.onChange(render), so every real
 // connection transition — scan, session-established, drop — repaints the label.
+// Unlicensed wins: we never connect while unlicensed, so it's not a connection state.
 const statusKey = () => {
+  if (unlicensed) return 'unlicensed'
   if (tesla.connection.status === 'online') return 'online'
   if (tesla.connection.status === 'checking') return 'checking'
   return tesla.connection.error ? 'failed' : 'offline'
@@ -66,6 +72,26 @@ const render = () => {
     radius: 10,
     click_func: confirmReset,
   })
+
+  // Unlicensed: cached car + the "Unlicensed" status + a Purchase button (KiezelPay
+  // has no trial). No spinner, no car controls, no BLE. The purchase dialog opens
+  // ONLY on this button tap — never auto-opened — so the secondary widget never pops
+  // the payment page from the watchface, and an unlicensed user can't operate the car.
+  if (unlicensed) {
+    button({
+      centered: true,
+      w: 200,
+      h: 72,
+      text: getText('purchase_btn'),
+      text_size: 22,
+      color: 0xffffff,
+      normal_color: 0x0a5c2a,
+      press_color: 0x0d7a37,
+      radius: 12,
+      click_func: startPurchase,
+    })
+    return
+  }
 
   // Not online: while CONNECTING show the dim veil + spinner over the cached car;
   // otherwise (offline/failed) just the cached car under the status arc. No buttons.
@@ -204,13 +230,22 @@ export function build(host) {
     return
   }
 
-  // Kezel/KPAY: no time-based trial, so start the purchase ourselves whenever the
-  // app isn't licensed yet. Kezel shows its own dialog page — no redirect, the user
-  // stays in the app. Fires on every open until the purchase completes.
-  if (!isLicensed()) startPurchase()
+  unlicensed = !isLicensed()
+  status = Status(statusKey())
+
+  // Kezel/KPAY has no time-based trial. Treat unlicensed as a terminal render state:
+  // paint the cached car under an "Unlicensed" label + a Purchase button, and STOP —
+  // no BLE, no car controls. Purchase starts only when the user taps that button
+  // (see render()), so nothing auto-opens the payment page: the widget won't pop it
+  // from the watchface, and an unlicensed user can't operate the car from it.
+  if (unlicensed) {
+    render()
+    safe('setStatusBarVisible', () => hmUI.setStatusBarVisible(false))
+    safe('keepScreenOn', () => keepScreenOn(true))
+    return
+  }
 
   phone = new Phone()
-  status = Status(statusKey())
 
   tesla.onChange(render)
 

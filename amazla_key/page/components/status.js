@@ -21,6 +21,7 @@ const COLORS = {
   online: 0x00ef33,
   offline: 0xff6666,
   failed: 0xff6666,
+  unlicensed: 0xff9900,
 }
 
 const labelFor = (key) => {
