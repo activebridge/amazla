@@ -110,41 +110,6 @@ describe('syncSettings()', () => {
   })
 })
 
-// ─── syncKeys ─────────────────────────────────────────────────────────────────
-
-describe('syncKeys()', () => {
-  test('writes store.watchPublicKey and returns publicKeyBinary in cb', async () => {
-    const keyBinary = fakeBinary(65)
-    const page = makeMb({ BLE_SYNC_KEYS: { success: true, publicKeyBinary: keyBinary } })
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.syncKeys(resolve))
-
-    expect(result.success).toBe(true)
-    // watchPublicKey is stored as binary string and read back as Uint8Array
-    expect(store.watchPublicKey).toBeInstanceOf(Uint8Array)
-    expect(store.watchPublicKey.length).toBe(65)
-  })
-
-  test('calls cb with success:false on failure response', async () => {
-    const page = makeMb({ BLE_SYNC_KEYS: { success: false, error: 'keygen failed' } })
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.syncKeys(resolve))
-
-    expect(result.success).toBe(false)
-    expect(result.error).toBe('keygen failed')
-  })
-
-  test('calls cb with success:false on rejection', async () => {
-    const page = { request: jest.fn(() => Promise.reject(new Error('crash'))) }
-    const phone = new Phone(page)
-
-    const result = await new Promise(resolve => phone.syncKeys(resolve))
-    expect(result.success).toBe(false)
-  })
-})
-
 // ─── pairSetup ────────────────────────────────────────────────────────────────
 
 describe('pairSetup()', () => {

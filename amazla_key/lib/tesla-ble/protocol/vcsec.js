@@ -57,7 +57,6 @@ const AUTH_LEVEL_UNLOCK = 1
 // AuthenticationReason_E values the vehicle puts in AuthenticationRequest.reasonsForAuth.
 // 1=IDENTIFICATION is the idle ~1Hz beacon; 5/9 mean the driver acted (respond to those).
 const AUTH_REASON_EXTERIOR_HANDLE_PULL = 5
-const AUTH_REASON_WALK_UP_UNLOCK = 9
 // AuthenticationResponse { authenticationLevel(1), estimatedDistance(2 uint32), authenticationRejection(3) }
 // The key's passive-entry reply. Wrapped as UnsignedMessage.authenticationResponse (field 3)
 // and signed on the session exactly like an RKE action — no extra crypto, no token echo.
@@ -525,7 +524,6 @@ export {
   parseAuthenticationRequest,
   AUTH_LEVEL_UNLOCK,
   AUTH_REASON_EXTERIOR_HANDLE_PULL,
-  AUTH_REASON_WALK_UP_UNLOCK,
   APP_OS_ANDROID,
   UWB_UNSUPPORTED,
   buildInformationRequest,

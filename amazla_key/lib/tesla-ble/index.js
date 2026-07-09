@@ -29,10 +29,6 @@ const BLE = {
   disconnect() {
     teslaBLE.disconnect()
   },
-  clear() {
-    teslaBLE.disconnect()
-    store.reset()
-  },
   reset() {
     teslaBLE.reset()
   },

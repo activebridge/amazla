@@ -1,17 +1,16 @@
+import { push } from '@zos/router'
+import { build, destroy } from './../page/main.js'
+
+// Secondary widget: runs the SAME main-app controller as page/index.js (page/
+// main.js), so the widget is the full app experience — live connect, status,
+// lock/unlock/frunk/trunk — not a static snapshot. The only host difference is
+// navigation: the widget PUSHES the pairing page (opening the app), where the
+// page replaces.
 SecondaryWidget({
   build() {
-    const vehicle = {}
-    const text = hmUI.createWidget(hmUI.widget.TEXT, {
-      x: 96,
-      y: 120,
-      w: 288,
-      h: 46,
-      color: 0xffffff,
-      text_size: 36,
-      align_h: hmUI.align.CENTER_H,
-      align_v: hmUI.align.CENTER_V,
-      text_style: hmUI.text_style.NONE,
-      text: `Comming Soon ${vehicle.name}`
-    })
-  }
+    build({ navigate: (url) => push({ url }) })
+  },
+  onDestroy() {
+    destroy()
+  },
 })

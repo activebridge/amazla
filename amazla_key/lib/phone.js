@@ -69,28 +69,11 @@ class Phone {
     })
   }
 
-  // Generate or fetch the enrolled watch key. Writes store.watchPublicKey only —
-  // the private key stays on the phone, which does the ECDH (no BigInt on watch).
-  // cb: { success, publicKeyBinary }
-  syncKeys(cb) {
-    this._call('BLE_SYNC_KEYS', {}, cb, (r) => {
-      store.watchPublicKey = r.publicKeyBinary
-    })
-  }
-
   // Sync/generate watch key and pre-build both BLE messages in one IPC call.
   // Writes store.watchPublicKey only. cb: { success, pairMsg, verifyMsg }
   pairSetup(cb) {
     this._call('BLE_PAIR_SETUP', {}, cb, (r) => {
-      const _hex = (s) => {
-        if (s == null) return '<null>'
-        let h = ''
-        for (let i = 0; i < s.length; i++) h += (s.charCodeAt(i) & 0xff).toString(16).padStart(2, '0')
-        return h
-      }
-      console.log(
-        `[Watch.diag] r.watchPublicKey:  len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length} hex=${_hex(r.watchPublicKey)}`,
-      )
+      console.log(`[Watch.diag] watchPublicKey len=${r.watchPublicKey == null ? 'null' : r.watchPublicKey.length}`)
       store.watchPublicKey = r.watchPublicKey
       return { pairMsg: r.pairMsg, verifyMsg: r.verifyMsg }
     })

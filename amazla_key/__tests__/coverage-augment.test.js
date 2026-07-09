@@ -26,7 +26,7 @@ describe('coverage augment tests', () => {
     expect(typeof q.message).toBe('string')
   })
 
-  test('lib/tesla-ble/index BLE wrapper stores mac on connect and clears', (done) => {
+  test('lib/tesla-ble/index BLE wrapper stores mac on connect', (done) => {
     // mock teslaBLE backend with minimal API
     const mock = {
       connect: (mac, cb) => cb({ success: true }),
@@ -45,8 +45,6 @@ describe('coverage augment tests', () => {
     BLEModule.connect('AA:BB:CC:DD:EE:FF', (result) => {
       expect(result.success).toBe(true)
       expect(store.vehicleMac).toBe('AA:BB:CC:DD:EE:FF')
-      BLEModule.clear()
-      expect(store.vehicleMac).toBeNull()
       done()
     })
   })

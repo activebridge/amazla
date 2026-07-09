@@ -11,7 +11,6 @@ import {
   buildInformationRequest,
   buildRoutableMessage,
   buildSessionInfoHmacInput,
-  CLOSURE_CHARGE_PORT,
   CLOSURE_FRUNK,
   CLOSURE_MOVE_OPEN,
   CLOSURE_REAR_TRUNK,
@@ -944,15 +943,6 @@ class TeslaSession {
   frunk(callback) {
     this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_FRUNK, CLOSURE_MOVE_OPEN) }, callback)
   }
-  chargePort(callback) {
-    // EXPERIMENTAL / unverified on device. The Tesla Go SDK opens the charge port via
-    // the infotainment domain (carserver VehicleAction_ChargePortDoorOpen, AES-GCM), NOT
-    // VCSEC — its executeClosureAction only moves Trunk/Frunk/Tonneau. The chargePort
-    // field exists in the VCSEC ClosureMoveRequest proto, so this may work on some
-    // firmware; if the car ignores it, charge port belongs with the infotainment work.
-    this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_CHARGE_PORT, CLOSURE_MOVE_OPEN) }, callback)
-  }
-
   // ── Infotainment domain (AES-GCM) — EXPERIMENTAL, for first car capture ──────
   // Heavily logged, NOT integrated with the command watchdog/slot machinery. Sends
   // a SessionInfo request to DOMAIN_INFOTAINMENT to get its epoch/counter/clock,

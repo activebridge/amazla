@@ -665,9 +665,6 @@ class TeslaBLE {
   isConnected() {
     return this.connected
   }
-  getMAC() {
-    return this.mac
-  }
 }
 const teslaBLE = new TeslaBLE()
 export default teslaBLE
