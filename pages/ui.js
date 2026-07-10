@@ -12,13 +12,14 @@ import * as hmUI from '@zos/ui'
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
 
-// app-widget size APIs routed through the global so v1-API builds can reach the
-// v2 APIs without importing @zos/* (which the v1 runtime can't load).
-// export const getAppWidgetSize = () => {
-//   const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
-//   return sz || { w: width, margin: 0 }
-// }
-// export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
+// app-widget slot geometry (API_LEVEL 3.0). Guarded so runtimes without the
+// APIs fall back to full width. Used by authenticator/app-widget and
+// amazla_key/app-widget.
+export const getAppWidgetSize = () => {
+  const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
+  return sz || { w: width, margin: 0 }
+}
+export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
 
 export const push = (o) => {
   if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o)

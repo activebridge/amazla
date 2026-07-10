@@ -29,16 +29,41 @@ export const tesla = {
   },
   startCharge: (cb) => cb && cb({ success: true }),
   stopCharge: (cb) => cb && cb({ success: true }),
-  connection: { status: 'online', error: null },
+  // Starts 'checking' and flips to 'online' ~2.5s after connect(), so the
+  // Connecting… state is visible in the SIM (widget status line, page spinner).
+  connection: { status: 'checking', error: null },
   isPaired: true,
-  onChange: noop,
-  offChange: noop,
+  _listeners: [],
+  onChange(fn) {
+    this._listeners.push(fn)
+  },
+  offChange(fn) {
+    this._listeners = this._listeners.filter((l) => l !== fn)
+  },
+  _notify() {
+    this._listeners.forEach((fn) => fn())
+  },
   onPassiveEvent: noop,
-  connect: noop,
+  connect() {
+    this.connection.status = 'checking'
+    this._notify()
+    setTimeout(() => {
+      this.connection.status = 'online'
+      this._notify()
+    }, 2500)
+  },
   shutdown: noop,
   reset: noop,
-  lock: (cb) => cb && cb({ success: true }),
-  unlock: (cb) => cb && cb({ success: true }),
+  lock(cb) {
+    this.locked = true
+    this._notify()
+    cb && cb({ success: true })
+  },
+  unlock(cb) {
+    this.locked = false
+    this._notify()
+    cb && cb({ success: true })
+  },
   trunk: (cb) => cb && cb({ success: true }),
   frunk: (cb) => cb && cb({ success: true }),
   chargePort: (cb) => cb && cb({ success: true }),

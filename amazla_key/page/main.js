@@ -31,6 +31,7 @@ import tesla from '../lib/tesla.js'
 let phone = null
 let status = null
 let navigate = null
+let syncListener = null
 // Unlicensed = KiezelPay reports no license. It's a terminal render state (no BLE,
 // no controls) rather than a connection state, so it's tracked separately and wins
 // in statusKey below — see build().
@@ -248,12 +249,15 @@ export function build(host) {
   // single BLE radio with the car connection. We only reach here when PAIRED (unpaired
   // was redirected above), and connect() does a real BLE scan/GATT/session — so defer
   // the sync until that settles (first non-'checking' onChange) to avoid radio contention.
+  // Tracked so destroy() can remove it — the secondary widget rebuilds per visit
+  // (build/destroy cycle), and an untracked listener would accumulate.
   let synced = false
-  tesla.onChange(() => {
+  syncListener = () => {
     if (synced || tesla.connection.status === 'checking') return
     synced = true
     phone.syncSettings()
-  })
+  }
+  tesla.onChange(syncListener)
   tesla.connect()
 
   safe('onKey', () =>
@@ -274,6 +278,10 @@ export function build(host) {
 
 export function destroy() {
   tesla.offChange(render)
+  if (syncListener) {
+    tesla.offChange(syncListener)
+    syncListener = null
+  }
   safe('keepScreenOn', () => keepScreenOn(false))
   // Auto-lock (if still connected to an unlocked, empty car) then free the native
   // BLE/session state so the next launch isn't poisoned. tesla owns that teardown —

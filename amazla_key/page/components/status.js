@@ -16,8 +16,10 @@ import { getText } from '@zos/i18n'
 // Semantic connection states → color. The label is localized via getText under
 // the `status_<key>` msgid (see page/i18n). An unknown key falls back to its raw
 // string in grey, so update('Pairing…') still shows something sane.
+// Tesla semantic palette: green = success, red = failure, orange/yellow =
+// warning, blue = in-progress, white = init.
 const COLORS = {
-  checking: 0xffcc66,
+  checking: 0x3e6ae1,
   online: 0x00ef33,
   offline: 0xff6666,
   failed: 0xff6666,
