@@ -2,11 +2,12 @@ import { Connecting } from './components/connecting.js'
 import Status from './components/status.js'
 import { setPageBrightTime, setWakeUpRelaunch } from '@zos/display'
 import { getText } from '@zos/i18n'
-import { KEY_EVENT_CLICK, KEY_SELECT, MODAL_CONFIRM, createModal, onKey } from '@zos/interaction'
+import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
-import UI, { button, height } from '../../pages/ui'
+import UI, { button, height, img } from '../../pages/ui'
 import { CarImages } from './components/carImages.js'
+import { ResetButton } from './components/reset.js'
 import { safe } from '../shared/safe.js'
 import { keepScreenOn, vibro } from '../../zeppify/index.js'
 
@@ -46,6 +47,17 @@ const statusKey = () => {
   return tesla.connection.error ? 'failed' : 'offline'
 }
 
+// Styled text button matching the pairing flow's red pill (buttons/btn-red.png
+// background + a transparent BUTTON carrying the shared 'press' tap overlay and the
+// label), so Reset/Purchase read like the rest of the app instead of ad-hoc colored
+// rects. y is a center-relative offset (see pages/ui.js center()).
+const PILL_W = 220
+const PILL_H = 72
+const pillButton = ({ text, y, onClick }) => {
+  img({ src: 'buttons/btn-red.png', y, w: PILL_W, h: PILL_H })
+  button({ y, w: PILL_W, h: PILL_H, text, text_size: 28, color: 0xffffff, src: 'press', radius: 0, click_func: onClick })
+}
+
 const render = () => {
   UI.reset()
   // Single screen — no groups, no scroll. Status arc first so it's the bottom of the
@@ -57,39 +69,16 @@ const render = () => {
 
   // Reset/unpair — one full screen-height down (y: height centers it on the next page),
   // so it's out of the way but reachable by scrolling. Shown in every state (added
-  // before the offline early-return) so the watch can always be unpaired.
-  button({
-    centered: true,
-    x: 0,
-    y: height,
-    w: 260,
-    h: 64,
-    text: getText('reset_btn'),
-    text_size: 18,
-    color: 0xff6666,
-    normal_color: 0x330000,
-    press_color: 0x440000,
-    radius: 10,
-    click_func: confirmReset,
-  })
+  // before the offline early-return) so the watch can always be unpaired. The button +
+  // confirm modal live in components/reset.js; doReset() performs the actual wipe.
+  ResetButton({ y: height, onReset: doReset })
 
   // Unlicensed: cached car + the "Unlicensed" status + a Purchase button (KiezelPay
   // has no trial). No spinner, no car controls, no BLE. The purchase dialog opens
   // ONLY on this button tap — never auto-opened — so the secondary widget never pops
   // the payment page from the watchface, and an unlicensed user can't operate the car.
   if (unlicensed) {
-    button({
-      centered: true,
-      w: 200,
-      h: 72,
-      text: getText('purchase_btn'),
-      text_size: 22,
-      color: 0xffffff,
-      normal_color: 0x0a5c2a,
-      press_color: 0x0d7a37,
-      radius: 12,
-      click_func: startPurchase,
-    })
+    pillButton({ text: getText('purchase_btn'), y: 0, onClick: startPurchase })
     return
   }
 
@@ -145,18 +134,6 @@ const doReset = () => {
   } catch (_e) {}
   tesla.reset()
   navigate('page/pairing/index')
-}
-
-// Confirm before wiping — a stray tap shouldn't unpair the car.
-const confirmReset = () => {
-  const dialog = createModal({
-    content: getText('reset_confirm'),
-    autoHide: true,
-    onClick: (keyName) => {
-      if (keyName === MODAL_CONFIRM) doReset()
-    },
-  })
-  dialog.show(true)
 }
 
 const onLock = () => {

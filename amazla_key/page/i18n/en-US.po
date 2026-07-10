@@ -76,5 +76,8 @@ msgstr "Purchase"
 msgid "reset_btn"
 msgstr "Reset"
 
-msgid "reset_confirm"
-msgstr "Reset and unpair this watch? Also remove the key on your Tesla: Locks → remove key."
+msgid "reset_title"
+msgstr "Reset & Unpair"
+
+msgid "reset_subtitle"
+msgstr "Reset this watch and remove it as a key? Also remove the key in your Tesla: Locks → remove key."
