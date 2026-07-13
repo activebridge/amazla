@@ -173,10 +173,12 @@ AppWidget({
     CARD_H = (CARD_W * 0.45) | 0
     setAppWidgetSize({ h: CARD_H })
 
-    // Matte charcoal card like the physical Tesla key card: card_bg.png bakes the
-    // whole look — diagonal gradient, soft sheen, hairline scratches, grain, edge
-    // highlight, rounded corners (480×216, generated; regenerate with ImageMagick
-    // if the size ratio changes).
+    // Matte charcoal key card: card_bg.png is a wide 480×1 HORIZONTAL gradient strip
+    // (subtle left→right shade). The widget DOWNSCALES the 480-wide gradient axis to the
+    // card width (smooth averaging → no bands) and stretches the flat vertical axis
+    // harmlessly. Every gray level kept in the palette (no octree collapse — that was the
+    // banding cause). Tiny (~0.3KB), low decode RAM. Opaque, sharp corners (a 1D strip
+    // can't carry rounded/transparent corners). Regenerate via the PIL script in git history.
     img({ src: 'card_bg.png', x: margin, y: 0, w: CARD_W, h: CARD_H, centered: false })
 
     // Silver TESLA wordmark (assets/*/tesla_logo.png, 600×79) — centered, upper
