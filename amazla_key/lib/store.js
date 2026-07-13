@@ -90,26 +90,6 @@ const store = {
     // File is the single source of truth — drop any stale LocalStorage copy.
     localStorage.removeItem('vehicleEcPublicKey')
   },
-  // Infotainment (domain 3) runs on a different ECU with its OWN EC key pair —
-  // its SessionInfo pubkey is not the VCSEC one, so it needs its own ECDH-derived
-  // 16-byte key (sha1(watchPriv × infotainmentPub)[:16]). Cached like sessionKey:
-  // derived once via the phone, then reused; invalidated when the stored pubkey
-  // stops matching the live d3 SessionInfo pubkey.
-  get infotainmentSessionKey() {
-    return readBinary('inf_session_key')
-  },
-  set infotainmentSessionKey(value) {
-    if (typeof value === 'string') value = binaryStringToBytes(value)
-    if (value) writeBinary('inf_session_key', value)
-    else this.removeBinary('inf_session_key')
-  },
-  get infotainmentEcPublicKey() {
-    return readBinary('inf_ec_public_key')
-  },
-  set infotainmentEcPublicKey(value) {
-    if (value) writeBinary('inf_ec_public_key', value)
-    else this.removeBinary('inf_ec_public_key')
-  },
   get vehicleMac() {
     return localStorage.getItem('vehicleMac')
   },
@@ -222,6 +202,7 @@ const store = {
     this.removeBinary('watch_private_key')
     this.removeBinary('vehicle_ec_public_key')
     this.removeBinary('session_key')
+    // Legacy: infotainment (domain-3) key cache from builds that had charge support.
     this.removeBinary('inf_ec_public_key')
     this.removeBinary('inf_session_key')
   },

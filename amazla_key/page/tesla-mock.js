@@ -15,20 +15,6 @@ export const tesla = {
   chargePortOpen: false,
   sleeping: false,
   userPresent: false,
-  charge: { level: 72, range: 210, limit: 80, minsToFull: 135, state: 'Charging', ts: Math.floor(Date.now() / 1000) },
-  get primaryState() {
-    if (this.sleeping) return 'asleep'
-    const s = this.charge && this.charge.state
-    if (s === 'Charging' || s === 'Starting') return 'charging'
-    if (s === 'Complete') return 'charged'
-    return 'parked'
-  },
-  get pluggedIn() {
-    const s = this.charge && this.charge.state
-    return !!s && s !== 'Disconnected' && s !== 'Unknown'
-  },
-  startCharge: (cb) => cb && cb({ success: true }),
-  stopCharge: (cb) => cb && cb({ success: true }),
   // Starts 'checking' and flips to 'online' ~2.5s after connect(), so the
   // Connecting… state is visible in the SIM (widget status line, page spinner).
   connection: { status: 'checking', error: null },
@@ -66,8 +52,6 @@ export const tesla = {
   },
   trunk: (cb) => cb && cb({ success: true }),
   frunk: (cb) => cb && cb({ success: true }),
-  chargePort: (cb) => cb && cb({ success: true }),
-  fetchChargeState: (cb) => cb && cb({ success: true }),
 }
 
 export function Phone() {

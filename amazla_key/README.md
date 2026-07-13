@@ -6,11 +6,12 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 
 - **BLE Direct Control** - Bluetooth control without internet, fully standalone
 - **Lock / Unlock / Trunk / Frunk** - HMAC-signed RKE commands (VCSEC, domain 2)
-- **Charge Port / Charge Status** - infotainment-domain (AES-128-GCM) commands and data reads (domain 3)
 - **Passive Entry & Keyless Drive** - walk up → unlock → drive → walk away → auto-lock, with no command, while the app is open + connected
 - **Drive (Remote Start)** - `RKE_ACTION_REMOTE_DRIVE`; explicit command-path fallback to passive keyless drive
 - **Vehicle Status** - door/closure states, lock state, sleep status; a dozing car is woken (`RKE_ACTION_WAKE_VEHICLE`) when it won't answer
-- **Offline session** - session keys (derived via phone ECDH, one per domain) are cached on the watch; session establishment needs no phone after pairing
+- **Offline session** - the VCSEC session key (derived via phone ECDH) is cached on the watch; session establishment needs no phone after pairing
+
+> **Note:** Charge Port / Charge Status (infotainment domain 3, AES-128-GCM) was implemented and device-validated, then **removed from the current build** to reduce the watch's memory footprint (first-launch OOM). It is planned to return in a future release — the full domain-3 AES-GCM implementation and its protocol write-up live in git history.
 
 ## Architecture Overview
 
@@ -419,125 +420,19 @@ Lock/Unlock. The car shows a cosmetic **"keyless driving enabled"** banner (inhe
 an explicit, time-boxed grant); passive keyless drive above produces **no** banner, so Remote Drive is
 a fallback rather than the primary path.
 
-## Infotainment Domain (AES-GCM)
+## Infotainment Domain (AES-GCM) — removed, planned to return
 
-The charge port opens from the watch over `DOMAIN_INFOTAINMENT = 3`, including standalone (cached d3
-key, no phone). VCSEC (lock/unlock/status) signs plaintext protobuf with HMAC. The infotainment domain carries
-`CarServer.Action` protobufs **encrypted with AES-128-GCM** — same BLE transport, same
-`RoutableMessage` envelope, different domain, different crypto:
+Charge Port and Charge Status ran over `DOMAIN_INFOTAINMENT = 3` — `CarServer.Action` protobufs
+encrypted with **AES-128-GCM** (vs VCSEC's plaintext-protobuf-with-HMAC on domain 2), each domain
+keyed by its own ECU EC key pair. It was implemented and device-validated (charge port opened from
+the watch standalone), then **removed from the current build to reduce the watch's memory footprint**
+(the domain-3 crypto + carserver protos pushed first launch over the QuickJS heap ceiling → OOM).
 
-| Aspect | VCSEC (domain 2) | Infotainment (domain 3) |
-|---|---|---|
-| Payload | plaintext `vcsec.UnsignedMessage` | AES-128-GCM **ciphertext** of `carserver.Action` |
-| Auth | HMAC-SHA256 tag, subkey `HMAC(key, "authenticated command")` | GCM auth tag; the session key is used **directly** (no subkey) |
-| AAD / metadata | TLV prepended into the HMAC input | `SHA256(metadata TLV ‖ 0xFF)` as the GCM AAD |
-| Session key | `sha1(ECDH(watchPriv, VCSEC pubkey))[:16]` | `sha1(ECDH(watchPriv, **d3 pubkey**))[:16]` — see below |
-| Signature type | `HMAC_PERSONALIZED = 8` | `AES_GCM_PERSONALIZED = 5` (SignatureData field 5: epoch, 12-B nonce, counter, expires_at fixed32, 16-B tag) |
-
-### The key discovery: each domain has its own EC key pair
-
-The original plan assumed both domains share one session key (same ECDH secret, different
-algorithms). **Wrong — and the car said so with `MESSAGEFAULT_ERROR_INVALID_SIGNATURE` (fault 5).**
-Domain 3 runs on a different ECU with its **own** P-256 key pair: its `SessionInfo` returns a
-different `publicKey` than VCSEC's, so the GCM key must be derived against *that* point. The Go
-SDK does exactly this (one `NewSession` per domain off that domain's `SessionInfo.publicKey`);
-the "shared key" reading conflated shared *derivation* with shared *peer key*.
-
-Key resolution, in order:
-
-1. d3 pubkey == VCSEC pubkey → reuse the VCSEC session key (same ECDH);
-2. cached d3 key whose stored pubkey matches → use it (**standalone fast path**, no phone);
-3. otherwise → phone ECDH (`BLE_COMPUTE_SHARED_SECRET` with the d3 pubkey), `sha1(secret)[:16]`.
-
-The resolved key is **verified against the d3 SessionInfo HMAC tag before signing anything** — a
-wrong key fails locally and explicitly instead of as the car's opaque fault 5 — and is cached
-only after that verification passes. Like the VCSEC key, first derivation needs the phone once;
-every later use is standalone.
-
-### Command flow (charge port)
-
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                       INFOTAINMENT COMMAND FLOW (domain 3)                    │
-│                 (VCSEC session already established & verified)                │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│      Watch                                              Tesla                │
-│        │                                                  │                  │
-│        │ ── SessionInfoRequest { toDomain: 3 } ─────────► │                  │
-│        │    (enrolled watch pubkey, fresh routing addr)   │                  │
-│        │                                                  │                  │
-│        │ ◄─ SessionInfo(d3) ────────────────────────────  │  addressed       │
-│        │    { d3 publicKey, epoch, counter, clock_time }  │  to our          │
-│        │    + HMAC tag                                    │  routing addr    │
-│        │                                                  │                  │
-│   ┌────┴──────────────────────────────────┐               │                  │
-│   │ Resolve d3 key (VCSEC / cached / phone│               │                  │
-│   │ ECDH) → VERIFY SessionInfo tag with it│               │                  │
-│   │                                       │               │                  │
-│   │ plaintext = carserver.Action{         │               │                  │
-│   │   vehicleAction.chargePortDoorOpen{} }│               │                  │
-│   │ aad   = SHA256(metadata TLV ‖ 0xFF)   │               │                  │
-│   │ nonce = 8B random ‖ counter (BE)      │               │                  │
-│   │ ct,tag= AES-128-GCM(key,nonce,pt,aad) │               │                  │
-│   └────┬──────────────────────────────────┘               │                  │
-│        │                                                  │                  │
-│        │ ── RoutableMessage{ to:3, payload: ct,           │                  │
-│        │      SignatureData.AES_GCM_Personalized{         │                  │
-│        │        epoch, nonce, counter,                    │                  │
-│        │        expires_at, tag } } ───────────────────►  │                  │
-│        │                                                  │                  │
-│        │ ◄─ addressed reply (fields 6,7,10,50,51;         │  port            │
-│        │    NO signedMessageStatus fault) ──────────────  │  actuates        │
-│        ▼                                                  ▼                  │
-│   Charge port open. (fault 5 = wrong key; fault 17 = clock expired)          │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-Unsolicited VCSEC traffic (auth beacons, `AppDeviceInfoRequest`) keeps streaming on the same
-characteristic during all of this; both d3 waits filter by **our routing address** and requeue
-everything else. The 12-byte GCM nonce is 8 random-ish bytes ‖ the strictly-increasing 4-byte
-counter (ZeppOS has no CSPRNG, so the counter half guarantees uniqueness); TX frames are serialized
-(interleaved 20-byte chunk streams would corrupt both frames).
-
-### Reading data: Charge Status (battery %)
-
-`GetVehicleData` is **one** request with a getter flag per state group — you don't fetch
-properties individually. Setting `getChargeState` returns the whole `ChargeState` (≈60 fields)
-in one round-trip, on the same encrypted domain-3 path as charge port:
-`Action{ VehicleAction{ getVehicleData{ getChargeState{} } } }`.
-
-**Data reads require an encrypted response — actuations don't.** A data read *without*
-`FLAG_ENCRYPT_RESPONSE` is rejected with `MESSAGEFAULT_ERROR_REQUIRES_RESPONSE_ENCRYPTION` (fault 28). An *actuation* reply (charge port)
-is a plaintext ack (`0a00` = `Response.actionStatus{} = OK`); a *data* reply is AES-GCM encrypted.
-So `getChargeState` sets `flags = FLAG_ENCRYPT_RESPONSE` (RoutableMessage field 52) and **decrypts**
-the reply with the same GCM primitive used for the request. Once decrypted it's just protobuf walking:
-
-```
-RoutableMessage field 10  (plaintext)
-  └─ carserver Response { actionStatus(1), vehicleData(2) }
-       └─ VehicleData.charge_state(3)
-            └─ ChargeState { charging_state(1), battery_range(111, float32-LE),
-                             battery_level(114, int32) }
-```
-
-**Response decryption** (byte-locked against the Go SDK): the reply
-carries its GCM `{ nonce, counter, tag }` in `SignatureData.AES_GCM_Response_data` (field 13 → 9)
-and the ciphertext in field 10. The decryption AAD is `SHA256` of a metadata TLV
-(`SIGTYPE=9, DOMAIN=3, PERSONALIZATION=VIN, COUNTER, FLAGS, REQUEST_HASH, FAULT`), where
-`REQUEST_HASH` binds the response to our request (`AES_GCM_PERSONALIZED(5) ‖ our request GCM tag`).
-Because we set the flag on the request, the **request** metadata must also include `TAG_FLAGS(7)`
-or the car rejects the request itself. Errors always come back as a plaintext status (field 12),
-so a fault is read before any decrypt is attempted.
-
-`charging_state` (field 1) is a `ChargingState` message wrapping a **oneof of empty `Void`s** —
-the *field number that's present* is the state (1 Unknown, 2 Disconnected, 3 NoPower, 4 Starting,
-5 Charging, 6 Complete, 7 Stopped, 8 Calibrating), so we read which field is set, not a value.
-`battery_range` is `float32` little-endian (protobuf fixed32).
-
-Infotainment data is **pull-only** — the car streams no charge pushes (unlike VCSEC status,
-which is pushed while connected).
+The complete implementation and its full protocol write-up — the domain-3 AES-GCM command flow,
+per-domain key resolution/verification, and the encrypted `getChargeState` data-read path — are
+preserved in git history (`lib/tesla-ble/infotainment.js`, `protocol/carserver.js`,
+`crypto/aes-gcm.js`, and the AES-GCM builders in `protocol/vcsec.js`). Restore from there when the
+memory budget allows.
 
 ## Tesla BLE Command Reference
 
@@ -560,19 +455,6 @@ Trunk and frunk use `UnsignedMessage.closureMoveRequest` (field 3), not `rkeActi
 |---------|-----------|----------|
 | Rear trunk | 5 | 0 (MOVE) |
 | Frunk | 6 | 0 (MOVE) |
-
-### Infotainment Commands (carserver, AES-GCM)
-
-Charge port is **not** a VCSEC closure — per the Tesla SDK it lives in the infotainment domain
-as a `carserver.Action`, encrypted with AES-128-GCM (see
-[Infotainment Domain](#infotainment-domain-aes-gcm) for the full path).
-
-| Action | carserver field |
-|---|---|
-| `VehicleAction.chargePortDoorOpen` | 62 |
-| `VehicleAction.chargePortDoorClose` | 61 |
-| `VehicleAction.hvacAutoAction` | 10 |
-| `VehicleAction.getVehicleData` → `getChargeState` | 1 → 2 — request sets `FLAG_ENCRYPT_RESPONSE`, reply is AES-GCM-decrypted |
 
 ### Passive Entry (AuthenticationResponse / AppDeviceInfo)
 
@@ -673,7 +555,7 @@ Our implementation was cross-referenced against the official [Tesla vehicle-comm
 | Command payload (field 10) | bare `vcsec.UnsignedMessage` | `proto.Marshal(UnsignedMessage)` → `ProtobufMessageAsBytes` (`getReceiver`) | ✅ Match |
 | SessionInfo `clock_time` | parsed as fixed32 LE (wire type 5) | `fixed32 clock_time = 4` | ✅ Match |
 | Command terminal detection | FromVCSECMessage (field 10) present; success when no `commandStatus` | `done := commandStatus == nil` (`executeRKEAction`) | ✅ Match |
-| `RoutableMessage.flags` | unset (`FLAG_USER_COMMAND`) → plaintext responses; `FLAG_ENCRYPT_RESPONSE` set only on d3 data reads | `DefaultFlags = FLAG_ENCRYPT_RESPONSE` | ⚠️ Intentional: VCSEC replies read as plaintext |
+| `RoutableMessage.flags` | unset (`FLAG_USER_COMMAND`) → all VCSEC replies are plaintext | `DefaultFlags = FLAG_ENCRYPT_RESPONSE` | ⚠️ Intentional: VCSEC replies read as plaintext (response encryption was only used by the now-removed d3 data reads) |
 | SessionInfo tag verification | `subKey=HMAC(sessionKey,"session info")`, tag over TLV(sigType=HMAC, VIN, uuid) + encodedInfo | Same | ✅ Match |
 | Outgoing uuid → RoutableMessage field | 51 (`uuid`) — vehicle uses this as SessionInfo HMAC challenge | 51 (`message.Uuid`) per `dispatcher.go` | ✅ Match |
 | CCCD value | `0x0200` (indications) | Subscribe abstracted by Go BLE lib | ✅ Correct |

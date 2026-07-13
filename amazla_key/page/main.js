@@ -5,7 +5,7 @@ import { getText } from '@zos/i18n'
 import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
-import UI, { button, height, img } from '../../pages/ui'
+import UI, { button, height, img, width } from '../../pages/ui'
 import { CarImages } from './components/carImages.js'
 import { ResetButton } from './components/reset.js'
 import { safe } from '../shared/safe.js'
@@ -84,9 +84,15 @@ const render = () => {
   }
 
   // Not online: while CONNECTING show the dim veil + spinner over the cached car;
-  // otherwise (offline/failed) just the cached car under the status arc. No buttons.
+  // otherwise (offline/failed) show the cached car under the status arc and make the
+  // whole screen a tap-to-retry target (same as the app-widget card). Added LAST so
+  // it's on top of the z-stack and receives the tap. src:'retry' → normal buttons/
+  // retry.png is intentionally MISSING (transparent normal, car shows through) and
+  // press buttons/_retry.png is a 480×480 full-screen dim overlay, so the WHOLE screen
+  // flashes on tap — not the tiny centered _press.png (BUTTON draws press at natural size).
   if (tesla.connection.status !== 'online') {
     if (tesla.connection.status === 'checking') Connecting()
+    else button({ y: 0, w: width, h: height, src: 'retry', radius: 0, click_func: onRetry })
     return
   }
 
@@ -97,13 +103,6 @@ const render = () => {
   !tesla.trunkOpen && button({ ...OPEN, y: 150, w: 200, h: 160, click_func: onTrunk })
   tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock })
   !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock })
-}
-
-const _onChargeRefresh = () => {
-  if (tesla.connection.status !== 'online') return
-  tesla.fetchChargeState((r) => {
-    if (!r.success) hmUI.showToast({ text: r.error || 'Charge unavailable' })
-  })
 }
 
 // KPAY / Kezel in-app purchase lives on the app instance (see app.js globalData).
@@ -137,6 +136,13 @@ const doReset = () => {
   navigate('page/pairing/index')
 }
 
+// Offline/failed → tap anywhere to re-attempt the BLE connect (same as the app-widget
+// card). Ignored while already connecting so a tap mid-attempt can't stack dials.
+const onRetry = () => {
+  if (tesla.connection.status === 'checking') return
+  tesla.connect()
+}
+
 const onLock = () => {
   tesla.lock((r) => {
     if (r.success) vibro.medium()
@@ -163,27 +169,6 @@ const onTrunk = () => {
 
 const onFrunk = () => {
   tesla.frunk((r) => {
-    if (r.success) vibro.medium()
-    else hmUI.showToast({ text: r.error || 'Error' })
-  })
-}
-
-const _onChargePort = () => {
-  tesla.chargePort((r) => {
-    if (r.success) vibro.medium()
-    else hmUI.showToast({ text: r.error || 'Error' })
-  })
-}
-
-const _onStartCharge = () => {
-  tesla.startCharge((r) => {
-    if (r.success) vibro.medium()
-    else hmUI.showToast({ text: r.error || 'Error' })
-  })
-}
-
-const _onStopCharge = () => {
-  tesla.stopCharge((r) => {
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })

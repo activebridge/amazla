@@ -23,11 +23,6 @@ import {
   APP_OS_ANDROID,
   UWB_UNSUPPORTED,
   DOMAIN_VEHICLE_SECURITY,
-  DOMAIN_INFOTAINMENT,
-  FLAG_ENCRYPT_RESPONSE,
-  buildAesGcmRequestId,
-  buildAesGcmResponseMetadataInput,
-  parseAesGcmResponseSig,
   generateRoutingAddress,
   generateUUID,
   INFO_REQUEST_GET_STATUS,
@@ -38,15 +33,6 @@ import {
   RKE_ACTION_REMOTE_DRIVE,
   RKE_ACTION_WAKE_VEHICLE,
 } from './protocol/vcsec.js'
-import { buildAesGcmCommand } from './infotainment.js'
-import { gcmDecrypt } from './crypto/aes-gcm.js'
-import {
-  buildChargePortOpenAction,
-  buildChargeStartAction,
-  buildChargeStopAction,
-  buildGetChargeStateAction,
-  parseChargeStateResponse,
-} from './protocol/carserver.js'
 
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
@@ -108,23 +94,6 @@ const STATUS_TIMEOUT_MS = 15000
 // and our "session established but never answered beacons" key did not. The command must
 // KEEP answering beacons while in flight (gate=false in sendCommand), like the phone.
 const PASSIVE_ENTRY_ENABLED = true
-
-// DIAG helpers for the dropped-idle-frame log (see startStatusPushListener): a
-// command reply the car addresses to the wrong slot — or a signed-message FAULT —
-// lands in the idle handler; these render what it actually said.
-const _frameHex = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : 'none')
-const _describeFrame = (r) => {
-  const p = [`to=${r.toRoutingAddress ? _frameHex(r.toRoutingAddress) : 'domain'}`]
-  if (r.requestUuid) p.push(`uuid=${_frameHex(r.requestUuid)}`)
-  if (r.signedMessageStatus) p.push(`msgStatus=${JSON.stringify(r.signedMessageStatus)}`)
-  if (r.commandStatus) p.push(`cmdStatus=${JSON.stringify(r.commandStatus)}`)
-  if (r.payload) p.push(`f10=${_frameHex(r.payload)}`)
-  if (r.sessionInfo) p.push('sessionInfo')
-  if (r.authenticationRequest) p.push(`authReq[${r.authenticationRequest.reasonsForAuth}]`)
-  if (r.appDeviceInfoRequest) p.push('appDeviceInfoReq')
-  if (r.nominalError) p.push(`nominalError=${r.nominalError.genericError}(${r.nominalError.name})`)
-  return p.join(' ')
-}
 
 class TeslaSession {
   constructor() {
@@ -725,7 +694,6 @@ class TeslaSession {
         teslaBLE.removeWaiter(waiterToken)
         callback(result)
       }
-      const _hex = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : 'none')
       // The uuids of every frame WE sent for THIS command (initial + each resend).
       // The car's terminal ack echoes one of them as request_uuid; only a reply whose
       // request_uuid is in here is genuinely our actuation ack (not the wake's ack or
@@ -763,15 +731,8 @@ class TeslaSession {
         const message = this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)
         myUuids.push(this._lastBuiltUuid) // record THIS command's uuid (built after the wake → higher counter)
 
-        // DIAG: label the command so the terminal log below can be tied to it, and
-        // print its routing address + uuid so any reply the car sends to the WRONG
-        // slot (logged as a dropped idle frame) can be correlated back to this TX.
         console.log(
-          `[SESSION] TX command: ${
-            typeof rkeActionOrClosure === 'number'
-              ? `RKE=${rkeActionOrClosure}`
-              : `closureMoveRequest=${_hex(rkeActionOrClosure.closureMoveRequest)}`
-          } addr=${_hex(cmdAddr)} uuid=${_hex(this._lastBuiltUuid)}`,
+          `[SESSION] TX command: ${typeof rkeActionOrClosure === 'number' ? `RKE=${rkeActionOrClosure}` : 'closureMoveRequest'}`,
         )
 
         // Track if we received the first response (status push)
@@ -880,13 +841,7 @@ class TeslaSession {
               finish({ success: false, error: `Vehicle refused — ${response.nominalError.name}`, response })
               return
             }
-            // DIAG: what the car actually returned. An EMPTY field-10 payload = clean
-            // RKE-style ack (actuated). A NON-empty payload here on a closure that
-            // didn't move means the car answered with a status/other message we're
-            // treating as success — decode these bytes to see why frunk/trunk no-op.
-            console.log(
-              `[SESSION] cmd terminal ✓: field10=${_hex(response.payload)} commandStatus=${response.commandStatus ? JSON.stringify(response.commandStatus) : 'none'}`,
-            )
+            console.log('[SESSION] cmd terminal ✓')
             finish({ success: true, response })
           } catch (e) {
             finish({ success: false, error: e.message })
@@ -1028,304 +983,6 @@ class TeslaSession {
   frunk(callback) {
     this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_FRUNK, CLOSURE_MOVE_OPEN) }, callback)
   }
-  // ── Infotainment domain (AES-GCM) — EXPERIMENTAL, for first car capture ──────
-  // Heavily logged, NOT integrated with the command watchdog/slot machinery. Sends
-  // a SessionInfo request to DOMAIN_INFOTAINMENT to get its epoch/counter/clock,
-  // then an AES-GCM-encrypted car-server command. Diagnostic v1: logs raw TX/RX so
-  // byte-exactness can be reconciled against the vehicle the way the HMAC path was.
-  _infotainmentCommand(plaintext, label, callback, opts) {
-    const encryptResponse = !!(opts && opts.encryptResponse) // data reads need an encrypted reply (fault 28 otherwise)
-    const hx = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : '<none>')
-    if (!this.established || !this.sessionKey || !this.ephemeralPublicKey) {
-      callback({ success: false, error: 'VCSEC session not established — connect first' })
-      return
-    }
-    console.log(`[INF] ${label}: requesting infotainment session (domain 3)…`)
-    // One routing address for the whole exchange — the domain-3 replies are
-    // matched by it. VCSEC keeps pushing unsolicited frames (auth beacons,
-    // AppDeviceInfoRequest) on the same characteristic, and infotainment can
-    // take >1s to answer, so the first frame after TX is usually NOT our reply.
-    const routingAddress = generateRoutingAddress()
-    const addressedToUs = (response) => {
-      const dst = response.toRoutingAddress
-      if (!dst || dst.length !== routingAddress.length) return false
-      for (let i = 0; i < dst.length; i++) if (dst[i] !== routingAddress[i]) return false
-      return true
-    }
-    // Terminal-once + responder gate + overall deadline (mirrors getVehicleStatus).
-    let settled = false
-    let deadline = null
-    const own = { cb: null } // this command's BLE registration — release only our own
-    this._commandInFlight = true
-    const finish = (result) => {
-      if (settled) return
-      settled = true
-      this._commandInFlight = false
-      if (deadline) { clearTimeout(deadline); deadline = null }
-      if (teslaBLE.responseCallback === own.cb) teslaBLE.responseCallback = null
-      callback(result)
-    }
-    // SHORT deadline by default: this gate holds _commandInFlight, which blocks the
-    // passive-entry responder (the core key function) for its whole duration. A
-    // 15s charge fetch that the car ignores would freeze walk-up unlock for 15s
-    // (device 2026-06-12). 6s is plenty for a responsive d3 exchange (~3s) and
-    // fails fast otherwise — the cached value + tap-to-refresh cover a miss.
-    const deadlineMs = (opts && opts.timeoutMs) || 6000
-    deadline = setTimeout(() => {
-      deadline = null
-      console.log(`[INF] ✗ ${label} timeout — no addressed domain-3 response`)
-      finish({ success: false, error: 'infotainment request timed out' })
-    }, deadlineMs)
-
-    const requestUuid = generateUUID() // kept: it's the challenge in the SessionInfo HMAC
-    const sessReq = buildRoutableMessage({
-      toDomain: DOMAIN_INFOTAINMENT,
-      routingAddress,
-      sessionInfoRequest: buildSessionInfoRequest(this.ephemeralPublicKey, null),
-      uuid: requestUuid,
-    })
-    console.log(`[INF] TX SessionInfo(d3) ${sessReq.length}B: ${hx(sessReq)}`)
-    own.cb = teslaBLE.send(sessReq, (r) => {
-      if (settled) return
-      if (!r.success || !r.data) {
-        console.log(`[INF] ✗ SessionInfo(d3) no response: ${r.error || 'no data'}`)
-        finish({ success: false, error: 'infotainment session request failed' })
-        return
-      }
-      let response
-      try {
-        response = parseRoutableMessage(r.data)
-      } catch (e) {
-        console.log(`[INF] ✗ parse error: ${e && e.message}`)
-        finish({ success: false, error: 'infotainment session parse error' })
-        return
-      }
-      if (!addressedToUs(response)) {
-        r._requeue = true // unsolicited VCSEC push — keep waiting for the d3 reply
-        return
-      }
-      console.log(`[INF] RX SessionInfo(d3) ${r.data.length}B: ${hx(r.data)}`)
-      const si = response.sessionInfo
-      if (!si) {
-        console.log(`[INF] ✗ no sessionInfo (fields ${Object.keys(decodeMessage(r.data)).join(',')}) status=${response.sessionInfoStatus}`)
-        finish({ success: false, error: 'no infotainment sessionInfo in response' })
-        return
-      }
-      const epoch = si.epoch
-      const counter = si.counter || 0
-      const clockTime = si.clockTime || 0
-      console.log(`[INF] session: epoch=${epoch ? epoch.length + 'B' : '<none>'} counter=${counter} clock=${clockTime} status=${si.status} pubKey=${si.publicKey ? si.publicKey.length + 'B' : '<none>'}`)
-
-      this._resolveInfotainmentKey(si.publicKey, (key, fresh) => {
-        if (settled) return
-        if (!key) {
-          finish({ success: false, error: 'no infotainment session key — phone needed once to derive it' })
-          return
-        }
-        // Verify the d3 SessionInfo HMAC tag with the candidate key BEFORE
-        // signing a command: a wrong key fails here, locally and explicitly,
-        // instead of as the car's opaque INVALID_SIGNATURE fault.
-        const vin = store.vehicleVin || new Uint8Array(0)
-        const tag = response.sessionInfoTag
-        const expected = createSessionInfoHmac(key)(buildSessionInfoHmacInput(vin, requestUuid, response.sessionInfoBytes))
-        let tagOk = !!tag && tag.length === expected.length
-        if (tagOk) { let d = 0; for (let i = 0; i < expected.length; i++) d |= expected[i] ^ tag[i]; tagOk = d === 0 }
-        if (!tagOk) {
-          console.log(`[INF] ✗ d3 SessionInfo tag mismatch — vinLen=${vin.length} infoLen=${response.sessionInfoBytes ? response.sessionInfoBytes.length : 0} tag=${tag ? tag.length + 'B' : '<none>'} (wrong key or VIN)`)
-          finish({ success: false, error: 'infotainment SessionInfo tag mismatch' })
-          return
-        }
-        console.log('[INF] ✓ d3 SessionInfo tag verified')
-        if (fresh) {
-          // Cache only AFTER the tag verifies, so a wrong key is never persisted.
-          store.infotainmentEcPublicKey = si.publicKey
-          store.infotainmentSessionKey = key
-          console.log('[INF] d3 session key derived (phone ECDH), verified, and cached')
-        }
-
-        const cmdCounter = counter + 1
-        const expiresAt = clockTime + 60
-        const flags = encryptResponse ? FLAG_ENCRYPT_RESPONSE : 0
-        const { message, nonce, tag: reqTag } = buildAesGcmCommand({
-          sessionKey: key,
-          vin,
-          signerPublicKey: this.ephemeralPublicKey,
-          domain: DOMAIN_INFOTAINMENT,
-          epoch,
-          counter: cmdCounter,
-          expiresAt,
-          routingAddress,
-          uuid: generateUUID(),
-          plaintext,
-          flags,
-        })
-        // Context for decrypting an encrypted reply: the d3 key + VIN + the request
-        // hash (sig-type || our request tag) the vehicle binds the response to.
-        const decryptCtx = encryptResponse
-          ? { key, vin, requestId: buildAesGcmRequestId(reqTag) }
-          : null
-        console.log(`[INF] TX ${label} ${message.length}B nonce=${hx(nonce)} ct+sig=${hx(message)}`)
-        this._sendInfotainmentMessage(message, label, hx, addressedToUs, finish, () => settled, own, decryptCtx)
-      })
-    })
-  }
-  // Resolve the AES-GCM key for DOMAIN_INFOTAINMENT. Domains are separate ECUs
-  // with their own EC key pairs — the d3 SessionInfo pubkey can differ from
-  // VCSEC's, and the key is sha1(ECDH(watchPriv, d3Pub))[:16]. Reusing the VCSEC
-  // key when the pubkeys differ → MESSAGEFAULT_ERROR_INVALID_SIGNATURE(5)
-  // (device capture 2026-06-11). Order: VCSEC key (same pubkey) → cached d3 key
-  // (same pubkey) → phone ECDH. cb(key, fresh): fresh ⇒ caller verifies the
-  // SessionInfo tag, then caches.
-  _resolveInfotainmentKey(pubKey, cb) {
-    if (!pubKey || pubKey.length !== 65) {
-      console.log(`[INF] ✗ bad d3 vehicle pubkey: ${pubKey ? pubKey.length : 0}B`)
-      cb(null)
-      return
-    }
-    if (this._ecPubMatches(pubKey, this.vehiclePublicKey)) {
-      console.log('[INF] d3 pubkey == VCSEC pubkey — reusing VCSEC session key')
-      cb(this.sessionKey, false)
-      return
-    }
-    const cached = store.infotainmentSessionKey
-    if (cached && cached.length === 16 && this._ecPubMatches(store.infotainmentEcPublicKey, pubKey)) {
-      console.log('[INF] Using cached d3 session key — skipping ECDH')
-      cb(cached, false)
-      return
-    }
-    console.log('[INF] d3 pubkey differs from VCSEC — requesting ECDH shared secret from phone')
-    new Phone().computeSharedSecret(pubKey)
-      .then((secret) => {
-        if (!secret || secret.length !== 32) {
-          console.log(`[INF] ✗ bad shared secret from phone: ${secret ? secret.length : 'null'}`)
-          cb(null)
-          return
-        }
-        cb(sha1(secret).slice(0, 16), true)
-      })
-      .catch((e) => {
-        console.log(`[INF] ✗ phone ECDH failed: ${e && e.message}`)
-        cb(null)
-      })
-  }
-  _sendInfotainmentMessage(message, label, hx, addressedToUs, finish, isSettled, own, decryptCtx) {
-    own.cb = teslaBLE.send(message, (r2) => {
-      if (isSettled()) return
-      if (!r2.success || !r2.data) {
-        console.log(`[INF] ✗ ${label} no response: ${r2.error || 'no data'}`)
-        finish({ success: false, error: 'no command response' })
-        return
-      }
-      let resp2
-      try {
-        resp2 = parseRoutableMessage(r2.data)
-      } catch (_e) {
-        resp2 = null
-      }
-      if (resp2 && !addressedToUs(resp2)) {
-        r2._requeue = true // unsolicited push — keep waiting for the command reply
-        return
-      }
-      console.log(`[INF] RX ${label} ${r2.data.length}B: ${hx(r2.data)}`)
-      // Log decoded top-level fields to spot a fault vs an ack.
-      let fields = null
-      try {
-        fields = decodeMessage(r2.data)
-        console.log(`[INF] ${label} response fields: ${Object.keys(fields).join(',')}`)
-      } catch (_e) {}
-      // A signedMessageStatus with a fault is the car REJECTING the message
-      // (e.g. INVALID_SIGNATURE=5, TIME_EXPIRED=17, REQUIRES_RESPONSE_ENCRYPTION=28) —
-      // not success. Errors always come back as a plaintext status, never encrypted.
-      const st = resp2 && resp2.signedMessageStatus
-      if (st && (st.operationStatus || st.signedMessageFault)) {
-        console.log(`[INF] ✗ ${label} rejected: operationStatus=${st.operationStatus} fault=${st.signedMessageFault}`)
-        finish({ success: false, error: `vehicle rejected ${label} (fault ${st.signedMessageFault})` })
-        return
-      }
-      // Encrypted data reply (FLAG_ENCRYPT_RESPONSE): field 10 is ciphertext; the
-      // nonce/counter/tag ride in SignatureData.AES_GCM_Response_data (field 9).
-      // Decrypt with the d3 key and the response AAD bound to OUR request hash.
-      if (decryptCtx) {
-        const plaintext = this._decryptInfotainmentResponse(fields, decryptCtx, label, hx)
-        if (!plaintext) {
-          finish({ success: false, error: `${label} response decrypt failed` })
-          return
-        }
-        finish({ success: true, data: r2.data, plaintext })
-        return
-      }
-      finish({ success: true, data: r2.data })
-    })
-  }
-  // Decrypt an AES-GCM-encrypted infotainment response. `fields` = decoded
-  // RoutableMessage. Returns the plaintext carserver Response bytes, or null.
-  _decryptInfotainmentResponse(fields, decryptCtx, label, hx) {
-    if (!fields) return null
-    const sig = parseAesGcmResponseSig(fields)
-    if (!sig) {
-      console.log(`[INF] ✗ ${label} no AES_GCM_Response signature (field 13/9) — can't decrypt`)
-      return null
-    }
-    const ciphertext = fields[10] instanceof Uint8Array ? fields[10] : null
-    if (!ciphertext) {
-      console.log(`[INF] ✗ ${label} encrypted reply had no ciphertext (field 10)`)
-      return null
-    }
-    // Response flags ride in field 52; absent = 0. Domain is infotainment (3),
-    // fault is 0 here (rejections were already handled above as plaintext).
-    let respFlags = 0
-    if (typeof fields[52] === 'number') respFlags = fields[52]
-    const aad = sha256(buildAesGcmResponseMetadataInput(
-      decryptCtx.vin || new Uint8Array(0), DOMAIN_INFOTAINMENT, sig.counter, respFlags, decryptCtx.requestId, 0,
-    ))
-    const plaintext = gcmDecrypt(decryptCtx.key, sig.nonce, ciphertext, aad, sig.tag)
-    if (!plaintext) {
-      console.log(`[INF] ✗ ${label} GCM auth/decrypt failed — nonce=${hx(sig.nonce)} counter=${sig.counter} flags=${respFlags}`)
-      return null
-    }
-    console.log(`[INF] ✓ ${label} response decrypted: ${plaintext.length}B`)
-    return plaintext
-  }
-  chargePortInfotainment(callback) {
-    this._infotainmentCommand(buildChargePortOpenAction(), 'ChargePortOpen', callback)
-  }
-  // Start/stop charging — same infotainment (AES-GCM, domain 3) actuation path as
-  // the charge port. Only meaningful when a cable is connected.
-  chargeStart(callback) {
-    this._infotainmentCommand(buildChargeStartAction(), 'ChargeStart', callback)
-  }
-  chargeStop(callback) {
-    this._infotainmentCommand(buildChargeStopAction(), 'ChargeStop', callback)
-  }
-  // Read charge state (battery %, range, charging status) over the infotainment
-  // domain. Data reads REQUIRE an encrypted reply — without FLAG_ENCRYPT_RESPONSE
-  // the car answers MESSAGEFAULT_ERROR_REQUIRES_RESPONSE_ENCRYPTION (28, device
-  // capture 2026-06-12). So we set the flag and decrypt: r.plaintext is the
-  // decrypted carserver Response. Returns { success, charge:{ level, range, state } }.
-  getChargeState(callback, timeoutMs) {
-    this._infotainmentCommand(buildGetChargeStateAction(), 'GetChargeState', (r) => {
-      if (!r.success) {
-        callback({ success: false, error: r.error || 'no charge response' })
-        return
-      }
-      const payload = r.plaintext // decrypted carserver Response
-      if (!(payload instanceof Uint8Array)) {
-        callback({ success: false, error: 'charge response had no decrypted payload' })
-        return
-      }
-      const charge = parseChargeStateResponse(payload)
-      if (!charge.ok) {
-        console.log(`[INF] GetChargeState decode failed: ${charge.error || '?'}`)
-        callback({ success: false, error: charge.error || 'charge decode failed' })
-        return
-      }
-      console.log(`[INF] charge: level=${charge.level}% range=${charge.range} limit=${charge.limit} mins=${charge.minsToFull} state=${charge.state}`)
-      callback({
-        success: true,
-        charge: { level: charge.level, range: charge.range, limit: charge.limit, minsToFull: charge.minsToFull, state: charge.state },
-      })
-    }, { encryptResponse: true, timeoutMs: timeoutMs })
-  }
   remoteDrive(callback) {
     // Tesla SDK RemoteDrive / "drive" ("Remote start vehicle"): authorizes keyless
     // drive over the authenticated BLE session — the workaround for "configure phone
@@ -1351,13 +1008,9 @@ class TeslaSession {
         if (response.vehicleStatus && response.vehicleStatus.length > 0) {
           const status = parseVehicleStatus(response.vehicleStatus)
           if (this._statusPushHandler) this._statusPushHandler(status)
-          return
         }
-        // DIAG: everything else used to vanish here — including a command's ack or
-        // FAULT that came back without our per-command routing address (the "one
-        // unmatched 45B then 15s timeout" failures). Decode what the car actually
-        // said; raw hex so unknown fields can be decoded offline.
-        console.log(`[SESSION] idle frame dropped (${result.data.length}B): ${_describeFrame(response)} raw=${_frameHex(result.data)}`)
+        // Anything else here is an idle frame we don't act on (e.g. a wake-prod ack
+        // on the stable session address) — drop it silently.
       } catch (e) {
         console.log(`[SESSION] idle frame parse error: ${e.message}`)
       }
@@ -1379,7 +1032,7 @@ class TeslaSession {
     // pausing our replies (the old "clean read window") only delayed the status it was
     // meant to fetch. Answer beacons immediately so escalation — the real channel — starts
     // at once; the live-push listener applies whatever VehicleStatus the car volunteers.
-    // Never fire while a user command (lock/unlock/drive/infotainment) owns the BLE
+    // Never fire while a user command (lock/unlock/drive) owns the BLE
     // response slot — a signed reply here would seize that slot and steal the frame the
     // command is waiting for, starving it into a timeout. Skip WITHOUT marking the token
     // answered, so we still respond on the next beacon once the command finishes.

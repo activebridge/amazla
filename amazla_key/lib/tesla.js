@@ -3,9 +3,7 @@ import teslaSession from './tesla-ble/session.js'
 
 // The flat VCSEC vehicle-state booleans, in one place so the cached-snapshot
 // persist/hydrate below can't drift from the properties the UI renders. These are
-// PUSH-driven: while connected, the car streams VehicleStatus so they stay live —
-// no timestamp needed. Pull-only data (charge, from the infotainment domain) lives
-// in a separate `charge` block with its own capture time (see _applyChargeState).
+// PUSH-driven: while connected, the car streams VehicleStatus so they stay live.
 var VCSEC_STATE_KEYS = ['locked', 'df', 'dr', 'pf', 'pr', 'trunkOpen', 'frunkOpen', 'chargePortOpen', 'sleeping', 'userPresent']
 
 // Read-first: fire a clean GET_STATUS on a virgin connection (no beacons answered yet) to
@@ -28,11 +26,6 @@ class Tesla {
     this.chargePortOpen = false
     this.sleeping = false
     this.userPresent = false
-    // Charge snapshot from the infotainment domain (GetChargeState). PULL-only —
-    // the car sends no charge pushes, so this is a point-in-time snapshot with a
-    // capture timestamp the UI can age. null until the first fetch decodes.
-    // Shape: { level, range, state, ts }.
-    this.charge = null
     this._hydrateCachedState()
 
     // Connection state
@@ -59,8 +52,7 @@ class Tesla {
   // Paint the last-known state immediately on load. The car can take 10–20s to
   // volunteer its first VehicleStatus (a dozing car ignores GET_STATUS until
   // woken — device captures 2026-06-11), and until then the defaults above read
-  // as "wrong state". Live pushes correct drift; the charge block carries its own
-  // age so stale pull-only data can be dimmed rather than trusted.
+  // as "wrong state". Live pushes correct drift.
   _hydrateCachedState() {
     var cached = store.lastVehicleState
     if (!cached) return
@@ -68,35 +60,15 @@ class Tesla {
       var k = VCSEC_STATE_KEYS[i]
       if (typeof cached[k] === 'boolean') this[k] = cached[k]
     }
-    if (cached.charge && typeof cached.charge === 'object') this.charge = cached.charge
   }
 
   // Persist the whole state blob from the in-memory object. `this` is the single
-  // source of truth both writers update (VCSEC push → _applyStatus, infotainment
-  // fetch → _applyChargeState), so rebuilding the snapshot from it can't let one
-  // path clobber the other's fields — no read-modify-write of storage needed.
+  // source of truth the VCSEC push writer (_applyStatus) updates, so rebuilding the
+  // snapshot from it needs no read-modify-write of storage.
   _persistState() {
     var snap = {}
     for (var i = 0; i < VCSEC_STATE_KEYS.length; i++) snap[VCSEC_STATE_KEYS[i]] = this[VCSEC_STATE_KEYS[i]]
-    if (this.charge) snap.charge = this.charge
     store.lastVehicleState = snap
-  }
-
-  // Apply a decoded GetChargeState snapshot (infotainment domain). Stamps it with
-  // the capture time so the UI can show/dim "as of N min ago" — pull-only data
-  // goes stale silently (a cached "Charging" for an unplugged car would mislead).
-  _applyChargeState(charge) {
-    if (!charge) return
-    this.charge = {
-      level: charge.level, // battery_level, %
-      range: charge.range, // battery_range, mi
-      limit: charge.limit, // charge_limit_soc, % (SOC target; null if absent)
-      minsToFull: charge.minsToFull, // minutes_to_full_charge (null if absent)
-      state: charge.state, // ChargingState: Disconnected/Charging/Complete/…
-      ts: Math.floor(Date.now() / 1000),
-    }
-    this._persistState()
-    this._notify()
   }
 
   // ── Computed getters ─────────────────────────────────────────────────
@@ -114,19 +86,6 @@ class Tesla {
   }
   get vin() {
     return store.vehicleVin
-  }
-
-  // Single mutually-exclusive "what is the car doing" token, mirroring the Tesla
-  // Apple Watch app (parked / charging / charged / asleep). Asleep wins (the car
-  // is unreachable); then charge activity; else parked. Driving isn't derivable —
-  // we don't decode shift/gear state — so an occupied-but-parked car reads parked.
-  // Returns an i18n token; the UI resolves it via getText('charge_<token>').
-  get primaryState() {
-    if (this.sleeping) return 'asleep'
-    var s = this.charge && this.charge.state
-    if (s === 'Charging' || s === 'Starting') return 'charging'
-    if (s === 'Complete') return 'charged'
-    return 'parked'
   }
 
   // ── Change notification ───────────────────────────────────────────────
@@ -196,30 +155,6 @@ class Tesla {
     this._runAction((done) => teslaSession.frunk(done), cb, { frunkOpen: true })
   }
 
-  chargePort(cb) {
-    // Routes to the infotainment (AES-GCM) path — the SDK-correct domain for charge
-    // port. teslaSession.chargePort (VCSEC closure) is kept for comparison but the
-    // button uses this. EXPERIMENTAL: needs car capture to validate.
-    this._runAction((done) => teslaSession.chargePortInfotainment(done), cb)
-  }
-
-  // Start/stop charging (only when a cable is connected — see `pluggedIn`). Same
-  // infotainment actuation path as chargePort. EXPERIMENTAL: not device-validated.
-  startCharge(cb) {
-    this._runAction((done) => teslaSession.chargeStart(done), cb)
-  }
-  stopCharge(cb) {
-    this._runAction((done) => teslaSession.chargeStop(done), cb)
-  }
-
-  // True when a charge cable is connected (any charging_state except Disconnected/
-  // Unknown). Drives the charge button: port open/close when unplugged, start/stop
-  // charge when plugged in.
-  get pluggedIn() {
-    var s = this.charge && this.charge.state
-    return !!s && s !== 'Disconnected' && s !== 'Unknown'
-  }
-
   refresh(cb) {
     teslaSession.ensureSessionEstablished((r) => {
       if (!r.success) {
@@ -249,8 +184,8 @@ class Tesla {
     })
   }
 
-  // Load live state on connect. Cached state (lock/doors/charge) is already painted
-  // at the ~3s "connected" mark by _hydrateCachedState; the live-push listener (armed in
+  // Load live state on connect. Cached state (lock/doors) is already painted at the
+  // ~3s "connected" mark by _hydrateCachedState; the live-push listener (armed in
   // refresh() before this) refreshes it.
   //
   // CRITICAL — the displayed lock state drives the toggle button (page renders LOCK
@@ -283,34 +218,8 @@ class Tesla {
       teslaSession.getVehicleStatus(function (r) {
         teslaSession.suppressPassive(false) // resume walk-up regardless of outcome
         if (r && r.success) self._applyStatus(r.status)
-        self._loadChargeState(null, 4000)
       }, READ_FIRST_WINDOW_MS)
-      return
     }
-    this._loadChargeState(null, 4000)
-  }
-
-  // Fetch the charge snapshot (infotainment domain) AFTER the VCSEC status work
-  // settles — they share the one BLE response slot, so this must run sequentially,
-  // not concurrently. Best-effort: a failure leaves the cached charge in place.
-  // timeoutMs (optional): the connect-time fetch passes a SHORT deadline — a
-  // deeply asleep car ignores d3 too, and the charge fetch holds the slot (gating
-  // passive entry) for its whole deadline (device 2026-06-15: 6s wasted on a
-  // sleeping car). A tight bound releases walk-up sooner while still covering an
-  // awake car's ~3s d3 answer. Manual pull-to-refresh keeps the default 6s.
-  _loadChargeState(cb, _timeoutMs) {
-    // CHARGE DISABLED — VCSEC only. getChargeState opens an infotainment (domain 3)
-    // session that shares the single BLE response slot with VCSEC and gates passive
-    // entry; it was starving GET_STATUS and the RKE command path. No d3 session is
-    // established at all for now. To re-enable, restore the getChargeState body (see
-    // git history) and uncomment the Battery readout + charge button in page/index.js.
-    if (cb) cb({ success: false, error: 'charge disabled (VCSEC only)' })
-  }
-
-  // Manual refresh of just the charge snapshot (e.g. a pull-to-refresh on the
-  // charge view) without re-running the whole connect/status flow.
-  fetchChargeState(cb) {
-    this._loadChargeState(cb)
   }
 
   retry() {
@@ -413,7 +322,7 @@ class Tesla {
         console.log('[Tesla] real status painted +' + (Date.now() - this._connectStartedAt) + 'ms (locked=' + next.locked + ')')
       }
       // Persist the snapshot so the next app load paints it instantly
-      // (see _hydrateCachedState). Preserves the charge block.
+      // (see _hydrateCachedState).
       this._persistState()
       this._notify()
     }

@@ -207,106 +207,6 @@ const buildHMACTagInput = (vin, epoch, counter, expiresAt, payloadBytes) => {
   return buf
 }
 
-// AES-GCM associated-data input (infotainment domain). Same TLV scheme as the HMAC
-// metadata, but the result is SHA-256'd by the caller and used as the GCM AAD — the
-// payload is ENCRYPTED, not appended here (Tesla SDK: aad = sha256(TLV || TAG_END)).
-// Tesla `extractMetadata` order: SIGNATURE_TYPE(0)=AES_GCM_PERSONALIZED, DOMAIN(1),
-// PERSONALIZATION(2)=VIN, EPOCH(3), EXPIRES_AT(4) uint32 BE, COUNTER(5) uint32 BE, END.
-// (TAG_FLAGS(7) is only added when message flags are set; our commands send none.)
-const buildAesGcmMetadataInput = (vin, domain, epoch, counter, expiresAt, flags) => {
-  const vinBytes = vin instanceof Uint8Array ? vin : new Uint8Array(0)
-  const epochBytes = epoch instanceof Uint8Array ? epoch : new Uint8Array(0)
-  const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
-  // TAG_FLAGS(7) is added ONLY when flags>0 — exactly mirrors the Go SDK
-  // extractMetadata ("for backwards compatibility, only added if at least one
-  // bit is set"). When we set FLAG_ENCRYPT_RESPONSE on the request, the car
-  // includes it in its verification AAD, so we must too — or the request fails.
-  const flagsLen = flags ? 6 : 0
-  const totalLen = 3 + 3 + 2 + vinBytes.length + 2 + epochBytes.length + 6 + 6 + flagsLen + 1
-  const buf = new Uint8Array(totalLen)
-  let off = 0
-  const wb = (byte) => { buf[off++] = byte }
-  const wBytes = (bytes) => { buf.set(bytes, off); off += bytes.length }
-  wb(0x00); wb(0x01); wb(SIGNATURE_TYPE_AES_GCM_PERSONALIZED) // TAG_SIGNATURE_TYPE=5
-  wb(0x01); wb(0x01); wb(domain & 0xff)                       // TAG_DOMAIN
-  wb(0x02); wb(vinBytes.length); wBytes(vinBytes)             // TAG_PERSONALIZATION: VIN
-  wb(0x03); wb(epochBytes.length); wBytes(epochBytes)         // TAG_EPOCH
-  wb(0x04); wb(0x04); wBytes(u32be(expiresAt))               // TAG_EXPIRES_AT (BE)
-  wb(0x05); wb(0x04); wBytes(u32be(counter))                 // TAG_COUNTER (BE)
-  if (flags) { wb(0x07); wb(0x04); wBytes(u32be(flags)) }    // TAG_FLAGS (BE)
-  wb(0xff)                                                     // TAG_END (no payload — it's encrypted)
-  return buf
-}
-
-// Request hash that binds a vehicle's encrypted RESPONSE to our request (Go SDK
-// authentication.RequestID): SIGNATURE_TYPE_AES_GCM_PERSONALIZED(5) || our 16-byte
-// request GCM tag. Goes into the response AAD as TAG_REQUEST_HASH.
-const buildAesGcmRequestId = (requestTag) => {
-  const id = new Uint8Array(1 + requestTag.length)
-  id[0] = SIGNATURE_TYPE_AES_GCM_PERSONALIZED
-  id.set(requestTag, 1)
-  return id
-}
-
-// Metadata TLV the vehicle authenticates an encrypted RESPONSE with — sha256'd by
-// the caller into the GCM AAD. Mirrors Go SDK Peer.responseMetadata: tags in
-// increasing order SIGTYPE→DOMAIN→PERSONALIZATION→COUNTER→FLAGS→REQUEST_HASH→FAULT.
-// Unlike the request metadata, COUNTER/FLAGS/FAULT are ALWAYS present (the Go code
-// uses AddUint32 unconditionally for them here), even when zero.
-const buildAesGcmResponseMetadataInput = (vin, domain, counter, flags, requestId, fault) => {
-  const vinBytes = vin instanceof Uint8Array ? vin : new Uint8Array(0)
-  const idBytes = requestId instanceof Uint8Array ? requestId : new Uint8Array(0)
-  const u32be = (v) => new Uint8Array([(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff])
-  const totalLen = 3 + 3 + 2 + vinBytes.length + 6 + 6 + 2 + idBytes.length + 6 + 1
-  const buf = new Uint8Array(totalLen)
-  let off = 0
-  const wb = (byte) => { buf[off++] = byte }
-  const wBytes = (bytes) => { buf.set(bytes, off); off += bytes.length }
-  wb(0x00); wb(0x01); wb(SIGNATURE_TYPE_AES_GCM_RESPONSE)     // TAG_SIGNATURE_TYPE=9
-  wb(0x01); wb(0x01); wb(domain & 0xff)                       // TAG_DOMAIN
-  wb(0x02); wb(vinBytes.length); wBytes(vinBytes)             // TAG_PERSONALIZATION: VIN
-  wb(0x05); wb(0x04); wBytes(u32be(counter >>> 0))           // TAG_COUNTER (BE)
-  wb(0x07); wb(0x04); wBytes(u32be(flags >>> 0))             // TAG_FLAGS (BE, always)
-  wb(0x08); wb(idBytes.length); wBytes(idBytes)              // TAG_REQUEST_HASH
-  wb(0x09); wb(0x04); wBytes(u32be((fault || 0) >>> 0))     // TAG_FAULT (BE, always)
-  wb(0xff)                                                     // TAG_END
-  return buf
-}
-
-// Pull the AES_GCM_Response signature off a RoutableMessage: SignatureData(13)
-// → AES_GCM_Response_data(9) { nonce(1), counter(2), tag(3) }. Returns null if
-// the message isn't an encrypted response (e.g. it's a plaintext fault).
-const parseAesGcmResponseSig = (fields) => {
-  if (!(fields[13] instanceof Uint8Array)) return null
-  let sig
-  try { sig = decodeMessage(fields[13]) } catch (_e) { return null }
-  if (!(sig[9] instanceof Uint8Array)) return null
-  let g
-  try { g = decodeMessage(sig[9]) } catch (_e) { return null }
-  const nonce = g[1] instanceof Uint8Array ? g[1] : null
-  const tag = g[3] instanceof Uint8Array ? g[3] : null
-  const counter = typeof g[2] === 'number' ? g[2] : 0
-  if (!nonce || !tag) return null
-  return { nonce, counter, tag }
-}
-
-// AES_GCM_Personalized_Signature_Data { epoch(1), nonce(2), counter(3 uint32),
-// expires_at(4 fixed32 LE), tag(5) } wrapped in SignatureData { signer_identity(1),
-// AES_GCM_Personalized_data(5) }.
-const buildAesGcmPersonalizedData = (epoch, nonce, counter, expiresAt, tag) => {
-  const parts = []
-  if (epoch) parts.push(encodeBytes(1, epoch))
-  if (nonce) parts.push(encodeBytes(2, nonce))
-  parts.push(encodeVarintField(3, counter))
-  parts.push(encodeFixed32(4, expiresAt))
-  if (tag) parts.push(encodeBytes(5, tag))
-  return concat(...parts)
-}
-const buildAesGcmSignatureData = (signerPublicKey, epoch, nonce, counter, expiresAt, tag) => {
-  const keyIdentity = buildKeyIdentity(signerPublicKey)
-  const gcmData = buildAesGcmPersonalizedData(epoch, nonce, counter, expiresAt, tag)
-  return concat(encodeBytes(1, keyIdentity), encodeBytes(5, gcmData))
-}
 // Builds the HMAC input buffer for SessionInfo tag verification per Tesla SDK.
 // Layout: TLV metadata fields || 0xFF || encodedSessionInfoBytes
 //   TAG_SIGNATURE_TYPE(0): SIGNATURE_TYPE_HMAC=6
@@ -543,11 +443,6 @@ export {
   buildSignedMessage,
   buildToVCSECMessage,
   buildHMACTagInput,
-  buildAesGcmMetadataInput,
-  buildAesGcmResponseMetadataInput,
-  buildAesGcmRequestId,
-  parseAesGcmResponseSig,
-  buildAesGcmSignatureData,
   DOMAIN_INFOTAINMENT,
   SIGNATURE_TYPE_AES_GCM_PERSONALIZED,
   SIGNATURE_TYPE_AES_GCM_RESPONSE,

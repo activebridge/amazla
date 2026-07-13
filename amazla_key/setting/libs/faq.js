@@ -12,6 +12,14 @@ const FAQ = [
     'On the main page of the watch app, tap the lock/unlock button. Your car will respond immediately.',
   ],
   [
+    'Where can I open it from?',
+    'Four ways, quickest last: (1) from the watch app list; (2) as a shortcut card — swipe sideways from the watch face; (3) as a key-card widget in your app cards; (4) mapped to a physical button. The app, the shortcut card and the widget all connect and control the car the same way.',
+  ],
+  [
+    'Unlock with a single button press',
+    'On the watch, open Settings → Preferences → Press Button and assign "Amazla Key" to the button. Then turn on "Auto-Unlock on Connect" below. Now one press of that button opens the app, connects, and unlocks the car — no screen taps needed. (The app has to open to reach the car, so this is the closest thing to a car-key button.)',
+  ],
+  [
     'Does it unlock as I walk up?',
     'Yes — keep the app open as you approach and the car unlocks by itself, just like a phone key. Walk-away lock works the same, but only while the app stays open.',
   ],

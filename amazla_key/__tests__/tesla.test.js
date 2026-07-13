@@ -24,7 +24,6 @@ function resetTesla() {
   tesla.frunkOpen   = false
   tesla.sleeping    = false
   tesla.userPresent = false
-  tesla.charge      = null
   tesla.connection  = { status: 'checking', error: null }
   tesla.busy        = false
   tesla._listeners  = []
@@ -84,7 +83,6 @@ beforeEach(() => {
   // Default the session calls to no-ops so connect-path tests don't hit the real BLE;
   // tests that assert on them override these.
   jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
-  jest.spyOn(teslaSession, 'getChargeState').mockImplementation(cb => cb({ success: false }))
   // Read-first fires a connect-time getVehicleStatus; default it to a clean miss so
   // connect-path tests don't hit real BLE. Tests asserting status behaviour override this.
   jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation(cb => cb({ success: false }))
@@ -297,88 +295,6 @@ describe('cached state snapshot', () => {
     tesla._hydrateCachedState()
     expect(tesla.locked).toBe(true)
     expect(tesla.trunkOpen).toBe(false)
-  })
-})
-
-// ─── charge block (infotainment, pull-only) ───────────────────────────────────
-// Charge data comes from GetVehicleData (no pushes), so it lives in a separate
-// `charge` block carrying its own capture time. One state blob, two independent
-// writers (VCSEC push + charge fetch) that must not clobber each other.
-
-describe('charge state snapshot', () => {
-  test('_applyChargeState stamps a timestamp and persists into the same blob', () => {
-    tesla._applyChargeState({ level: 70, range: 198, state: 'Disconnected' })
-    expect(tesla.charge.level).toBe(70)
-    expect(tesla.charge.range).toBe(198)
-    expect(tesla.charge.state).toBe('Disconnected')
-    expect(typeof tesla.charge.ts).toBe('number')
-    expect(store.lastVehicleState.charge.level).toBe(70)
-  })
-
-  test('a VCSEC status update preserves an existing charge block', () => {
-    tesla._applyChargeState({ level: 70, range: 198, state: 'Charging' })
-    tesla._applyStatus(makeStatus({ vehicleLockState: 1 })) // different writer
-    expect(store.lastVehicleState.locked).toBe(true)
-    expect(store.lastVehicleState.charge.level).toBe(70) // not clobbered
-  })
-
-  test('a charge update preserves the VCSEC fields', () => {
-    tesla._applyStatus(makeStatus({ vehicleLockState: 0, vehicleSleepStatus: 1 }))
-    tesla._applyChargeState({ level: 42, range: 110, state: 'Complete' })
-    expect(store.lastVehicleState.locked).toBe(false)
-    expect(store.lastVehicleState.sleeping).toBe(true)
-    expect(store.lastVehicleState.charge.level).toBe(42)
-  })
-
-  test('_hydrateCachedState restores the charge block', () => {
-    store.lastVehicleState = { locked: false, charge: { level: 55, range: 150, state: 'Charging', ts: 123 } }
-    tesla._hydrateCachedState()
-    expect(tesla.locked).toBe(false)
-    expect(tesla.charge.level).toBe(55)
-    expect(tesla.charge.ts).toBe(123)
-  })
-
-  test('hydrate ignores a non-object charge value', () => {
-    store.lastVehicleState = { locked: true, charge: 'oops' }
-    tesla.charge = null
-    tesla._hydrateCachedState()
-    expect(tesla.charge).toBeNull()
-  })
-
-  test('_applyChargeState is a no-op on null (no charge data yet)', () => {
-    tesla.charge = null
-    tesla._applyChargeState(null)
-    expect(tesla.charge).toBeNull()
-  })
-
-  // CHARGE DISABLED (VCSEC only) — _loadChargeState is stubbed to fail without
-  // touching the d3 session (it was starving GET_STATUS / RKE; see lib/tesla.js).
-  // When charge is re-enabled, restore the old spec from git history: a successful
-  // getChargeState result must be applied to tesla.charge and cb'd success:true.
-  test('fetchChargeState reports charge disabled and never opens a d3 session', () => {
-    const spy = jest.spyOn(teslaSession, 'getChargeState')
-    const cb = jest.fn()
-    tesla.fetchChargeState(cb)
-    expect(spy).not.toHaveBeenCalled()
-    expect(tesla.charge).toBeNull()
-    expect(cb).toHaveBeenCalledWith(expect.objectContaining({ success: false, error: expect.stringMatching(/disabled/) }))
-  })
-
-  test('fetchChargeState failure leaves existing charge untouched', () => {
-    tesla._applyChargeState({ level: 90, range: 250, state: 'Complete' })
-    jest.spyOn(teslaSession, 'getChargeState')
-      .mockImplementation(cb => cb({ success: false, error: 'timeout' }))
-    tesla.fetchChargeState()
-    expect(tesla.charge.level).toBe(90) // unchanged
-  })
-
-  test('refresh invokes charge load (charge disabled → getChargeState not called)', () => {
-    mockEstablished()
-    const chargeSpy = jest.spyOn(teslaSession, 'getChargeState')
-    tesla.refresh()
-    // _loadInitialState calls _loadChargeState, which is currently disabled (VCSEC only)
-    // and returns without hitting the session — so getChargeState must NOT be called.
-    expect(chargeSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -673,19 +589,6 @@ describe('frunk()', () => {
     const [firstArg] = teslaSession.sendCommand.mock.calls[0]
     expect(typeof firstArg).toBe('object')
     expect(firstArg.closureMoveRequest).toBeInstanceOf(Uint8Array)
-  })
-})
-
-describe('chargePort()', () => {
-  test('delegates to the infotainment (AES-GCM) path, not the VCSEC closure', () => {
-    tesla.connection.status = 'online'
-    const inf = jest.spyOn(teslaSession, 'chargePortInfotainment').mockImplementation((cb) => cb({ success: true }))
-    mockEstablished()
-    mockGetStatus()
-
-    tesla.chargePort()
-
-    expect(inf).toHaveBeenCalledTimes(1)
   })
 })
 
