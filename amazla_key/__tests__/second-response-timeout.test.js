@@ -200,5 +200,69 @@ describe('sendCommand — second response timeout handling', () => {
 
     restore()
   })
+
+  test('nominalError (field 46, CLOSURES_OPEN) addressed to us → terminal FAILURE, not success', () => {
+    const session = new TeslaSession()
+    session.established = true
+    session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    session.epoch = new Uint8Array(16).fill(0xee)
+    session.counter = 0
+    session.clockTime = 1000
+    session.sessionKey = new Uint8Array(16).fill(0x11)
+    session.routingAddress = new Uint8Array(16).fill(0x22)
+    { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
+
+    // Device 2026-07-13: lock with a door open → the car answers field10 =
+    // FromVCSECMessage.nominalError(46){ genericError: 2 CLOSURES_OPEN } (bytes
+    // f202020802). This is a REFUSAL — it used to fall through payload-present
+    // terminal-detect as success, flipping the app to "locked" while the car sat open.
+    const nominalErrorPayload = encodeBytes(10, encodeBytes(46, encodeVarintField(1, 2)))
+    const restore = stubSendAddressed((cmdAddr) =>
+      makeAddressedRoutable(cmdAddr, nominalErrorPayload),
+    )
+
+    const uiCb = function() { uiCb.calls.push(Array.from(arguments)) }
+    uiCb.calls = []
+    session.sendCommand(RKE_ACTION_LOCK, uiCb)
+
+    const last = uiCb.calls[uiCb.calls.length - 1][0]
+    expect(last.success).toBe(false)
+    expect(last.error).toContain('door open')
+
+    restore()
+  })
+
+  test('retriesOnTimeout: full-deadline expiry re-sends ONE fresh command, then fails', async () => {
+    const session = new TeslaSession()
+    session.established = true
+    session.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    session.epoch = new Uint8Array(16).fill(0xee)
+    session.counter = 0
+    session.clockTime = 1000
+    session.sessionKey = new Uint8Array(16).fill(0x11)
+    session.routingAddress = new Uint8Array(16).fill(0x22)
+    { const { hmac } = createHmac(session.sessionKey); session._hmac = hmac; const { cmdHmac } = createSessionHmacs(session.sessionKey); session._cmdHmacFn = cmdHmac; session._cmdHmac = cmdHmac; }
+
+    // Device 2026-07-13: after a nominalError refusal the car swallows a repeated
+    // RKE for ~5–15s — no reply at all. The retry must be a FRESH build (counter
+    // advances) fired only after the full deadline, and bounded (initial + retries).
+    const sentCounters = []
+    const orig = teslaBLE.sendAddressed
+    teslaBLE.sendAddressed = function (_message, _match, _cb) {
+      sentCounters.push(session.counter) // counter AFTER this attempt's build
+      return { token: sentCounters.length } // never deliver a reply
+    }
+
+    const result = await new Promise((resolve) => {
+      session.sendCommand(RKE_ACTION_LOCK, resolve, 30, { retriesOnTimeout: 1 })
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('timed out')
+    expect(sentCounters.length).toBe(2) // initial + exactly one retry
+    expect(sentCounters[1]).toBeGreaterThan(sentCounters[0]) // fresh counter, not a byte replay
+
+    teslaBLE.sendAddressed = orig
+  })
 })
 

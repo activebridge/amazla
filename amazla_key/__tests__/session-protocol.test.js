@@ -1054,8 +1054,9 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
       expect(unsigned[3]).toBeDefined() // authenticationResponse
       expect(results.length).toBe(0)    // beacon did not settle the fetch
 
-      // The fetch stays bounded by its own deadline.
-      jest.advanceTimersByTime(s.commandTimeoutMs + 1)
+      // The fetch stays bounded by its own deadline (statusTimeoutMs — the
+      // push-paced status wait is longer than the command deadline).
+      jest.advanceTimersByTime(s.statusTimeoutMs + 1)
       expect(results.length).toBe(1)
       expect(results[0].success).toBe(false)
     } finally {

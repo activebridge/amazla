@@ -45,6 +45,15 @@ class Tesla {
     this._passiveListeners = []
     // Relay passive-entry handshake milestones from the session up to the UI (toasts).
     teslaSession.onPassiveEvent((evt) => this._emitPassive(evt))
+    // Unexpected link loss (session already reset itself): flip the UI offline so
+    // taps get an honest "Offline" instead of silently failing into a dead link
+    // (device 2026-07-13: widget stayed "Connected" for a minute after a car-side
+    // drop that only a late native callback reported).
+    teslaSession.onLinkDown(() => {
+      console.log('[Tesla] BLE link lost — marking offline')
+      this.busy = false // any in-flight command's waiter was already failed by ble cleanup
+      this._setConnection({ status: 'offline', error: 'Connection lost' })
+    })
   }
 
   // Paint the last-known state immediately on load. The car can take 10–20s to
@@ -161,14 +170,22 @@ class Tesla {
   // ── Car actions ───────────────────────────────────────────────────────
 
   lock(cb) {
-    this._runAction((done) => teslaSession.lock(done), cb, { locked: true })
+    // gate:false for the same reason as unlock below. Device 2026-07-13: gated locks
+    // timed out 15s while gate:false unlocks acked in ~0.7s on the same connection —
+    // the muted responder starves the presence handshake and the car ignores the RKE.
+    // Commands match their ack by per-command routing address now, so the responder
+    // can't steal it; the gate protected a slot that no longer exists.
+    // 5s deadline (down from the 15s default — a real ack or refusal lands in ≤1s,
+    // device 2026-07-13) + one full-deadline retry: after a nominalError refusal the
+    // car swallows a repeated lock for ~5–15s, and the retry rides that window out.
+    this._runAction((done) => teslaSession.lock(done, { gate: false, timeoutMs: 5000, retriesOnTimeout: 1 }), cb, { locked: true })
   }
 
   unlock(cb) {
     // gate:false — keep answering the car's AuthenticationRequest beacons WHILE the unlock
     // is in flight (the phone does both at once). Gating the responder silences the presence
     // handshake the car needs before it actuates a sleeping car, which deadlocks the unlock.
-    this._runAction((done) => teslaSession.unlock(done, { gate: false }), cb, { locked: false })
+    this._runAction((done) => teslaSession.unlock(done, { gate: false, retriesOnTimeout: 1 }), cb, { locked: false })
   }
 
   trunk(cb) {

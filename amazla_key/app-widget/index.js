@@ -103,6 +103,10 @@ const paint = () => {
 // label, no icon, no spinner. onResume paints the live state, onPause/onDestroy
 // clears back to blank.
 const clear = () => {
+  if (flashTimer) {
+    clearTimeout(flashTimer)
+    flashTimer = null
+  }
   if (!statusText) return
   statusText.light.set({ text: '' })
   statusText.dark.set({ text: '' })
@@ -111,15 +115,51 @@ const clear = () => {
   stateIcon && stateIcon.setProperty(prop.VISIBLE, false)
 }
 
-// The one widget action: tap toggles lock/unlock from the current state. Ignored
-// unless online. Repaint rides tesla.onChange (optimistic state flip in the
-// facade); no toasts in the widget runtime — haptic ack on success instead.
+// The one widget action: tap toggles lock/unlock from the current state. On a
+// dead link (offline/failed — e.g. the car dropped the connection behind our
+// back) a tap RECONNECTS instead, so the card recovers without leaving the
+// widget. Repaint rides tesla.onChange (optimistic state flip in the facade);
+// no toasts in the widget runtime — haptic ack on success instead.
 const onTap = () => {
-  if (statusKey() !== 'online') return
+  const key = statusKey()
+  if (key === 'offline' || key === 'failed') {
+    tesla.connect() // paint() flips to the Connecting spinner via tesla.onChange
+    return
+  }
+  if (key !== 'online') return
   const done = (r) => {
-    if (r && r.success) safe('vibro', () => vibro.medium())
+    if (r && r.success) {
+      safe('vibro', () => vibro.medium())
+      return
+    }
+    if (r && r.error === 'Busy') return // command already in flight — not a failure
+    // Failure feedback (device 2026-07-13: refusals/timeouts were fully silent and
+    // read as "widget broken"): double-buzz + flash a SHORT reason on the status
+    // line, then repaint the live state. Facade errors are toast-length — map to
+    // card-length.
+    safe('vibro', () => vibro.double())
+    flashError(r && r.error)
   }
   tesla.locked ? tesla.unlock(done) : tesla.lock(done)
+}
+
+// Show a short failure reason in the status line for a beat, then hand the line
+// back to paint(). A newer flash or a state repaint after the timer wins — the
+// timer just repaints, it never restores captured text.
+let flashTimer = null
+const flashError = (error) => {
+  if (!statusText) return
+  const msg = error && error.indexOf('door open') !== -1 ? 'Door open'
+    : error && error.indexOf('timed out') !== -1 ? 'No response'
+    : 'Failed'
+  statusText.light.set({ text: msg })
+  statusText.dark.set({ text: msg })
+  statusText.main.set({ text: msg, color: 0xff9900 })
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => {
+    flashTimer = null
+    paint()
+  }, 2500)
 }
 
 AppWidget({

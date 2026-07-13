@@ -5,17 +5,14 @@
     "appName": "🔐 Authenticator",
     "appType": "app",
     "version": {
-      "code": 303,
-      "name": "3.0.3"
+      "code": 315,
+      "name": "3.1.5"
     },
     "icon": "icon.png",
     "vender": "activebridge",
     "description": "Two-factor authentication codes on your wrist. Import from Google Authenticator, Aegis, 2FAS, andOTP, Raivo or any QR code. Works offline with auto-refresh every 30 seconds. Includes widgets for quick access."
   },
-  "permissions": [
-    "data:os.device.info",
-    "device:os.local_storage"
-  ],
+  "permissions": ["data:os.device.info", "device:os.local_storage"],
   "runtime": {
     "apiVersion": {
       "compatible": "2.0.0",

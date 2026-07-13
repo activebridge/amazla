@@ -531,10 +531,25 @@ describe('retry()', () => {
   })
 })
 
+// ─── unexpected link loss ─────────────────────────────────────────────────────
+
+describe('link loss (teslaSession.onLinkDown → facade)', () => {
+  test('flips connection to offline with "Connection lost" and clears busy', () => {
+    tesla.connection.status = 'online'
+    tesla.busy = true
+    // The facade constructor registered its observer on the real session
+    // singleton; fire it the way _handleLinkDown does after resetting.
+    teslaSession._linkDownCb()
+    expect(tesla.connection.status).toBe('offline')
+    expect(tesla.connection.error).toBe('Connection lost')
+    expect(tesla.busy).toBe(false)
+  })
+})
+
 // ─── lock / unlock ────────────────────────────────────────────────────────────
 
 describe('lock()', () => {
-  test('calls sendCommand with RKE_ACTION_LOCK (1)', () => {
+  test('calls sendCommand with RKE_ACTION_LOCK (1) and gate:false', () => {
     tesla.connection.status = 'online'
     mockCommand()
     mockEstablished()
@@ -545,6 +560,8 @@ describe('lock()', () => {
     expect(teslaSession.sendCommand).toHaveBeenCalledWith(
       1, // RKE_ACTION_LOCK
       expect.any(Function),
+      5000, // short deadline — a real ack/refusal lands in ≤1s
+      { gate: false, timeoutMs: 5000, retriesOnTimeout: 1 }, // responder stays live; one deadline-spaced retry
     )
   })
 
@@ -622,7 +639,7 @@ describe('unlock()', () => {
       0, // RKE_ACTION_UNLOCK
       expect.any(Function),
       3000, // 3s fail-fast deadline (not the 15s command default)
-      { gate: false }, // keep answering beacons while the unlock is in flight
+      { gate: false, retriesOnTimeout: 1 }, // beacons stay answered; one deadline-spaced retry
     )
   })
 })

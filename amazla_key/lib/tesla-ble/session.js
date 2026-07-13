@@ -90,7 +90,16 @@ const RECYCLE_SETTLE_MS = 600
 // replies at all, or only streams unsolicited pushes. A dropped command write
 // (unacked WRITE_WITHOUT_RESPONSE) would otherwise leave the callback pending
 // forever — wedging the caller's busy flag with no error and no recovery.
-const COMMAND_TIMEOUT_MS = 15000
+// 6s (was 15s): device 2026-07-13 — every answered command (ack, refusal, closure)
+// lands in ≤1s; a car that stays silent past a few seconds isn't going to answer
+// this frame at all (post-refusal swallow / escalation window), so the long wait
+// only froze the UI. Lock/unlock ride even shorter deadlines + a retry (see the
+// facade); STATUS_TIMEOUT_MS below stays long for the push-paced status wait.
+const COMMAND_TIMEOUT_MS = 6000
+// getVehicleStatus deadline: a manual refresh may legitimately wait on a CAR-PACED
+// VehicleStatus push (8–31s observed when passive entry is active), so it must not
+// share the command deadline.
+const STATUS_TIMEOUT_MS = 15000
 
 // Passive entry ON — we answer the car's AuthenticationRequest beacons. A signed session
 // (SessionInfo) is necessary but NOT sufficient: the car also wants the per-connection
@@ -99,6 +108,23 @@ const COMMAND_TIMEOUT_MS = 15000
 // and our "session established but never answered beacons" key did not. The command must
 // KEEP answering beacons while in flight (gate=false in sendCommand), like the phone.
 const PASSIVE_ENTRY_ENABLED = true
+
+// DIAG helpers for the dropped-idle-frame log (see startStatusPushListener): a
+// command reply the car addresses to the wrong slot — or a signed-message FAULT —
+// lands in the idle handler; these render what it actually said.
+const _frameHex = (b) => (b ? Array.prototype.map.call(b, (x) => x.toString(16).padStart(2, '0')).join('') : 'none')
+const _describeFrame = (r) => {
+  const p = [`to=${r.toRoutingAddress ? _frameHex(r.toRoutingAddress) : 'domain'}`]
+  if (r.requestUuid) p.push(`uuid=${_frameHex(r.requestUuid)}`)
+  if (r.signedMessageStatus) p.push(`msgStatus=${JSON.stringify(r.signedMessageStatus)}`)
+  if (r.commandStatus) p.push(`cmdStatus=${JSON.stringify(r.commandStatus)}`)
+  if (r.payload) p.push(`f10=${_frameHex(r.payload)}`)
+  if (r.sessionInfo) p.push('sessionInfo')
+  if (r.authenticationRequest) p.push(`authReq[${r.authenticationRequest.reasonsForAuth}]`)
+  if (r.appDeviceInfoRequest) p.push('appDeviceInfoReq')
+  if (r.nominalError) p.push(`nominalError=${r.nominalError.genericError}(${r.nominalError.name})`)
+  return p.join(' ')
+}
 
 class TeslaSession {
   constructor() {
@@ -110,8 +136,28 @@ class TeslaSession {
     this.sessionInfoResendTimeoutMs = SESSION_INFO_RESEND_TIMEOUT_MS
     this.recycleSettleMs = RECYCLE_SETTLE_MS
     this.commandTimeoutMs = COMMAND_TIMEOUT_MS
+    this.statusTimeoutMs = STATUS_TIMEOUT_MS
     this.secondResponseTimeoutMs = 10000
     this._passiveEventCb = null // UI hook for passive-entry events (set by the Tesla facade)
+    this._linkDownCb = null // facade hook: unexpected native link loss (set once, survives reset())
+  }
+  // Register the facade's link-loss observer. Fired AFTER the session has reset
+  // itself, so the facade can flip the UI offline without re-entering session state.
+  onLinkDown(cb) {
+    this._linkDownCb = cb
+  }
+  // Unexpected native link loss (teslaBLE.onLinkDown — a late native callback
+  // reported the link dead). Device 2026-07-13: a car-side drop surfaced only 40s
+  // after dial; session/facade/widget all stayed "online" on a dead link and every
+  // tap built a signed command into it, failing silently. The session dies with the
+  // link (counters/HMAC are per-connection) — reset and notify the facade.
+  _handleLinkDown() {
+    if (!this.established) return // mid-connect drops are handled by the connect path
+    console.log('[SESSION] Link down — native disconnect on an established session, resetting')
+    this.reset()
+    if (this._linkDownCb) {
+      try { this._linkDownCb() } catch (_e) {}
+    }
   }
   // Register a single observer for passive-entry handshake milestones (initiated /
   // approaching / authorized). Surfaced to the UI as toasts; pure observation, never
@@ -132,6 +178,9 @@ class TeslaSession {
     this._suppressPassive = !!on
   }
   reset() {
+    // Invalidate any in-flight connect cycle (see ensureSessionEstablished's
+    // generation guard) — its completion must not touch post-reset state.
+    this._connectGen = (this._connectGen || 0) + 1
     this.ephemeralPublicKey = null
     this.vehiclePublicKey = null
     this.epoch = null
@@ -296,6 +345,9 @@ class TeslaSession {
         return
       }
       console.log(`[SESSION] ✓ Connected to vehicle (attempt ${attempt}), proceeding`)
+      // Arm the unexpected-link-loss hook for THIS link (re-armed every connect;
+      // teslaBLE.reset() on shutdown clears it). Deliberate teardowns don't fire it.
+      teslaBLE.onLinkDown = () => this._handleLinkDown()
       this._proceedWithSession(callback)
     }, dialTimeoutMs)
   }
@@ -630,9 +682,11 @@ class TeslaSession {
   }
   sendCommand(rkeActionOrClosure, callback, timeoutMs, opts) {
     // gate=false keeps the passive-entry / AppDeviceInfo responder ANSWERING while this
-    // command is in flight. The connect-time auto-unlock needs this: on a dozing car the
-    // vehicle only actuates once it has escalated (it asks for AppDeviceInfo ~6s in), and
-    // gating that off deadlocks. Tapped commands keep the default gate (protects their slot).
+    // command is in flight. On a dozing car the vehicle only actuates once it has escalated
+    // (it asks for AppDeviceInfo ~6s in), and gating that off deadlocks — device 2026-07-13:
+    // gated locks timed out 15s while gate:false unlocks acked in ~0.7s on the same
+    // connection. Lock/unlock pass gate:false; the ack is safe either way (address-routed
+    // waiter). Closures/drive still default to gated until device-tested.
     const gate = !(opts && opts.gate === false)
     const doSend = () => {
       // Fire the terminal result exactly once and tear down all command state:
@@ -709,13 +763,15 @@ class TeslaSession {
         const message = this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)
         myUuids.push(this._lastBuiltUuid) // record THIS command's uuid (built after the wake → higher counter)
 
-        // DIAG: label the command so the terminal log below can be tied to it.
+        // DIAG: label the command so the terminal log below can be tied to it, and
+        // print its routing address + uuid so any reply the car sends to the WRONG
+        // slot (logged as a dropped idle frame) can be correlated back to this TX.
         console.log(
           `[SESSION] TX command: ${
             typeof rkeActionOrClosure === 'number'
               ? `RKE=${rkeActionOrClosure}`
               : `closureMoveRequest=${_hex(rkeActionOrClosure.closureMoveRequest)}`
-          }`,
+          } addr=${_hex(cmdAddr)} uuid=${_hex(this._lastBuiltUuid)}`,
         )
 
         // Track if we received the first response (status push)
@@ -725,19 +781,39 @@ class TeslaSession {
         // pushes" — neither arms _secondResponseTimer (that only starts after a
         // first addressed non-terminal reply). Without this a dropped command
         // write hangs the callback forever and wedges the caller's busy flag.
+        //
+        // retriesOnTimeout (opts, lock/unlock ONLY — they're idempotent): on a
+        // FULL-deadline expiry with no reply at all, re-run the whole command as a
+        // fresh build (new counter/uuid/address, wake prod included). Device
+        // 2026-07-13: after a nominalError refusal the car IGNORES a repeat of the
+        // same RKE action for ~5–15s (wake still acked, command swallowed) — one
+        // deadline-spaced retry rides that window out. This is NOT the old 1.5s
+        // blind resend (device 2026-06-26 double-unlock): a retry fires only after
+        // the full deadline, when no ack can still be in flight. Never set it for
+        // closures/drive — a duplicate there toggles.
         this._clearCommandTimer()
         this._commandTimer = setTimeout(() => {
           this._commandTimer = null
+          const retries = (opts && opts.retriesOnTimeout) || 0
+          if (retries > 0 && !this._waitingForSecondResponse) {
+            console.log(`[SESSION] Command timeout — retrying with fresh counter (${retries} left)`)
+            // Tear down THIS attempt without settling the caller, then re-enter.
+            settled = true
+            if (gate) this._commandInFlight = false
+            teslaBLE.removeWaiter(waiterToken)
+            this.sendCommand(rkeActionOrClosure, callback, timeoutMs, Object.assign({}, opts, { retriesOnTimeout: retries - 1 }))
+            return
+          }
           console.log('[SESSION] Command timeout — no response from vehicle')
           finish({ success: false, error: 'Command timed out — no response from vehicle' })
         }, timeoutMs || this.commandTimeoutMs)
 
-        // No resends: send ONCE and report success (the car's ack) or failure (deadline).
-        // Resending blindly on a timer re-actuated the car when an ack arrived slower than
-        // the interval (device 2026-06-26: ~1.6s ack vs 1.5s resend → double unlock); and a
-        // miss is usually escalation latency, not a dropped frame (device 2026-06-29: a weak-
-        // signal car ignores the command at reason-1 for ~10s, so an early resend lands while
-        // it's still not listening). The caller surfaces the result; a real miss is a re-tap.
+        // No resends within an attempt: send ONCE and report success (the car's ack) or
+        // failure (deadline). Resending blindly on a timer re-actuated the car when an ack
+        // arrived slower than the interval (device 2026-06-26: ~1.6s ack vs 1.5s resend →
+        // double unlock); and a miss is usually escalation latency, not a dropped frame
+        // (device 2026-06-29: a weak-signal car ignores the command at reason-1 for ~10s,
+        // so an early resend lands while it's still not listening).
         this._clearResendTimer()
 
         // Address-routed waiter: the car's reply to THIS command comes back addressed to
@@ -793,6 +869,15 @@ class TeslaSession {
             // VCSEC-level ERROR (command rejected — obstruction, unauthorized, etc.)
             if (response.commandStatus && response.commandStatus.operationStatus === 2) {
               finish({ success: false, error: 'Command rejected by vehicle', response })
+              return
+            }
+            // Nominal error: the car understood and REFUSED (field10 = FromVCSECMessage.
+            // nominalError, e.g. lock with a door open → CLOSURES_OPEN). Device 2026-07-13:
+            // this used to fall through to "terminal ✓" and report success, so the app
+            // flipped to locked while the car sat open.
+            if (response.nominalError) {
+              console.log(`[SESSION] cmd refused: genericError=${response.nominalError.genericError} (${response.nominalError.name})`)
+              finish({ success: false, error: `Vehicle refused — ${response.nominalError.name}`, response })
               return
             }
             // DIAG: what the car actually returned. An EMPTY field-10 payload = clean
@@ -879,7 +964,7 @@ class TeslaSession {
       deadlineTimer = null
       console.log('[SESSION] getVehicleStatus timeout — no VehicleStatus within deadline')
       finish({ success: false, error: 'Vehicle status timed out' })
-    }, timeoutMs || this.commandTimeoutMs)
+    }, timeoutMs || this.statusTimeoutMs)
     waiterToken = teslaBLE.sendAddressed(message, match, (result) => {
       if (!result.success) {
         finish({ success: false, error: result.error })
@@ -896,8 +981,8 @@ class TeslaSession {
       }
     })
   }
-  lock(callback) {
-    this.sendCommand(RKE_ACTION_LOCK, callback)
+  lock(callback, opts) {
+    this.sendCommand(RKE_ACTION_LOCK, callback, opts && opts.timeoutMs, opts)
   }
   unlock(callback, opts) {
     // 3s deadline (not the 15s default): a normal car acks the unlock in ~1.7s, so a no-ack
@@ -1266,7 +1351,13 @@ class TeslaSession {
         if (response.vehicleStatus && response.vehicleStatus.length > 0) {
           const status = parseVehicleStatus(response.vehicleStatus)
           if (this._statusPushHandler) this._statusPushHandler(status)
+          return
         }
+        // DIAG: everything else used to vanish here — including a command's ack or
+        // FAULT that came back without our per-command routing address (the "one
+        // unmatched 45B then 15s timeout" failures). Decode what the car actually
+        // said; raw hex so unknown fields can be decoded offline.
+        console.log(`[SESSION] idle frame dropped (${result.data.length}B): ${_describeFrame(response)} raw=${_frameHex(result.data)}`)
       } catch (e) {
         console.log(`[SESSION] idle frame parse error: ${e.message}`)
       }
@@ -1429,11 +1520,20 @@ class TeslaSession {
     this._connecting = true
     this.pendingCallbacks = [callback]
 
+    // Generation guard: reset() (widget onPause teardown) can run while this
+    // connect is in flight, and a NEW connect can start before the old completion
+    // fires (secondary-widget pause→resume, device crash 2026-07-13: the orphaned
+    // completion consumed/nulled the new cycle's pendingCallbacks → forEach of
+    // null right after "✓ Established"). Each cycle takes a generation; reset()
+    // bumps it, so a stale completion is dropped instead of settling — or
+    // clobbering — a cycle it doesn't own.
+    const gen = this._connectGen
     this.requestSessionInfo((result) => {
+      if (gen !== this._connectGen) return // torn down or preempted — not our cycle anymore
       this._connecting = false
       const callbacks = this.pendingCallbacks
       this.pendingCallbacks = null
-      callbacks.forEach((cb) => cb(result))
+      if (callbacks) callbacks.forEach((cb) => cb(result))
     })
   }
 }

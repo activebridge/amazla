@@ -409,6 +409,15 @@ const parseCommandStatus = (data) => {
     operationStatus: typeof fields[1] === 'number' ? fields[1] : 0,
   }
 }
+// NominalError { genericError(1 GenericError_E) } — the car UNDERSTOOD the command and
+// refused it. GenericError_E (Go SDK vcsec.proto): NONE=0, UNKNOWN=1, CLOSURES_OPEN=2,
+// ALREADY_PERFORMED=3. Device 2026-07-13: lock with a door open → genericError=2.
+const GENERIC_ERROR_NAMES = { 1: 'unknown error', 2: 'door open', 3: 'already done' }
+const parseNominalError = (data) => {
+  const fields = decodeMessage(data)
+  const code = typeof fields[1] === 'number' ? fields[1] : 0
+  return { genericError: code, name: GENERIC_ERROR_NAMES[code] || `error ${code}` }
+}
 // FromVCSECMessage { vehicleStatus(1), commandStatus(4), whitelistInfo(16), whitelistEntryInfo(17), nominalError(46) }
 // Carried at RoutableMessage.protobuf_message_as_bytes (field 10).
 const parseFromVCSECMessage = (data) => {
@@ -419,6 +428,7 @@ const parseFromVCSECMessage = (data) => {
     commandStatus: fields[4] instanceof Uint8Array ? parseCommandStatus(fields[4]) : null,
     // appDeviceInfoRequest (field 44) is a varint AppDeviceInfoRequest_E (1=GET_MODEL_NUMBER).
     appDeviceInfoRequest: typeof fields[44] === 'number' ? fields[44] : null,
+    nominalError: fields[46] instanceof Uint8Array ? parseNominalError(fields[46]) : null,
   }
 }
 const parseRoutableMessage = (data) => {
@@ -471,6 +481,7 @@ const parseRoutableMessage = (data) => {
   let commandStatus = null
   let authenticationRequest = null
   let appDeviceInfoRequest = null
+  let nominalError = null
   if (payload) {
     try {
       const vcsec = parseFromVCSECMessage(payload)
@@ -478,6 +489,7 @@ const parseRoutableMessage = (data) => {
       commandStatus = vcsec.commandStatus
       authenticationRequest = vcsec.authenticationRequest
       appDeviceInfoRequest = vcsec.appDeviceInfoRequest
+      nominalError = vcsec.nominalError
     } catch (_e) {}
   }
   let signedMessageStatus = null
@@ -496,6 +508,7 @@ const parseRoutableMessage = (data) => {
     commandStatus:       commandStatus,
     authenticationRequest: authenticationRequest,
     appDeviceInfoRequest:  appDeviceInfoRequest,
+    nominalError:        nominalError,
     signedMessageStatus: signedMessageStatus,
   }
 }

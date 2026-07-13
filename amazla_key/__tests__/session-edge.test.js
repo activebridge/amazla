@@ -22,6 +22,82 @@ describe('TeslaSession edge cases', () => {
   })
 })
 
+describe('TeslaSession unexpected link loss (_handleLinkDown)', () => {
+  // Device 2026-07-13: a car-side drop surfaced only via a LATE native connect
+  // callback; nothing reset the session, so the widget stayed "Connected" on a
+  // dead link and every tap failed silently. The ble layer now fires onLinkDown;
+  // the session must reset itself and notify the facade observer.
+  test('established session: resets and notifies the facade observer', () => {
+    const s = new TeslaSession()
+    s.established = true
+    let notified = 0
+    s.onLinkDown(() => notified++)
+    s._handleLinkDown()
+    expect(s.established).toBe(false)
+    expect(notified).toBe(1)
+  })
+
+  test('not established: no-op (mid-connect drops are the connect path\'s job)', () => {
+    const s = new TeslaSession()
+    let notified = 0
+    s.onLinkDown(() => notified++)
+    s._handleLinkDown()
+    expect(notified).toBe(0)
+  })
+
+  test('observer survives reset() so a reconnect keeps the facade wired', () => {
+    const s = new TeslaSession()
+    let notified = 0
+    s.onLinkDown(() => notified++)
+    s.reset()
+    s.established = true
+    s._handleLinkDown()
+    expect(notified).toBe(1)
+  })
+})
+
+describe('ensureSessionEstablished — connect-cycle generation guard', () => {
+  // Device crash 2026-07-13 (secondary widget): onPause reset() mid-connect, then
+  // a resume started a NEW connect; the ORPHANED first completion consumed and
+  // nulled the new cycle's pendingCallbacks → "forEach of null" right after
+  // "✓ Established". A stale completion must be dropped, not settle a cycle it
+  // doesn't own.
+  const boot = (s) => {
+    // Capture requestSessionInfo completions instead of touching BLE.
+    const completions = []
+    s.requestSessionInfo = (cb) => completions.push(cb)
+    return completions
+  }
+
+  test('reset() mid-connect: the orphaned completion is dropped without throwing', () => {
+    const s = new TeslaSession()
+    jest.spyOn(store, 'isEnrolled', 'get').mockReturnValue(true)
+    const completions = boot(s)
+    const results = []
+    s.ensureSessionEstablished((r) => results.push(r))
+    s.reset() // widget onPause teardown while connecting
+    expect(() => completions[0]({ success: true })).not.toThrow()
+    expect(results.length).toBe(0) // caller was torn down — never settled late
+  })
+
+  test('old completion cannot clobber a newer connect cycle', () => {
+    const s = new TeslaSession()
+    jest.spyOn(store, 'isEnrolled', 'get').mockReturnValue(true)
+    const completions = boot(s)
+    const first = []
+    const second = []
+    s.ensureSessionEstablished((r) => first.push(r))
+    s.reset() // teardown, then user re-enters the widget
+    s.ensureSessionEstablished((r) => second.push(r))
+    completions[0]({ success: false, error: 'stale' }) // orphan fires late
+    expect(second.length).toBe(0) // new cycle untouched
+    completions[1]({ success: true }) // the cycle that owns the callbacks settles it
+    expect(second.length).toBe(1)
+    expect(second[0].success).toBe(true)
+    expect(first.length).toBe(0)
+  })
+})
+
 describe('TeslaSession ambient-only watchdog (wedged BLE link recovery)', () => {
   // When a SessionInfoRequest gets only ambient (fields:[3]) and no real
   // SessionInfo, the request was likely truncated (dropped write chunk). Tier 0

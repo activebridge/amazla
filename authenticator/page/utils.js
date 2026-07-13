@@ -11,7 +11,7 @@ export const localStorage = {
         path: 'accounts.json',
         options: { encoding: 'utf8' },
       })
-      return JSON.parse(data)
+      return JSON.parse(data) || DEFAULTS.accounts
     } catch {
       return DEFAULTS.accounts
     }

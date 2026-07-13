@@ -12,16 +12,18 @@ const PILL_H = 72
 
 export function ResetButton({ y, onReset }) {
   const confirm = () => {
-    // createModal supports title/subtitle (and textColor/textAlpha/src) beyond what
-    // @zeppos/device-types' stubs list — the stubs lag the firmware API. textColor
-    // (white) and textAlpha (255) are the defaults, so we only set the copy.
+    // Match the documented @zos/interaction example EXACTLY: the only valid copy
+    // field is `content` (the earlier `title`/`subtitle` keys aren't options — the
+    // native modal rejected the call on-device, so the dialog never showed and
+    // confirm never fired: unpair "did nothing"). autoHide:false + manual show()
+    // per the official example — confirm runs onReset (which navigates away),
+    // cancel hides the dialog.
     const dialog = createModal({
-      title: getText('reset_title'),
       content: getText('reset_subtitle'),
-      subtitle: getText('reset_subtitle'),
-      autoHide: true,
+      autoHide: false,
       onClick: (keyName) => {
         if (keyName === MODAL_CONFIRM) onReset()
+        else dialog.show(false)
       },
     })
     dialog.show(true)

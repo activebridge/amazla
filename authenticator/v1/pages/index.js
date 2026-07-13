@@ -16,14 +16,18 @@ const CARD_H = STEP - GAP;
 // Pad the first card below the title bar (square) by bar height + one gap.
 // Round has no bar -> tiny pad.
 const TOP_PAD = width === height ? 10 : BAR_H + GAP;
+// Cards are capped at 330px and centered; narrow screens (Band 7) just get
+// the full device width.
+const CARD_W = Math.min(width, 330);
+const CARD_X = (width - CARD_W) / 2 | 0;
 // y/step hand the shared List() the v1 layout (3 cards below the title bar).
 const DIMS_V1 = {
   ...DIMS,
   card: {
     ...DIMS.card,
     h: CARD_H,
-    w: width,
-    x: 0,
+    w: CARD_W,
+    x: CARD_X,
     y: TOP_PAD,
     step: STEP,
   },
@@ -54,17 +58,20 @@ Page({
 
   render() {
     const accounts = this.state.accounts;
-
-    if (accounts.length === 0) return;
-
     const n = accounts.length;
+
     // Background timer (column gradient, behind everything). Cover the full
     // content plus the last visible screen so max scroll never shows black.
-    timerComp = Timer(n * STEP + height + TOP_PAD);
-    timerComp.update(getTimeRemaining());
+    if (n > 0) {
+      timerComp = Timer(n * STEP + height + TOP_PAD);
+      timerComp.update(getTimeRemaining());
+    }
 
-    // Shared List() — same async path as v3, with v1 dims.
+    // Shared List() — same async path as v3, with v1 dims. Also renders the
+    // "No accounts" empty state, so it must run even with zero accounts.
     List(accounts, null, DIMS_V1);
+
+    if (n === 0) return;
 
     // Scrollable list (old API works on v1/v2, crown included). Cap at n pages
     // so you can't scroll past the last card into an empty page below the heart.

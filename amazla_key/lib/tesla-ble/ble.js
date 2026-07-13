@@ -25,6 +25,12 @@ const BLE_CHUNK_INTERVAL_MS = 20
 // prefix → values like 9516/53666). Reject it instead of opening a multi-second
 // bogus reassembly window that could swallow the real response.
 const MAX_FRAME_SIZE = 2048
+// Foreign-disconnect rejection window. The native mstConnect callback fires for
+// ANY device's connection events (the paired phone's companion link cycles
+// constantly) and easy-ble forwards them as ours. A connected car streams frames
+// continuously (~1Hz auth beacons at minimum), so RX younger than this proves the
+// link is alive and the disconnect event belongs to another device.
+const FOREIGN_EVENT_RX_MS = 4000
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   // 8 s is enough for any successful Tesla GATT connect we've observed (350 ms
@@ -123,11 +129,16 @@ class TeslaBLE {
     // Persistent (multi-response): the registrant removes its own waiter on finish.
     this._waiters = []
     this.onDisconnect = null
+    // Unexpected-link-loss hook, separate from onDisconnect (which the debug BLE
+    // page owns): the session arms this on every connect to reset itself + flip
+    // the facade offline when the native stack reports the link dead late.
+    this.onLinkDown = null
     this.writeCompleteHandler = null
     this.charaValueHandler = null
     this.charaNotificationHandler = null
     this._lastResponseData = null
     this._lastResponseTime = 0
+    this._lastRxTime = 0 // last raw chunk arrival — link-health signal (foreign-event filter)
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
@@ -300,7 +311,31 @@ class TeslaBLE {
       if (done) {
         console.log('[BLE] (callback arrived AFTER JS timeout — native still works, JS gave up)')
         if (!result.connected) {
+          // The native mstConnect callback fires for ANY device's connection
+          // events — including the paired PHONE's companion link cycling — and
+          // easy-ble forwards them indistinguishably as ours (device 2026-07-13:
+          // a phone-link drop read as OUR car link dying reset a live session,
+          // and the re-dial churn wedged the BLE stack until a Bluetooth
+          // restart). A connected car streams frames continuously, so recent RX
+          // proves the link is alive and this event belongs to another device.
+          if (this.connected && Date.now() - this._lastRxTime < FOREIGN_EVENT_RX_MS) {
+            console.log(`[BLE] Ignoring native disconnect: RX ${Date.now() - this._lastRxTime}ms ago — link alive, foreign device's event`)
+            return
+          }
+          // Genuine late disconnect on a link we still believed was up (device
+          // 2026-07-13: car-side drop surfaced only as this late callback, 40s
+          // after dial — session/UI stayed "Connected" on a dead link and every
+          // command failed silently). Fail in-flight waiters now and tell the
+          // session via onLinkDown. Deliberate teardowns (disconnect()/recycle)
+          // already flipped `connected` false, so they don't re-enter here.
+          const wasUp = this.connected
           this.connected = false
+          if (wasUp) {
+            this._cleanup()
+            if (this.onLinkDown) {
+              try { this.onLinkDown() } catch (_e) {}
+            }
+          }
           if (this.onDisconnect) this.onDisconnect()
         }
         return
@@ -444,6 +479,7 @@ class TeslaBLE {
     this.connected = false
     this._cleanup()
     this.onDisconnect = null
+    this.onLinkDown = null
     // Clear cross-frame dedup state — otherwise a fake-timer test that resets
     // jest's clock can be tricked into dropping the first response by matching
     // a stale signature from a previous test.
@@ -583,6 +619,9 @@ class TeslaBLE {
   }
   _handleResponse(data, _len) {
     const chunk = new Uint8Array(data)
+    // Link-health signal: ANY chunk arriving proves the link is alive right now.
+    // Used to reject foreign-device disconnect events (see the connect callback).
+    this._lastRxTime = Date.now()
     if (!this.responseCallback && !this.idleCallback && this._waiters.length === 0) return
     if (this._rxBuf === null) {
       const now = Date.now()
