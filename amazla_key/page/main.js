@@ -103,6 +103,13 @@ const render = () => {
   !tesla.trunkOpen && button({ ...OPEN, y: 150, w: 200, h: 160, click_func: onTrunk })
   tesla.locked && button({ ...LOCK, w: 100, h: 110, click_func: onUnlock })
   !tesla.locked && button({ ...UNLOCK, w: 100, h: 110, click_func: onLock })
+
+  // Command in flight (tesla.busy, set by _runAction, cleared on the result push):
+  // dim veil + spinner over the controls. A command can take several seconds — ack
+  // wait, timeout+retry with a fresh counter, wake — so without this the screen looks
+  // dead between tap and result. Same overlay as the connecting state; drawn last so
+  // it's on top. _runAction rejects taps while busy, so the covered buttons are inert.
+  if (tesla.busy) Connecting()
 }
 
 // KPAY / Kezel in-app purchase lives on the app instance (see app.js globalData).

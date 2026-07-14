@@ -123,12 +123,17 @@ const parsePairingResponse = (data) => {
       if (fields[1] === OPERATIONSTATUS_WAIT) {
         return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       }
-      if (fields[1] === OPERATIONSTATUS_UNKNOWN_KEY) {
-        console.log('[VCSEC] ✓ Vehicle returned UNKNOWN_KEY status during pairing - this means key was added!')
+      // operationStatus enum only defines 0/1/2. A value >= 7 is the car responding to
+      // our now-ENROLLED key, not a fault: 7 = UNKNOWN_KEY (key-added transition), and
+      // 8 was seen on-device 2026-07-14 in the field-16 response right after the key
+      // appeared in the vehicle. Treat both as "enrolled" and route to the whitelist
+      // verify step (authoritative) rather than hard-failing the pairing.
+      if (fields[1] >= OPERATIONSTATUS_UNKNOWN_KEY) {
+        console.log('[VCSEC] ✓ operationStatus ' + fields[1] + ' — key enrolled, proceeding to verify')
         dbg.hasSigner = true  // Signal that pairing is complete and key was enrolled
-        return { success: true, status: 'ok', message: 'Key enrolled (UNKNOWN_KEY transition)', dbg }
+        return { success: true, status: 'ok', message: 'Key enrolled (status ' + fields[1] + ')', dbg }
       }
-      if (fields[1] >= 3 && fields[1] !== OPERATIONSTATUS_UNKNOWN_KEY) {
+      if (fields[1] >= 3) {
         return { success: false, status: 'error', error: statusName, dbg }
       }
       return { success: true, status: 'pending', message: statusName, dbg }

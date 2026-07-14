@@ -21,8 +21,11 @@ export function ResetButton({ y, onReset }) {
     const dialog = createModal({
       content: getText('reset_subtitle'),
       autoHide: false,
-      onClick: (keyName) => {
-        if (keyName === MODAL_CONFIRM) onReset()
+      // onClick receives a KeyObj ({ type }), NOT a bare key value — comparing the
+      // object itself to MODAL_CONFIRM is always false, so confirm silently did
+      // nothing (every tap hit the else and just hid the dialog).
+      onClick: (keyObj) => {
+        if (keyObj && keyObj.type === MODAL_CONFIRM) onReset()
         else dialog.show(false)
       },
     })

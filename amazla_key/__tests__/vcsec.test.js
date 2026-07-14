@@ -542,6 +542,22 @@ describe('VCSEC Protocol', () => {
       expect(parsed.dbg.path).toBe('f1N')
     })
 
+    test('f16-wrapped operationStatus=8 (seen post-enrollment on-device) routes to verify, not error', async () => {
+      const { encodeEnum, encodeBytes } = await import('../lib/tesla-ble/protocol/protobuf.js')
+
+      // Device-confirmed 2026-07-14: after the key was enrolled, the car sent a
+      // field-16 (UnsignedMessage) response whose inner field 1 = varint 8. The
+      // operationStatus enum only defines 0/1/2, so >= 7 is a post-enrollment state,
+      // not a fault — must resolve to the ok/verify path so pairing completes.
+      const inner = encodeEnum(1, 8)
+      const wrapped = encodeBytes(16, inner)
+
+      const parsed = parsePairingResponse(wrapped)
+      expect(parsed.success).toBe(true)
+      expect(parsed.status).toBe('ok')
+      expect(parsed.dbg.hasSigner).toBe(true)
+    })
+
     test('f1N path: direct varint operationStatus=OK returns pending (not ok)', async () => {
       const { encodeEnum } = await import('../lib/tesla-ble/protocol/protobuf.js')
 

@@ -86,16 +86,25 @@ const paint = () => {
   const key = statusKey()
   const online = key === 'online'
   if (!online) authorized = false
-  const s = online ? { text: authorized ? 'Authorized' : 'Connected', color: 0x00ef33 } : LABELS[key]
+  // Command in flight (tesla.busy): a tap-to-lock/unlock can take several seconds
+  // (ack wait, timeout+retry, wake). Show the spinner in the padlock slot + a blue
+  // "Working…" line so the card doesn't read as frozen between tap and result.
+  const busy = online && tesla.busy
+  const s = busy
+    ? { text: 'Working…', color: 0x3e6ae1 }
+    : online
+      ? { text: authorized ? 'Authorized' : 'Connected', color: 0x00ef33 }
+      : LABELS[key]
   statusText.light.set({ text: s.text })
   statusText.dark.set({ text: s.text })
   statusText.main.set({ text: s.text, color: s.color })
-  if (spinner) spinner.setProperty(prop.VISIBLE, key === 'checking')
+  if (spinner) spinner.setProperty(prop.VISIBLE, key === 'checking' || busy)
   if (stateIcon) {
     // State icons (assets named by the ACTION-page convention): closed padlock =
     // buttons/unlock.png, open padlock = buttons/lock.png — same as pages/styles.js.
-    stateIcon.setProperty(prop.VISIBLE, online)
-    if (online) stateIcon.set({ src: tesla.locked ? 'buttons/unlock.png' : 'buttons/lock.png', ...ICON, centered: false })
+    // Hidden while busy so the spinner owns the padlock slot.
+    stateIcon.setProperty(prop.VISIBLE, online && !busy)
+    if (online && !busy) stateIcon.set({ src: tesla.locked ? 'buttons/unlock.png' : 'buttons/lock.png', ...ICON, centered: false })
   }
 }
 

@@ -133,6 +133,13 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
 
     function waitForNFC() {
       if (cancelled) return
+      // Show the "tap your key card on the console" screen while we wait for the tap.
+      // Some cars (device-confirmed 2026-07-14) never send an explicit WAIT status —
+      // they stream 'pending' and prompt on the car's own screen — so gating the NFC
+      // screen on WAIT left the watch stuck on the generic pairing spinner. Every path
+      // into the tap-wait goes through here; onState is idempotent (setScreen guards
+      // unchanged states, so no re-buzz).
+      onState('confirming')
       BLE.waitForNextResponse(60000, (r2) => {
         if (cancelled) return
         if (!r2.success) { onError('NFC tap timeout. Please try again.'); return }

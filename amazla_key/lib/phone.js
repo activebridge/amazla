@@ -19,12 +19,30 @@ class Phone {
     this._mb = app && app._options && app._options.globalData ? app._options.globalData.messageBuilder : null
   }
 
+  // Race an RPC against our own timer. The lib's 60s default timeout only arms
+  // AFTER the shake handshake completes — a dead phone channel (side service not
+  // running) hangs the promise forever and left the pairing spinner stuck with no
+  // error. This guard turns that into a visible failure fast.
+  _withTimeout(promise, method, ms) {
+    let timer = null
+    const clear = () => { if (timer !== null) { clearTimeout(timer); timer = null } }
+    promise.then(clear, clear)
+    const guard = new Promise((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timer = null
+        reject(new Error(`${method}: phone not responding — open the Zepp app`))
+      }, ms)
+    })
+    return Promise.race([promise, guard])
+  }
+
   _request(method, params) {
     if (!this._mb) return Promise.reject(new Error('messageBuilder not available'))
-    return this._mb.request({ method, params: params || {} }).then((r) => {
+    const rpc = this._mb.request({ method, params: params || {} }).then((r) => {
       if (!r || !r.success) throw new Error((r && r.error) || `${method} failed`)
       return r
     })
+    return this._withTimeout(rpc, method, 10000)
   }
 
   // Binary response request. Server replies with a raw buffer envelope:
@@ -33,7 +51,9 @@ class Phone {
   // escaping doubled the size and OOM-rebooted the watch on reassembly.
   _requestBin(method, params) {
     if (!this._mb) return Promise.reject(new Error('messageBuilder not available'))
-    return this._mb.request({ method, params: params || {} }, { dataType: 'bin' }).then((buf) => {
+    // 20s guard (not 10): the ECDH scalar-mul on the phone takes ~4s alone,
+    // plus chunked binary transfer.
+    const rpc = this._mb.request({ method, params: params || {} }, { dataType: 'bin' }).then((buf) => {
       if (!buf || buf.length < 1) throw new Error(`${method}: empty response`)
       const body = buf.subarray ? buf.subarray(1) : buf.slice(1)
       if (buf[0] !== 1) {
@@ -43,6 +63,7 @@ class Phone {
       }
       return body
     })
+    return this._withTimeout(rpc, method, 20000)
   }
 
   // Private: _request + success handler + error cb
