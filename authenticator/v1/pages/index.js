@@ -31,6 +31,12 @@ const DIMS_V1 = {
     y: TOP_PAD,
     step: STEP,
   },
+  // API 1.0 TEXT has no custom-font support (widget renders nothing) — null
+  // opts out of the Jua default so codes use the system font.
+  digit: {
+    ...DIMS.digit,
+    font: null,
+  },
 };
 
 const PERIOD = 30;

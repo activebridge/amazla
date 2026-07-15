@@ -30,6 +30,7 @@ export const Card = (acc, code = null, y, colorIndex, { card, name, digit }) => 
     h: digit.h,
     text_size: digit.text_size,
     gap: digit.gap,
+    font: digit.font,
   })
 
   const update = ({ title: t, code: c, colorIndex: ci }) => {

@@ -1,30 +1,30 @@
 import { text } from './../../../../pages/ui.js'
 import { GRADIENT_COLORS } from './../../../shared/colors.js'
 
-const font = 'fonts/Jua.ttf'
-
 const parse = (code) => {
   const parts = code.split(' ')
   return [parts[0] || '---', parts[1] || '---']
 }
 
-export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size, gap = 10 }) => {
-  const c = { centered: false }
+// font defaults to Jua; v1 passes font: null (custom TTF unsupported on API 1.0
+// — the TEXT widget renders nothing at all) to fall back to the system font.
+export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size, gap = 10, font = 'fonts/Jua.ttf' }) => {
+  const c = font ? { font, centered: false } : { centered: false }
   const halfW = w / 2 | 0
   const [p1, p2] = parse(code)
 
   const createHalf = (x, alignRight, color, txt) => {
     const lightShadow = text({
       x: x - 1, y: y - 1, w: halfW, h, text: txt, text_size,
-      color: 0xc0c0c0, font, align_h: alignRight ? 2 : 0, ...c,
+      color: 0xc0c0c0, align_h: alignRight ? 'right' : 'left', ...c,
     })
     const darkShadow = text({
       x: x + 2, y: y + 3, w: halfW, h, text: txt, text_size,
-      color: 0x000000, font, align_h: alignRight ? 2 : 0, ...c,
+      color: 0x000000, align_h: alignRight ? 'right' : 'left', ...c,
     })
     const main = text({
       x, y, w: halfW, h, text: txt, text_size,
-      color, font, align_h: alignRight ? 2 : 0, ...c,
+      color, align_h: alignRight ? 'right' : 'left', ...c,
     })
     return { lightShadow, darkShadow, main }
   }
