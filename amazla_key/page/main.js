@@ -23,6 +23,7 @@ import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // session/BLE teardown (tesla.shutdown()).
 import Phone from '../lib/phone.js'
 import tesla from '../lib/tesla.js'
+import { autoLock, autoUnlock } from './callbacks.js'
 
 // MOCK (simulator only — the real lib OOMs the SIM): comment the 2 imports above
 // and uncomment the line below to develop the UI without a car.
@@ -237,17 +238,29 @@ export function build(host) {
   // Auto-establish the BLE session on open and pull the live car state; once online
   // this also arms the live-push listener so opening a door, etc. repaints the view.
   //
-  // Settings sync (vehicle name/VIN from the companion) is a phone RPC that shares the
-  // single BLE radio with the car connection. We only reach here when PAIRED (unpaired
-  // was redirected above), and connect() does a real BLE scan/GATT/session — so defer
-  // the sync until that settles (first non-'checking' onChange) to avoid radio contention.
-  // Tracked so destroy() can remove it — the secondary widget rebuilds per visit
-  // (build/destroy cycle), and an untracked listener would accumulate.
+  // Settings sync (vehicle name/VIN + the autoUnlock/autoLock toggles) is a phone RPC
+  // that shares the single BLE radio with the car connection, so defer it until connect
+  // settles (first non-'checking' onChange) to avoid radio contention. It persists the
+  // toggles into local storage for later reads.
+  //
+  // Auto-unlock on connect is PAGE-owned (tesla is just the key facade): the first time
+  // we reach 'online', if the toggle is on and the car is locked, unlock. It reads the
+  // PERSISTED store.autoUnlock directly — it's fine to miss the very first connect after
+  // a toggle change, since the sync above updates storage for the next connect.
+  // Tracked so destroy() can remove it — the secondary widget rebuilds per visit and an
+  // untracked listener would accumulate.
   let synced = false
+  let autoUnlocked = false
   syncListener = () => {
-    if (synced || tesla.connection.status === 'checking') return
-    synced = true
-    phone.syncSettings()
+    if (tesla.connection.status === 'checking') return
+    if (!synced) {
+      synced = true
+      phone.syncSettings()
+    }
+    if (!autoUnlocked && tesla.connection.status === 'online') {
+      autoUnlocked = true
+      autoUnlock()
+    }
   }
   tesla.onChange(syncListener)
   tesla.connect()
@@ -275,8 +288,8 @@ export function destroy() {
     syncListener = null
   }
   safe('keepScreenOn', () => keepScreenOn(false))
-  // Auto-lock (if still connected to an unlocked, empty car) then free the native
-  // BLE/session state so the next launch isn't poisoned. tesla owns that teardown —
-  // see tesla.shutdown().
+  // Auto-lock (if still connected to an unlocked, empty car) BEFORE tearing down BLE,
+  // then free the native BLE/session state so the next launch isn't poisoned.
+  safe('autoLock', () => autoLock())
   tesla.shutdown()
 }

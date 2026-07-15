@@ -950,7 +950,7 @@ class TeslaSession {
   // can't complete in onDestroy before the process dies. Here we sign once and write
   // all chunks synchronously (sendNoReplySync), no ACK wait. Returns true if sent.
   lockSyncFireAndForget() {
-    if (!this.established) return false
+    if (!this.established) { console.log('[SESSION] autolock skip: session not established'); return false }
     try {
       const message = this.buildAuthenticatedCommand(RKE_ACTION_LOCK)
       return teslaBLE.sendNoReplySync(message)

@@ -458,11 +458,11 @@ describe('Timeout Handling', () => {
     expect(PAIRING_TIMEOUT).toBe(15000)
   })
 
-  test('keycard tap wait has 60 second timeout', () => {
-    // This is verified in ble-service.js line 381:
-    // const timeout = setTimeout(..., 60000)
-    const KEYCARD_TAP_TIMEOUT = 60000
-    expect(KEYCARD_TAP_TIMEOUT).toBe(60000)
+  test('keycard tap wait has 30 second silence timeout', () => {
+    // pairing.js NFC_TAP_TIMEOUT_MS — re-arms on every car frame, so this is the
+    // max FULLY-SILENT gap (dropped link) before "tap timeout", not the human budget.
+    const KEYCARD_TAP_TIMEOUT = 30000
+    expect(KEYCARD_TAP_TIMEOUT).toBe(30000)
   })
 })
 

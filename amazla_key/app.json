@@ -34,7 +34,7 @@
               "path": "secondary-widget/index",
               "icon": "icon.png",
               "name": "Tesla",
-              "preview": "preview",
+              "preview": "preview.png",
               "runtime": {
                 "type": "js"
               }

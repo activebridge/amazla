@@ -119,9 +119,6 @@ class Tesla {
     this._connectStartedAt = Date.now() // DIAG: measure time-to-first-real-status
     this._realStatusPainted = false
     this._realStatusReceived = false
-    // Arm opt-in auto-unlock for this explicit connect only — a later manual
-    // refresh() while parked must never unlock the car.
-    this._wantAutoUnlock = true
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
   }
@@ -174,13 +171,9 @@ class Tesla {
       this._startLivePushes()
       if (cb) cb({ success: true }) // online now; live state refines as it arrives
       this._loadInitialState()
-      // Opt-in auto-unlock (settings toggle, default OFF). Fires once per explicit
-      // connect/retry, after the read-first status fetch is registered. If passive
-      // entry already unlocked the car, the extra unlock is a harmless ack.
-      if (this._wantAutoUnlock) {
-        this._wantAutoUnlock = false
-        if (store.autoUnlock) this.unlock()
-      }
+      // Auto-unlock on connect is owned by the page (page/main.js), which reads the
+      // synced store.autoUnlock toggle when the connection first reaches 'online' —
+      // tesla is just the key/transport facade.
     })
   }
 
@@ -223,35 +216,26 @@ class Tesla {
   }
 
   retry() {
-    this._wantAutoUnlock = true // a retry is an explicit connect — same auto-unlock intent
     this._setConnection({ status: 'checking', error: null })
     this.refresh()
   }
 
-  // App-close auto-lock. Passive entry only auto-locks while the watch is connected;
-  // closing the app drops BLE, so a car left unlocked stays unlocked. On close, if
-  // we're still connected to an UNLOCKED car with NO driver present, fire a lock
-  // before the BLE link is torn down. Fire-and-forget with a synchronous flush —
-  // onDestroy kills the process immediately after, so there's no time to wait for an
-  // ACK or pace chunks. Returns true if a lock was sent. Gating is conservative: it
-  // never locks while someone's in the car (userPresent) or if already locked.
-  lockOnClose() {
-    if (!store.autoLock) return false // settings toggle (default OFF — opt-in)
-    if (this.connection.status !== 'online') return false
-    if (this.locked) return false        // already locked — nothing to do
-    if (this.userPresent) return false   // driver in the car — do not lock them in/out
-    return teslaSession.lockSyncFireAndForget()
+  // Raw synchronous fire-and-forget lock, for the app-close auto-lock. NO gates — the
+  // page callback (page/callbacks.js autoLock) owns the decision; tesla is just the
+  // transport. Writes every chunk in one JS turn since onDestroy tears the process down
+  // right after (no time to wait for an ACK or pace chunks). Returns true if sent.
+  lockSync() {
+    const sent = teslaSession.lockSyncFireAndForget()
+    console.log('[Tesla] lockSync ' + (sent ? 'sent' : 'send failed'))
+    return sent
   }
 
-  // App-close teardown. Auto-lock while the link is still up (must run first), then
-  // hand off to the session's shutdown(), which clears session state AND flushes the
-  // native BLE stack so the next launch doesn't inherit poisoned state (a stuck
-  // mstConnect returns "failed" for ~30s otherwise). tesla talks only to teslaSession
-  // — the native BLE reset lives behind it — so the UI depends only on this facade.
+  // App-close teardown. The caller runs the auto-lock (page/callbacks.js autoLock)
+  // FIRST, while the link is still up; this then hands off to the session's shutdown(),
+  // which clears session state AND flushes the native BLE stack so the next launch
+  // doesn't inherit poisoned state (a stuck mstConnect returns "failed" for ~30s
+  // otherwise). tesla talks only to teslaSession — the native BLE reset lives behind it.
   shutdown() {
-    try {
-      this.lockOnClose()
-    } catch (_e) {}
     teslaSession.shutdown()
   }
 

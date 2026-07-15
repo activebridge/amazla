@@ -6,6 +6,7 @@ import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // REAL (device): the BLE + crypto lib. MOCK (simulator — real lib OOMs the SIM):
 // swap the imports, same toggle as page/main.js.
 import tesla from '../lib/tesla.js'
+import { autoLock } from '../page/callbacks.js'
 // import { tesla } from '../page/tesla-mock.js'
 
 // App widget (widget-list card): a Tesla key card — matte black rounded card
@@ -289,8 +290,9 @@ AppWidget({
     running = false
     tesla.offChange(paint)
     safe('keepScreenOn', () => keepScreenOn(false))
-    // Auto-lock (settings-gated, only if online+unlocked+no driver) then flush
-    // session + native BLE — same teardown as the app (tesla.shutdown()).
+    // Auto-lock (settings-gated, only if online+unlocked+no driver) BEFORE tearing down
+    // BLE, then flush session + native BLE — same teardown as the app.
+    safe('autoLock', () => autoLock())
     tesla.shutdown()
   },
 })

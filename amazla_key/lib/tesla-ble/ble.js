@@ -550,12 +550,16 @@ class TeslaBLE {
   // response, so the native stack paces the back-to-back writes itself. Best-effort:
   // returns false if not connected.
   sendNoReplySync(data) {
-    if (!this.connected) return false
+    if (!this.connected) { console.log('[BLE] sendNoReplySync skip: not connected'); return false }
     const message = _frame(data)
+    const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
+    let written = 0
     for (let offset = 0; offset < message.length; offset += BLE_CHUNK_SIZE) {
       const chunk = message.slice(offset, Math.min(offset + BLE_CHUNK_SIZE, message.length))
-      this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
+      const ok = this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
+      if (ok !== false) written++
     }
+    console.log('[BLE] sendNoReplySync flushed ' + written + '/' + total + ' chunks (' + message.length + 'B)')
     return true
   }
   waitForNextResponse(timeout, callback) {

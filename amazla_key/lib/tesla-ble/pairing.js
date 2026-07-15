@@ -17,6 +17,13 @@ import { binaryStringToBytes, bytesToBinaryString } from './crypto/binary-utils.
 //   onError(message) — unrecoverable failure
 //
 // Returns { start(), cancel() }
+// Max silence (no car frame) during the keycard-tap wait before we give up. This
+// re-arms on every incoming frame, and the car streams status ~1×/s while waiting
+// for the tap — so this isn't the human's tap budget, it's how long the car can go
+// FULLY silent (dropped link) before we surface "tap timeout". 30s: ample for a human
+// tap even on a car that goes quiet, half the old 60s dead-link stare on the NFC screen.
+const NFC_TAP_TIMEOUT_MS = 30000
+
 export function createPairingController(phone, { onState, onLog, onSuccess, onError }) {
   var cancelled = false
   var pairMsgBytes = null
@@ -140,7 +147,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
       // into the tap-wait goes through here; onState is idempotent (setScreen guards
       // unchanged states, so no re-buzz).
       onState('confirming')
-      BLE.waitForNextResponse(60000, (r2) => {
+      BLE.waitForNextResponse(NFC_TAP_TIMEOUT_MS, (r2) => {
         if (cancelled) return
         if (!r2.success) { onError('NFC tap timeout. Please try again.'); return }
         var p2 = parsePairingResponse(r2.data), d2 = p2.dbg || {}
