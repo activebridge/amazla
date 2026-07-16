@@ -60,7 +60,7 @@ const SESSION_INFO_MAX_CONNECTS = 2
 // can't have rotated) up to MAX_CONNECT_ATTEMPTS, with only a brief settle so the
 // native stack drains between dials. Device data + Go SDK + ESPHome all agree the
 // first cold connect can't be made to stick; bounded-attempt + fast retry is the fix.
-const MAX_CONNECT_ATTEMPTS = 4
+const MAX_CONNECT_ATTEMPTS = 3
 const CONNECT_RETRY_SETTLE_MS = 150
 // Beat between stopScan() and the first dial — guards an observed race where mstConnect
 // silently hangs when issued back-to-back with scan teardown. Trimmed 200→100ms to shave

@@ -19,21 +19,41 @@ const errBin = (msg) => Buffer.concat([Buffer.from([0]), Buffer.from(String(msg 
 // (saw a 32-byte priv come back as 200+ chars with literal `` sequences);
 // when either side is the wrong length the pair is unusable for ECDH and we
 // MUST regenerate both — otherwise SessionInfo HMAC verification fails.
+// In-memory cache: the keypair the side service is actually using this session.
+// Without it, a settingsStorage round-trip corruption between BLE_PAIR_SETUP and
+// BLE_COMPUTE_SHARED_SECRET made the validator silently regenerate MID-PAIR:
+// ECDH then ran with a private key that no longer matched the pubkey the car had
+// just enrolled, so the session key was wrong, SessionInfo HMAC mismatched, and
+// pairing failed with the orphaned key left on the car's whitelist (device
+// 2026-07-15). The cache guarantees every RPC in one side-service session sees
+// ONE keypair; settingsStorage is only best-effort persistence across restarts.
+let _keypair = null
+
 const ensureValidKeypair = () => {
+  if (_keypair) return _keypair
   const pub = settings.settingsStorage.getItem('tesla_public_key')
   const priv = settings.settingsStorage.getItem('tesla_private_key')
   // Log only LENGTHS, never bytes — the private key unlocks the car, so its hex
   // must never reach the companion console (it can surface in Zepp diagnostics).
   console.log(`[App.diag] keypair lengths: pub=${pub == null ? 'null' : pub.length} priv=${priv == null ? 'null' : priv.length}`)
   if (pub && priv && pub.length === 65 && priv.length === 32) {
-    return { publicKeyBinary: pub, privateKeyBinary: priv, regenerated: false }
+    _keypair = { publicKeyBinary: pub, privateKeyBinary: priv, regenerated: false }
+    return _keypair
   }
   console.log(`[App] Keypair invalid (pub=${pub ? pub.length : 'null'}, priv=${priv ? priv.length : 'null'}) — regenerating`)
   const fresh = bleCrypto.generateEnrolledKeyPair()
   if (!fresh.success) throw new Error('Keypair regen failed')
   settings.settingsStorage.setItem('tesla_private_key', fresh.privateKeyBinary)
   settings.settingsStorage.setItem('tesla_public_key', fresh.publicKeyBinary)
-  return { publicKeyBinary: fresh.publicKeyBinary, privateKeyBinary: fresh.privateKeyBinary, regenerated: true }
+  // Read-back check, lengths only. Diagnostic: the local copy may read clean even
+  // when the persisted copy is mangled, but a mismatch here PROVES the storage
+  // layer corrupts this keypair and the next side-service restart needs a re-pair.
+  const priv2 = settings.settingsStorage.getItem('tesla_private_key')
+  if (priv2 !== fresh.privateKeyBinary) {
+    console.log(`[App] KEYPAIR STORAGE CORRUPTED on write (priv wrote 32, read ${priv2 == null ? 'null' : priv2.length}) - using in-memory key this session`)
+  }
+  _keypair = { publicKeyBinary: fresh.publicKeyBinary, privateKeyBinary: fresh.privateKeyBinary, regenerated: true }
+  return _keypair
 }
 
 const dispatch = async (method, response, params = {}) => {
@@ -97,12 +117,18 @@ const actions = {
     return okBin(binaryStringToBytes(result.secret))
   },
 
-  // Full unpair: wipe the tesla enrollment/vehicle data from the phone's settingsStorage
-  // (keypair + vehicle identity). The watch clears its own localStorage separately. KPAY
-  // license keys are intentionally left alone — a reset unpairs, it doesn't un-purchase.
+  // Full unpair: wipe the tesla enrollment (keypair + pairing state) from the phone's
+  // settingsStorage. The watch clears its own localStorage separately. Deliberately KEPT:
+  // vehicleVin/vehicleName — user-entered settings that identify the car, not pairing
+  // data; wiping them forced re-typing the 17-char VIN after every reset (user, 2026-07-15).
+  // The pairing page re-syncs them to the watch, so reset lands on "ready", not "setup".
+  // KPAY license keys are also left alone — a reset unpairs, it doesn't un-purchase.
+  // (A kpay-wiping "factory reset" variant was tried 2026-07-15 and reverted: re-seeding
+  // the account token broke the purchase popup flow.)
   RESET: async () => {
-    console.log('[App] RESET: clearing tesla settings')
-    const keys = ['tesla_public_key', 'tesla_private_key', 'vehicleMac', 'vehiclePairedAt', 'vehicleName', 'vehicleVin']
+    console.log('[App] RESET: clearing tesla enrollment (VIN kept)')
+    _keypair = null // drop the in-memory keypair — next pair must regenerate
+    const keys = ['tesla_public_key', 'tesla_private_key', 'vehicleMac', 'vehiclePairedAt']
     for (let i = 0; i < keys.length; i++) settings.settingsStorage.removeItem(keys[i])
     return { success: true }
   },

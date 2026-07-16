@@ -19,10 +19,17 @@ const OPERATION_STATUS_NAMES = {
   6: 'INVALID_NONCE',
   7: 'UNKNOWN_KEY (not in whitelist - re-pair required)',
 }
+// WhitelistOperation_information_E (teslamotors/vehicle-command vcsec.proto).
+// Only the codes a watch pairing can realistically hit get friendly text.
 const WL_ERRORS = {
-  5:  'No permission (wl:5) - owner must approve',
-  6:  'Invalid keycard (wl:6) - wrong card?',
+  3:  'Key slots full (wl:3) - remove a key in the car',
+  4:  'Whitelist full (wl:4) - remove a key in the car',
+  5:  'No permission to add (wl:5) - owner must approve',
+  6:  'Invalid public key (wl:6)',
+  24: 'Denied on car screen (wl:24)',
   25: 'Keycard tap timeout (wl:25) - tap faster',
+  27: 'Valet mode active (wl:27)',
+  28: 'Cancelled on car (wl:28)',
 }
 const wlErrorMessage = (code) => WL_ERRORS[code] ?? `WL info:${code}`
 const buildKeyMetadata = (keyFormFactor) => encodeEnum(1, keyFormFactor)
@@ -168,6 +175,16 @@ const parsePairingResponse = (data) => {
       if (wlInfo === 0) {
         console.log('[VCSEC] Pairing completed (manual)')
         return { success: true, status: 'ok', message: 'Key added successfully', dbg }
+      }
+      // 13 = ATTEMPTING_TO_ADD_KEY_THAT_IS_ALREADY_ON_THE_WHITELIST: the car
+      // ALREADY has this key — a previous attempt succeeded but the watch missed
+      // the transient success frame (device 2026-07-15: try 1 added the key, the
+      // retry got wl:13 and errored the whole pairing). Success-equivalent:
+      // proceed to verify + session derive like a normal completion.
+      if (wlInfo === 13) {
+        console.log('[VCSEC] Key already on whitelist (wl:13) — treating as paired')
+        dbg.hasSigner = true
+        return { success: true, status: 'ok', message: 'Key already on whitelist', dbg }
       }
       if (wlInfo === 14) return { success: true, status: 'wait', message: 'Tap key card on car', dbg }
       return { success: false, status: 'error', error: wlErrorMessage(wlInfo), dbg }

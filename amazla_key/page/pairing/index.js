@@ -96,15 +96,17 @@ const render = () => {
 }
 
 const setScreen = (next) => {
-  const changed = next !== screen
+  // No-op when the screen isn't actually changing. The controller streams the same
+  // state repeatedly (e.g. onState('confirming') on every ~1Hz beacon during the
+  // keycard wait), and re-running render() there just churns delete+recreate of the
+  // slide's widgets — the async delete/recreate is where the old title survives and
+  // ghosts under the new one. Nothing changed ⇒ nothing to repaint (or re-buzz).
+  if (next === screen) return
   screen = next
-  // Haptic cues on entering a state (guarded so a repeated controller callback for
-  // the same state doesn't re-buzz): one short buzz when the user is asked to tap
+  // Haptic cues on entering a state: one short buzz when the user is asked to tap
   // the key card, a double buzz (notification pattern) when pairing completes.
-  if (changed) {
-    if (next === 'nfc') vibro.medium()
-    else if (next === 'success') vibro.notification()
-  }
+  if (next === 'nfc') vibro.medium()
+  else if (next === 'success') vibro.notification()
   render()
 }
 
@@ -149,6 +151,20 @@ Page({
     setWakeUpRelaunch(true)
     setPageBrightTime(300)
 
+    // Clean slate. `screen`/`errorMsg`/`controller` are MODULE-level (the page module
+    // is a singleton — they persist across every build/onDestroy for the whole app
+    // session). A previous visit's controller can still have async work in flight
+    // (BLE waitForNextResponse callbacks, deriveSessionKey retry timers, a session
+    // timeout). Without this, that stale controller fires a late onError/onSuccess
+    // AFTER this fresh build and repaints a "connection timeout"/"paired!" slide over
+    // the start slide (device 2026-07-16). Cancelling flips its `cancelled` flag so
+    // every in-flight callback no-ops instead of driving the screen.
+    if (controller) {
+      safe('controller.cancel', () => controller.cancel())
+      controller = null
+    }
+    errorMsg = ''
+
     phone = new Phone()
 
     screen = store.vehicleVin ? 'ready' : 'setup'
@@ -156,14 +172,28 @@ Page({
     hmUI.setStatusBarVisible(false)
     keepScreenOn(true)
 
-    // Pull the latest VIN from the phone; flip setup → ready once it lands.
-    phone.syncSettings()
-    setTimeout(() => {
-      if (screen === 'setup' && store.vehicleVin) setScreen('ready')
-    }, 1500)
+    // Pull the latest VIN from the phone, then re-derive the screen BOTH ways:
+    // setup → ready when a VIN landed, but also ready → setup when the phone no
+    // longer has one (stale watch VIN after an unpair/VIN removal — the initial
+    // guess above came from the watch's own storage, which syncSettings just
+    // corrected). Only while still on an instruction screen: once the user
+    // advanced to pair/pairing/nfc/…, the sync result must not yank the flow back.
+    phone.syncSettings().then(() => {
+      if (screen !== 'setup' && screen !== 'ready') return
+      const next = store.vehicleVin ? 'ready' : 'setup'
+      if (next !== screen) setScreen(next)
+    })
   },
 
   onDestroy() {
+    // Delete THIS page's widgets before we go. The app keeps setWakeUpRelaunch(true),
+    // so exit→reopen doesn't kill the process cleanly: without this, the slide's
+    // native widgets linger on the display, and the next launch is a fresh render
+    // context with an empty widgets[] that has no reference to them and can never
+    // delete them — so each relaunch stacks another undeleted slide until they
+    // visibly overlay (device 2026-07-16: exit/open → stale 'success' slide, then
+    // two pages overlaid). Clearing here is the only point that still owns them.
+    safe('UI.reset', () => UI.reset())
     // Cancel any in-flight pairing (stops scan + disconnect) and free BLE so the
     // next page doesn't inherit poisoned native state — same teardown as the
     // main page. The session key cached during pairing makes the main page's

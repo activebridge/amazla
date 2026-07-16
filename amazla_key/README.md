@@ -57,7 +57,7 @@ ZeppOS app for controlling Tesla vehicles from Amazfit smartwatches.
 │     ┌─────────────────────────────────────────────────────────────────┐      │
 │     │  Watch                                                          │      │
 │     │  ┌─────────────────────────────────────────────────────────────┐│      │
-│     │  │ watchPublicKey:  65-byte binary string (LocalStorage)       ││      │
+│     │  │ watch_public_key.dat:  65-byte EC point (FILE, not LS)      ││      │
 │     │  └─────────────────────────────────────────────────────────────┘│      │
 │     │  Phone holds the enrolled keypair (settingsStorage); does ECDH  │      │
 │     └─────────────────────────────────────────────────────────────────┘      │
@@ -93,6 +93,15 @@ because both keys are long-term and static (per-session freshness rides in the e
 each message's HMAC, not in the key). The key is cached only *after* the SessionInfo HMAC verifies, so
 a wrong key never sticks. A lost/corrupted cached key (or a vehicle re-key) needs the phone to
 re-derive — there is no standalone on-watch ECDH fallback.
+
+**Storage: all binary key material lives in files, never LocalStorage.** `watch_public_key.dat`,
+`vehicle_ec_public_key.dat` and `session_key.dat` are 65/65/16-byte values full of null bytes, which
+ZeppOS LocalStorage silently corrupts — a *later* LS write mangles an already-stored null-byte value.
+The failure this caused was subtle: pairing read the still-fresh key and completed (the car even
+unlocked), then the very next connect read a corrupted `watchPublicKey` and the vehicle answered
+`KEY_NOT_ON_WHITELIST` for a key that was, in fact, permanently enrolled. Moving the pubkey to a file
+(matching the private-key/session-key/EC-key precedent) fixed it. Only non-secret, null-byte-free
+scalars (VIN, name, MAC hint, toggles) stay in LocalStorage.
 
 ## Pairing Flow
 
@@ -172,7 +181,7 @@ re-derive — there is no standalone on-watch ECDH fallback.
 │      │                  │                    │                    │          │
 │      ▼                  ▼                    ▼                    ▼          │
 │   Paired + session key cached. Watch is now standalone — no phone needed.    │
-│   (If the post-pair derivation fails, it retries on the next CONNECT)        │
+│   (Post-pair derivation retries in-flow: see "Post-pair key derivation")     │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -196,6 +205,22 @@ EC key.)
 Step 2 fires immediately after pair completes so the key is derived while the phone is still in range
 and the BLE connection is still up. If a later CONNECT finds the vehicle's pubkey has changed, the
 key is re-derived via the phone on the fly.
+
+### Post-pair key derivation (retry until signed)
+
+A freshly enrolled key exposes a timing quirk: for the first few seconds after the whitelist add, the
+car answers the `SessionInfoRequest` **without an HMAC tag** ("Unauthenticated SessionInfo", 141 bytes
+vs the signed 175). The tag is what proves the response — and lets the key derivation verify — so the
+first attempt right after pairing often can't complete. A second exchange ~1–2 s later comes back
+signed. The pairing flow therefore **retries the derivation (4× at 2 s)** on the still-live connection
+(re-dialing if the car dropped the link post-enroll) instead of deriving once. Only if all attempts
+fail does it fall back to deriving on the next CONNECT. Without the retry, pairing success was a coin
+flip — the same signed-vs-unsigned race decided whether the watch ended up paired.
+
+The car also often streams `operationStatus`/whitelist frames as generic **`pending`** rather than an
+explicit `WAIT` while awaiting the keycard tap (it prompts on its own touchscreen), and a **re-add of
+an already-enrolled key returns `WhitelistOperation info 13` (`ALREADY_ON_WHITELIST`)** — both are
+treated as success-equivalent so a retried or repeated pairing converges instead of erroring.
 
 ## Session Establishment Flow
 

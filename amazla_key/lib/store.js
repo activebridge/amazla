@@ -47,12 +47,27 @@ const set = (name, value) => {
 }
 
 const store = {
+  // Enrolled watch PUBLIC key (65-byte uncompressed EC point). File-backed for the
+  // SAME reason as watchPrivateKey / vehicleEcPublicKey / sessionKey: the point
+  // contains null bytes, which LocalStorage corrupts — and a LATER LS write (e.g.
+  // vehicleMac during a connect scan) mangles an already-stored null-byte value.
+  // That produced the nastiest failure of all: pairing derived + unlocked fine
+  // (fresh value still intact), then the very next CONNECT read a corrupted key
+  // and the vehicle answered KEY_NOT_ON_WHITELIST for a key that IS enrolled
+  // (device 2026-07-16). Falls back to the legacy LocalStorage value once so an
+  // already-enrolled watch migrates without re-pairing.
   get watchPublicKey() {
-    return get('watchPublicKey')
+    const fromFile = readBinary('watch_public_key')
+    if (fromFile) return fromFile
+    const legacy = get('watchPublicKey')
+    return legacy && legacy.length ? legacy : null
   },
-
   set watchPublicKey(value) {
-    set('watchPublicKey', value)
+    if (typeof value === 'string') value = binaryStringToBytes(value)
+    if (value) writeBinary('watch_public_key', value)
+    else this.removeBinary('watch_public_key')
+    // File is the single source of truth — drop any stale LocalStorage copy.
+    localStorage.removeItem('watchPublicKey')
   },
 
   // Cached 16-byte ECDH-derived session key. The key is a constant for a paired
@@ -73,11 +88,9 @@ const store = {
   },
 
   // File-backed: the 65-byte vehicle EC point contains null bytes, which don't
-  // survive in LocalStorage (same hazard that moved watchPrivateKey to a file —
-  // it read back null on the next launch, so the doublings-table staleness check
-  // failed and the watch rebuilt the table via the phone every session instead of
-  // running standalone). Falls back to the legacy LocalStorage value once so an
-  // already-paired watch migrates without re-pairing.
+  // survive in LocalStorage (same hazard that moved watchPublicKey, watchPrivateKey
+  // and sessionKey to files — they read back corrupted). Falls back to the legacy
+  // LocalStorage value once so an already-paired watch migrates without re-pairing.
   get vehicleEcPublicKey() {
     const fromFile = readBinary('vehicle_ec_public_key')
     if (fromFile) return fromFile
@@ -195,16 +208,9 @@ const store = {
     localStorage.removeItem('lastVehicleState')
     localStorage.removeItem('vehicleEcPublicKey')
     localStorage.removeItem('watchPublicKey')
-    // Legacy: clear artifacts left by older builds — the doublings table and the
-    // watch-side private key (the watch no longer stores either).
-    localStorage.removeItem('hasDoublingsTable')
-    this.removeBinary('vehicle_doublings_table')
-    this.removeBinary('watch_private_key')
+    this.removeBinary('watch_public_key')
     this.removeBinary('vehicle_ec_public_key')
     this.removeBinary('session_key')
-    // Legacy: infotainment (domain-3) key cache from builds that had charge support.
-    this.removeBinary('inf_ec_public_key')
-    this.removeBinary('inf_session_key')
   },
 }
 

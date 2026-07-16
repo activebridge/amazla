@@ -31,6 +31,49 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
 
   const log = (msg) => { if (onLog) onLog(msg) }
 
+  // Raw frame dump for offline decoding. The pairing status frames are the only
+  // evidence of what the car actually said (the 12B "auto-approved" frame and the
+  // 82B whitelist response are currently interpreted on faith — device 2026-07-15:
+  // a key that unlocked the car during the pairing connection came back
+  // KEY_NOT_ON_WHITELIST on the next one). Frames are ≤90B, so this is cheap.
+  const hex = (b) => {
+    if (!b) return '(null)'
+    var s = ''
+    for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? '0' : '') + b[i].toString(16)
+    return s
+  }
+
+  // Post-enroll session-key derivation with retries. The car signs SessionInfo
+  // for a fresh key only after its whitelist settles (~seconds); until then the
+  // response is tag-less and derivation fails. 4 attempts × 2s covers the window
+  // seen on device (signed on attempt 2, ~1s after enrollment). Exhausted retries
+  // fall back to the old skip: pairing still succeeds, key derives on a later
+  // CONNECT (the main page's isPaired routing sends the user back here otherwise,
+  // so the retries are what make pairing reliably terminal).
+  const SESSION_DERIVE_ATTEMPTS = 4
+  const SESSION_DERIVE_DELAY_MS = 2000
+
+  function deriveSessionKey(attempt) {
+    if (cancelled) return
+    teslaSession.requestSessionInfo((sr) => {
+      if (cancelled) return
+      if (sr && sr.success) {
+        log('✓ Session key derived — standalone')
+        onState('done')
+        onSuccess()
+        return
+      }
+      if (attempt + 1 < SESSION_DERIVE_ATTEMPTS) {
+        log('Session derive attempt ' + (attempt + 1) + ' failed (' + ((sr && sr.error) || '?') + ') — retrying in ' + SESSION_DERIVE_DELAY_MS + 'ms')
+        setTimeout(() => { deriveSessionKey(attempt + 1) }, SESSION_DERIVE_DELAY_MS)
+        return
+      }
+      log('Session key derivation skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
+      onState('done')
+      onSuccess()
+    })
+  }
+
   function start() {
     cancelled = false
     BLE.reset()
@@ -120,7 +163,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
       }
       var parsed = parsePairingResponse(r.data)
       var dbg = parsed.dbg || {}
-      log('RX: ' + parsed.status + (dbg.wlFault ? ' wl:' + dbg.wlFault : ''))
+      log('RX: ' + parsed.status + (dbg.wlFault ? ' wl:' + dbg.wlFault : '') + ' hex=' + hex(r.data))
 
       if (parsed.status === 'ok') {
         if (sawTapRequired || dbg.hasSigner) {
@@ -151,7 +194,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         if (cancelled) return
         if (!r2.success) { onError('NFC tap timeout. Please try again.'); return }
         var p2 = parsePairingResponse(r2.data), d2 = p2.dbg || {}
-        log('NFC: ' + p2.status + (d2.wlFault ? ' wl:' + d2.wlFault : ''))
+        log('NFC: ' + p2.status + (d2.wlFault ? ' wl:' + d2.wlFault : '') + ' hex=' + hex(r2.data))
         if (p2.status === 'wait')    { sawTapRequired = true; waitForNFC() }
         else if (p2.status === 'pending') { waitForNFC() }
         else if (p2.status === 'ok') {
@@ -181,26 +224,24 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         BLE.waitForNextResponse(6000, (r2) => { handleResponse(r2, attempt + 1) })
         return
       }
+      log('Verify RX (fields:' + fkeys + ') hex=' + hex(r.data))
       log('Parsing response...')
       phone.completePairing(bytesToBinaryString(r.data), (result) => {
         if (cancelled) return
         if (!result.success) { onError(result.error || 'Parse failed'); return }
         log('Pair OK, deriving session key now')
-        // Reuse the live BLE connection + in-range phone: do one SessionInfo
+        // Reuse the live BLE connection + in-range phone: do the SessionInfo
         // exchange right away so the phone-computed ECDH (computeSharedSecret)
         // runs and the session key gets cached while we have both. After this the
         // watch is fully standalone for subsequent CONNECTs (cached key, no phone).
-        // Failure here is non-fatal: the key derives on the next CONNECT.
-        teslaSession.requestSessionInfo((sr) => {
-          if (cancelled) return
-          if (sr && sr.success) {
-            log('✓ Session key derived — standalone')
-          } else {
-            log('Session key derivation skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
-          }
-          onState('done')
-          onSuccess()
-        })
+        //
+        // RETRY LOOP (device 2026-07-15): the car often refuses to SIGN SessionInfo
+        // for a freshly enrolled key — the first answer comes back tag-less (141B,
+        // "Unauthenticated SessionInfo") and a repeat a couple of seconds later is
+        // signed (175B). One-shot derivation made pairing success a coin flip.
+        // requestSessionInfo re-dials internally if the car dropped the link, so
+        // each retry survives the post-enrollment disconnect too.
+        deriveSessionKey(0)
       })
     }
 

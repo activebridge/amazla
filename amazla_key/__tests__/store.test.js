@@ -61,6 +61,18 @@ describe('lib/store.js', () => {
     expect(Array.from(result)).toEqual(Array.from(original))
   })
 
+  test('watchPublicKey: preserves null bytes (file-backed, not LocalStorage)', () => {
+    // Regression: a 65-byte EC point with null bytes must survive storage. In
+    // LocalStorage a later write corrupted it → the vehicle rejected the enrolled
+    // key as KEY_NOT_ON_WHITELIST on the connect right after a successful pairing.
+    const input = new Uint8Array(65)
+    input[0] = 0x04
+    input[1] = 0x00; input[2] = 0x00; input[10] = 0x00; input[40] = 0x00
+    for (let i = 3; i < 65; i++) if (input[i] === undefined || i % 7) input[i] = (i * 5) & 0xff
+    store.watchPublicKey = bytesToBinaryString(input)
+    expect(Array.from(store.watchPublicKey)).toEqual(Array.from(input))
+  })
+
   // ── vehicleEcPublicKey ────────────────────────────────────────────────────
 
   test('vehicleEcPublicKey: returns null when nothing stored', () => {
@@ -148,7 +160,7 @@ describe('lib/store.js', () => {
 
   test('isEnrolled: false when watchPublicKey missing', () => {
     setupEnrolled()
-    store.removeItem('watchPublicKey')
+    store.watchPublicKey = null // file-backed now — clear via setter, not removeItem
     expect(store.isEnrolled).toBe(false)
   })
 

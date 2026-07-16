@@ -287,6 +287,11 @@ export function destroy() {
     tesla.offChange(syncListener)
     syncListener = null
   }
+  // Delete this page's widgets before leaving. setWakeUpRelaunch(true) means
+  // exit→reopen doesn't kill the process cleanly, so undeleted widgets linger on
+  // the display and stack across relaunches (the next launch's empty widgets[]
+  // can't reach them). See page/pairing/index.js onDestroy for the full write-up.
+  safe('UI.reset', () => UI.reset())
   safe('keepScreenOn', () => keepScreenOn(false))
   // Auto-lock (if still connected to an unlocked, empty car) BEFORE tearing down BLE,
   // then free the native BLE/session state so the next launch isn't poisoned.
