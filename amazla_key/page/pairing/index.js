@@ -45,7 +45,9 @@ const SLIDES = {
     button: 'pairing_btn_pair',
   },
   pairing: {
-    image: 'pairing/03-pairing',
+    // Animated 12-dot spinner instead of a static illustration (03-pairing.png is
+    // now unused). Rendered by Slide when `spinner` is set.
+    spinner: true,
     title: 'pairing_pairing_title',
   },
   nfc: {
@@ -81,7 +83,7 @@ const slideFor = () => {
     }
   }
   const base = SLIDES[screen] || SLIDES.setup
-  const slide = { image: base.image, title: getText(base.title) }
+  const slide = { image: base.image, spinner: base.spinner, title: getText(base.title) }
   if (base.button) slide.button = getText(base.button)
   if (screen === 'ready') slide.onClick = () => setScreen('pair')
   if (screen === 'pair') slide.onClick = startPairing
@@ -136,11 +138,12 @@ function startPairing() {
       // Mark paired on the phone (settings page "Paired At"). Fire-and-forget: the
       // phone is in range right now (it just did the pair RPCs).
       phone.savePaired(() => {})
-      // Fire an unlock so the car chirps/unlocks — a tangible "it works" confirmation
-      // that matches the success screen's "Tesla did an unlock sound?" prompt. The
-      // session key was just derived on the still-live BLE connection (pairing.js),
-      // so this reuses it. Best-effort: a failure doesn't undo a successful pairing.
-      safe('pairing.unlockConfirm', () => teslaSession.unlock(() => {}))
+      // NO confirmation unlock here. It fired on the pairing connection that the
+      // page teardown + main-page reconnect immediately kills, so the command raced
+      // the teardown and timed out (flaky "no unlock sound" — device 2026-07-16).
+      // Pairing success is already proven by the derived + HMAC-verified session key
+      // (pairing.js), and the main page comes up online with live status; the user
+      // confirms control by operating the car from there.
     },
   })
   controller.start()

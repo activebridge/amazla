@@ -17,7 +17,7 @@ msgid "pairing_nfc_title"
 msgstr "Tap your key card on the center console and confirm on Tesla screen"
 
 msgid "pairing_success_title"
-msgstr "Tesla did an unlock sound?\nWatch is paired!"
+msgstr "Watch is paired!\nReady to control your Tesla"
 
 msgid "pairing_error_title"
 msgstr "Pairing failed"
