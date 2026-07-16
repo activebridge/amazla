@@ -1,6 +1,5 @@
 import { BLEMaster } from '@silver-zepp/easy-ble'
 import * as hmBle from '@zos/ble'
-import { LocalStorage } from '@zos/storage'
 
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
@@ -51,40 +50,10 @@ const CONNECTION_CONFIG = {
   // 3s is a safe margin. See session.js _doConnect for the retry loop.
   setupWatchdogMs: 3000,
 }
-// LocalStorage key for the last successful native connect_id. Persisting it
-// lets us call hmBle.mstDisconnect(savedId) on the NEXT app launch even if the
-// previous run crashed without an onDestroy — clears the "native BLE poisoned"
-// state that otherwise requires a watch reboot to recover from.
-const LAST_CONNECT_ID_KEY = 'lastBleConnectId'
-let _localStorage = null
-const _ls = () => {
-  if (!_localStorage) {
-    try {
-      _localStorage = new LocalStorage()
-    } catch (_e) {}
-  }
-  return _localStorage
-}
-const _readSavedConnectId = () => {
-  try {
-    const ls = _ls()
-    if (!ls) return null
-    const raw = ls.getItem(LAST_CONNECT_ID_KEY)
-    if (!raw) return null
-    const n = parseInt(raw, 10)
-    return Number.isFinite(n) ? n : null
-  } catch (_e) {
-    return null
-  }
-}
-const _writeSavedConnectId = (id) => {
-  try {
-    const ls = _ls()
-    if (!ls) return
-    if (id === null || id === undefined) ls.removeItem(LAST_CONNECT_ID_KEY)
-    else ls.setItem(LAST_CONNECT_ID_KEY, String(id))
-  } catch (_e) {}
-}
+// Persisting the native connect_id across launches (crash-recovery: mstDisconnect a
+// stuck connection the next run inherited) is NOT the transport's job — ble.js does
+// not touch storage. It only KNOWS the id; the owner (app.js) decides to save it via
+// the `onConnectId` hook, and hands the saved id back to disconnectStaleId() at start.
 try {
   // easy-ble verbosity: 1 = errors only. Level 3 logged an `EXEC: …` line per chunk
   // write plus full profile-object dumps — the bulk of the BLE side-channel traffic.
@@ -129,6 +98,10 @@ class TeslaBLE {
     // Persistent (multi-response): the registrant removes its own waiter on finish.
     this._waiters = []
     this.onDisconnect = null
+    // Owner-set persistence hook (app.js wires it to store.connectId). Called with the
+    // native connect_id on a successful connect and null on teardown, so the owner can
+    // save it for next-launch crash-recovery WITHOUT ble.js importing storage.
+    this.onConnectId = null
     // Unexpected-link-loss hook, separate from onDisconnect (which the debug BLE
     // page owns): the session arms this on every connect to reset itself + flip
     // the facade offline when the native stack reports the link dead late.
@@ -163,19 +136,32 @@ class TeslaBLE {
     // Calling mstDisconnect on the persisted connect_id reliably frees it.
     this._clearStaleNativeState('app-start')
   }
-  _clearStaleNativeState(reason) {
-    const saved = _readSavedConnectId()
-    if (saved !== null) {
-      console.log(`[BLE] Clearing stale native state (${reason}): mstDisconnect(${saved})`)
-      try {
-        hmBle.mstDisconnect(saved)
-      } catch (e) {
-        console.log('[BLE]   mstDisconnect threw (ignored):', e && e.message)
-      }
-      _writeSavedConnectId(null)
+  // Owner-driven: free a stale native connection left by a crashed previous run
+  // (its connect_id, persisted by the owner, is passed back here at app start).
+  // Separate from _clearStaleNativeState so ble.js never reads storage for the id.
+  disconnectStaleId(savedId, reason) {
+    if (savedId === null || savedId === undefined) return
+    console.log(`[BLE] Clearing stale native connection (${reason}): mstDisconnect(${savedId})`)
+    try {
+      hmBle.mstDisconnect(savedId)
+    } catch (e) {
+      console.log('[BLE]   mstDisconnect threw (ignored):', e && e.message)
     }
-    // Best-effort: stop any in-flight scan and drop any stale callbacks the
-    // previous run left registered on the native singleton.
+    this._emitConnectId(null) // it's freed — tell the owner to drop the saved id
+  }
+  _emitConnectId(id) {
+    if (this.onConnectId) {
+      try {
+        this.onConnectId(id)
+      } catch (_e) {}
+    }
+  }
+  _clearStaleNativeState(reason) {
+    // Best-effort native reset at app start: stop any in-flight scan and drop any
+    // stale callbacks the previous run left registered on the native singleton.
+    // (The stale connect_id disconnect is owner-driven via disconnectStaleId — the
+    // transport doesn't read storage for it.) `reason` retained for call-site clarity.
+    void reason
     try {
       hmBle.mstStopScan()
     } catch (_e) {}
@@ -206,9 +192,9 @@ class TeslaBLE {
       this.ble = null
     }
     // ble.quit() already issued mstDisconnect against the live connect_id; the
-    // persisted copy is now stale, so clear it. (If quit() was a no-op because
-    // we never connected, there's nothing to clear anyway.)
-    _writeSavedConnectId(null)
+    // saved copy is now stale, so tell the owner to drop it. (If quit() was a no-op
+    // because we never connected, there's nothing to clear anyway.)
+    this._emitConnectId(null)
     this.profile = null
     this.responseCallback = null
     this.idleCallback = null
@@ -361,14 +347,15 @@ class TeslaBLE {
       setupStarted = true
       this.connected = true
       this.mac = mac
-      // Persist connect_id NOW so that even if the app dies before any clean
-      // disconnect, the next launch's _clearStaleNativeState can free it.
+      // Hand the connect_id to the owner NOW so that even if the app dies before any
+      // clean disconnect, the next launch can free it (disconnectStaleId). ble.js only
+      // reports it — the owner (app.js) persists it.
       try {
         const ble = this._ensureBLE()
         const connId = ble && ble.get && ble.get.connectionID && ble.get.connectionID()
         if (typeof connId === 'number') {
-          _writeSavedConnectId(connId)
-          console.log(`[BLE] Persisted connect_id=${connId} for crash-recovery cleanup`)
+          this._emitConnectId(connId)
+          console.log(`[BLE] connect_id=${connId} reported for crash-recovery cleanup`)
         }
       } catch (_e) {}
       // Setup MUST run synchronously inside this native connect callback. A

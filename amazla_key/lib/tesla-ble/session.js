@@ -109,6 +109,26 @@ class TeslaSession {
     this.secondResponseTimeoutMs = 10000
     this._passiveEventCb = null // UI hook for passive-entry events (set by the Tesla facade)
     this._linkDownCb = null // facade hook: unexpected native link loss (set once, survives reset())
+    // The session owns connect_id persistence (crash-recovery across launches), not
+    // the transport: ble.js reports the id via onConnectId and we save it to the
+    // single store LocalStorage. Wired once here; survives session.reset().
+    teslaBLE.onConnectId = (id) => {
+      try {
+        store.connectId = id
+      } catch (_e) {}
+    }
+  }
+  // Free a stale native connection an app crash left behind (its connect_id was
+  // persisted by onConnectId above). Runs ONCE per launch, before the first dial —
+  // replaces the old ble.js-constructor cleanup that read storage directly. Reading
+  // the saved id here keeps storage access out of the transport.
+  _recoverStaleConnection() {
+    if (this._staleRecovered) return
+    this._staleRecovered = true
+    try {
+      teslaBLE.disconnectStaleId(store.connectId, 'app-start')
+      store.connectId = null
+    } catch (_e) {}
   }
   // Register the facade's link-loss observer. Fired AFTER the session has reset
   // itself, so the facade can flip the UI offline without re-entering session state.
@@ -222,6 +242,7 @@ class TeslaSession {
     this._ensureConnected(callback)
   }
   _ensureConnected(callback) {
+    this._recoverStaleConnection() // once per launch, before the first dial
     if (teslaBLE.isConnected()) {
       console.log('[SESSION] ✓ BLE already connected and ready')
       this._proceedWithSession(callback)

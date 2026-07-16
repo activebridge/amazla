@@ -188,6 +188,24 @@ const store = {
     set('autoLock', value ? '1' : '0')
   },
 
+  // Last successful native BLE connect_id — persisted so the NEXT launch can
+  // mstDisconnect a stuck connection even after a crash (no onDestroy). This lives
+  // here, on the SINGLE store LocalStorage instance, NOT in a second `new
+  // LocalStorage()` in ble.js: each @zos/storage instance keeps its own in-memory
+  // snapshot and writes the WHOLE thing back on flush, so two instances silently
+  // clobber each other's keys — ble.js persisting connect_id on every connect was
+  // wiping store's autoUnlock / lastVehicleState writes (device 2026-07-16).
+  get connectId() {
+    const raw = localStorage.getItem('lastBleConnectId')
+    if (!raw) return null
+    const n = parseInt(raw, 10)
+    return Number.isFinite(n) ? n : null
+  },
+  set connectId(id) {
+    if (id === null || id === undefined) localStorage.removeItem('lastBleConnectId')
+    else localStorage.setItem('lastBleConnectId', String(id))
+  },
+
   removeBinary: (key) => {
     _fileCache[key] = undefined // keep the read cache coherent with the file
     try {

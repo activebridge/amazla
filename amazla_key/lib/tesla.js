@@ -236,6 +236,20 @@ class Tesla {
   // doesn't inherit poisoned state (a stuck mstConnect returns "failed" for ~30s
   // otherwise). tesla talks only to teslaSession — the native BLE reset lives behind it.
   shutdown() {
+    // Flush the last-known car state before the app closes, so the next launch's
+    // connecting screen paints the REAL car (lock/doors) instead of the constructor
+    // default (locked, all closed). _applyStatus/command-success already persist on
+    // change mid-session, but a session that ended without a fresh status push (or a
+    // state only reflected optimistically) would otherwise leave a stale cache. The
+    // in-memory state is hydrated from cache at construct, so this never writes worse
+    // data than what's already there. Skip when NOT enrolled so a reset's cache wipe
+    // (store.reset removes lastVehicleState, then routes here via its own path) isn't
+    // undone by re-persisting stale in-memory booleans.
+    if (store.isEnrolled) {
+      try {
+        this._persistState()
+      } catch (_e) {}
+    }
     teslaSession.shutdown()
   }
 
