@@ -530,25 +530,6 @@ class TeslaBLE {
     const i = this._waiters.indexOf(token)
     if (i !== -1) this._waiters.splice(i, 1)
   }
-  // Like sendNoReply, but writes EVERY chunk in this one JS turn (no setTimeout
-  // pacing). For the app-close auto-lock only: onDestroy tears the process down
-  // right after, so the normal chunk-at-a-time path (setTimeout 50ms × ~10) never
-  // flushes past the first chunk. write.characteristic(...,true) is write-WITH-
-  // response, so the native stack paces the back-to-back writes itself. Best-effort:
-  // returns false if not connected.
-  sendNoReplySync(data) {
-    if (!this.connected) { console.log('[BLE] sendNoReplySync skip: not connected'); return false }
-    const message = _frame(data)
-    const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-    let written = 0
-    for (let offset = 0; offset < message.length; offset += BLE_CHUNK_SIZE) {
-      const chunk = message.slice(offset, Math.min(offset + BLE_CHUNK_SIZE, message.length))
-      const ok = this._ensureBLE().write.characteristic(TESLA_WRITE_UUID, chunk.buffer, true)
-      if (ok !== false) written++
-    }
-    console.log('[BLE] sendNoReplySync flushed ' + written + '/' + total + ' chunks (' + message.length + 'B)')
-    return true
-  }
   waitForNextResponse(timeout, callback) {
     const responseTimeout = setTimeout(() => {
       this.responseCallback = null

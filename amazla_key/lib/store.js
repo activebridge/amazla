@@ -172,22 +172,14 @@ const store = {
     return MODELS[String.fromCharCode(vin[3])] || null
   },
 
-  // User prefs synced from the phone (GET_SETTINGS). Stored as '1'/'0'; never-synced
-  // (null) = OFF — both behaviors are opt-in (auto-unlock historically raced passive
-  // entry; auto-lock on close now requires an explicit choice too).
+  // Auto-unlock pref synced from the phone (GET_SETTINGS). Stored as '1'/'0';
+  // never-synced (null) = OFF (opt-in; auto-unlock historically raced passive entry).
   get autoUnlock() {
     return localStorage.getItem('autoUnlock') === '1'
   },
   set autoUnlock(value) {
     set('autoUnlock', value ? '1' : '0')
   },
-  get autoLock() {
-    return localStorage.getItem('autoLock') === '1'
-  },
-  set autoLock(value) {
-    set('autoLock', value ? '1' : '0')
-  },
-
   // Last successful native BLE connect_id — persisted so the NEXT launch can
   // mstDisconnect a stuck connection even after a crash (no onDestroy). This lives
   // here, on the SINGLE store LocalStorage instance, NOT in a second `new

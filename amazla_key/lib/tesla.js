@@ -220,18 +220,7 @@ class Tesla {
     this.refresh()
   }
 
-  // Raw synchronous fire-and-forget lock, for the app-close auto-lock. NO gates — the
-  // page callback (page/callbacks.js autoLock) owns the decision; tesla is just the
-  // transport. Writes every chunk in one JS turn since onDestroy tears the process down
-  // right after (no time to wait for an ACK or pace chunks). Returns true if sent.
-  lockSync() {
-    const sent = teslaSession.lockSyncFireAndForget()
-    console.log('[Tesla] lockSync ' + (sent ? 'sent' : 'send failed'))
-    return sent
-  }
-
-  // App-close teardown. The caller runs the auto-lock (page/callbacks.js autoLock)
-  // FIRST, while the link is still up; this then hands off to the session's shutdown(),
+  // App-close teardown: hand off to the session's shutdown(),
   // which clears session state AND flushes the native BLE stack so the next launch
   // doesn't inherit poisoned state (a stuck mstConnect returns "failed" for ~30s
   // otherwise). tesla talks only to teslaSession — the native BLE reset lives behind it.

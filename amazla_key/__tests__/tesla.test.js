@@ -676,5 +676,5 @@ describe('command failure', () => {
   })
 })
 
-// app-close auto-lock + connect auto-unlock moved to page/callbacks.js — see
-// __tests__/callbacks.test.js. tesla.lockSync() (the raw ungated send) is covered there.
+// connect auto-unlock lives in page/callbacks.js — see __tests__/callbacks.test.js.
+// (App-close auto-lock was removed 2026-07-16 — no reliable VCSEC occupant signal.)

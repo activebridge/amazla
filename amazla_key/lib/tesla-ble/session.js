@@ -966,20 +966,6 @@ class TeslaSession {
     // resends; a miss is a retry (tap).
     this.sendCommand(RKE_ACTION_UNLOCK, callback, (opts && opts.timeoutMs) || 3000, opts)
   }
-  // Fire a signed LOCK and flush it in one JS turn — for app-close auto-lock only.
-  // The normal sendCommand path waits for an ACK over chunked (setTimeout) TX, which
-  // can't complete in onDestroy before the process dies. Here we sign once and write
-  // all chunks synchronously (sendNoReplySync), no ACK wait. Returns true if sent.
-  lockSyncFireAndForget() {
-    if (!this.established) { console.log('[SESSION] autolock skip: session not established'); return false }
-    try {
-      const message = this.buildAuthenticatedCommand(RKE_ACTION_LOCK)
-      return teslaBLE.sendNoReplySync(message)
-    } catch (e) {
-      console.log(`[SESSION] autolock send error: ${e && e.message}`)
-      return false
-    }
-  }
   wake(callback) {
     // A dozing car keeps VCSEC beaconing but ignores GET_STATUS (device 2026-06-11:
     // connect-time fetch silent, post-actuation fetch answered in 0.8s). Same wake

@@ -23,7 +23,7 @@ import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // session/BLE teardown (tesla.shutdown()).
 import Phone from '../lib/phone.js'
 import tesla from '../lib/tesla.js'
-import { autoLock, autoUnlock } from './callbacks.js'
+import { autoUnlock } from './callbacks.js'
 
 // MOCK (simulator only — the real lib OOMs the SIM): comment the 2 imports above
 // and uncomment the line below to develop the UI without a car.
@@ -238,7 +238,7 @@ export function build(host) {
   // Auto-establish the BLE session on open and pull the live car state; once online
   // this also arms the live-push listener so opening a door, etc. repaints the view.
   //
-  // Settings sync (vehicle name/VIN + the autoUnlock/autoLock toggles) is a phone RPC
+  // Settings sync (vehicle name/VIN + the autoUnlock toggle) is a phone RPC
   // that shares the single BLE radio with the car connection, so defer it until connect
   // settles (first non-'checking' onChange) to avoid radio contention. It persists the
   // toggles into local storage for later reads.
@@ -293,8 +293,10 @@ export function destroy() {
   // can't reach them). See page/pairing/index.js onDestroy for the full write-up.
   safe('UI.reset', () => UI.reset())
   safe('keepScreenOn', () => keepScreenOn(false))
-  // Auto-lock (if still connected to an unlocked, empty car) BEFORE tearing down BLE,
-  // then free the native BLE/session state so the next launch isn't poisoned.
-  safe('autoLock', () => autoLock())
+  // No app-close auto-lock: VCSEC gives no reliable "occupant in car" signal
+  // (userPresence = key detected, always true while we're connected), so closing
+  // the app while seated would wrongly lock the car (device 2026-07-16). Tesla's
+  // own walk-away lock handles locking with real seat/proximity sensors. Just free
+  // the native BLE/session state so the next launch isn't poisoned.
   tesla.shutdown()
 }
