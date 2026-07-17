@@ -9,6 +9,8 @@ import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
 import UI, { button, height, img, width } from '../../pages/ui'
 import { CarImages } from './components/carImages.js'
 import { ResetButton } from './components/reset.js'
+import { runConfiguredButtonAction } from '../shared/button-action.js'
+import { getConnectionStatusKey } from '../shared/connection-status.js'
 import { safe } from '../shared/safe.js'
 import { keepScreenOn, vibro } from '../../zeppify/index.js'
 
@@ -60,10 +62,11 @@ let authorized = false
 // connection transition — scan, session-established, drop — repaints the label.
 // Unlicensed wins: we never connect while unlicensed, so it's not a connection state.
 const statusKey = () => {
-  if (unlicensed) return 'unlicensed'
-  if (tesla.connection.status === 'online') return authorized ? 'authorized' : 'online'
-  if (tesla.connection.status === 'checking') return 'checking'
-  return tesla.connection.error ? 'failed' : 'offline'
+  return getConnectionStatusKey({
+    isLicensed: !unlicensed,
+    connection: tesla.connection,
+    authorized,
+  })
 }
 
 // Styled text button matching the pairing flow's red pill (buttons/btn-red.png
@@ -229,16 +232,13 @@ const runButtonAction = () => {
     onRetry()
     return
   }
-  switch (store.buttonAction) {
-    case 'frunk':
-      onFrunk()
-      break
-    case 'trunk':
-      onTrunk()
-      break
-    default:
-      tesla.locked ? onUnlock() : onLock()
-  }
+  runConfiguredButtonAction(store.buttonAction, {
+    locked: tesla.locked,
+    onLock,
+    onUnlock,
+    onFrunk,
+    onTrunk,
+  })
 }
 
 // Mount the main experience. host.navigate(url) is the only host-specific hook —

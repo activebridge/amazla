@@ -1,4 +1,5 @@
 import { Header } from './components/header.js'
+import { BUTTON_ACTION_OPTIONS } from '../shared/button-action.js'
 import { ICON_BLUETOOTH, ICON_INFO, ICON_NO_PHONE, ICON_OFFLINE, ICON_PENCIL } from './icons.js'
 import { openFaqDialog } from './libs/faq.js'
 import { openInfoDialog } from './libs/infoDialog.js'
@@ -107,11 +108,7 @@ AppSettingsPage({
               'lockUnlock',
               'Watch Button Action',
               'What a press of the watch button does while the app is open.',
-              [
-                { value: 'lockUnlock', label: 'Lock/Unlock' },
-                { value: 'frunk', label: 'Frunk' },
-                { value: 'trunk', label: 'Trunk' },
-              ],
+              BUTTON_ACTION_OPTIONS,
               !isPaired,
               {
                 title: 'Watch Button',

@@ -2,6 +2,7 @@ import '../shared/device-polyfill'
 import { prop, anim_status } from '@zos/ui'
 import { text, img, button, animation, width, getAppWidgetSize, setAppWidgetSize } from '../../pages/ui.js'
 import { safe } from '../shared/safe.js'
+import { getConnectionStatusKey } from '../shared/connection-status.js'
 import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // REAL (device): the BLE + crypto lib. MOCK (simulator — real lib OOMs the SIM):
 // swap the imports, same toggle as page/main.js.
@@ -56,11 +57,11 @@ const isLicensed = () => {
 // Same state mapping as page/main.js statusKey(), extended with the two
 // terminal no-BLE states.
 const statusKey = () => {
-  if (!tesla.isPaired) return 'unpaired'
-  if (!isLicensed()) return 'unlicensed'
-  if (tesla.connection.status === 'online') return 'online'
-  if (tesla.connection.status === 'checking') return 'checking'
-  return tesla.connection.error ? 'failed' : 'offline'
+  return getConnectionStatusKey({
+    isPaired: tesla.isPaired,
+    isLicensed: isLicensed(),
+    connection: tesla.connection,
+  })
 }
 
 // The status line shows the CONNECTION state only (the padlock icon carries the
