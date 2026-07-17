@@ -405,6 +405,32 @@ describe('refresh()', () => {
     expect(suppressSpy).toHaveBeenLastCalledWith(false)
   })
 
+  // Pre-load step (beforeInitialLoad): the page installs its auto-unlock policy here
+  // (page/callbacks.js); the facade only sequences it. USER-SPECIFIED ORDER: the step
+  // runs FIRST and exclusively — passive suppressed, nothing else sent — and the
+  // read-first load + walk-up authorization start only after the step's done().
+  test('beforeInitialLoad step runs first and exclusively; load waits for done()', () => {
+    mockEstablished()
+    const suppressSpy = jest.spyOn(teslaSession, 'suppressPassive').mockImplementation(() => {})
+    const statusSpy = jest.spyOn(teslaSession, 'getVehicleStatus')
+      .mockImplementation(cb => cb({ success: true, status: makeStatus({ vehicleLockState: 0 }) }))
+
+    let stepDone = null
+    tesla.beforeInitialLoad((done) => { stepDone = done })
+    tesla.refresh()
+
+    expect(tesla.connection.status).toBe('online')      // online reported before the step settles
+    expect(stepDone).not.toBe(null)                     // step invoked
+    expect(suppressSpy).toHaveBeenCalledWith(true)      // responder silent while the step runs
+    expect(statusSpy).not.toHaveBeenCalled()            // read-first waits on the step
+
+    stepDone()
+    expect(suppressSpy).toHaveBeenCalledWith(false)     // released for the load's own windowing
+    expect(statusSpy).toHaveBeenCalled()                // then the normal read-first load
+
+    tesla.beforeInitialLoad(null) // singleton — don't leak the step into other tests
+  })
+
   // A status pushed over the live channel applies fresh lock state (fixes the toggle).
   test('a pushed VehicleStatus applies fresh state', () => {
     mockEstablished()

@@ -9,19 +9,31 @@ const FAQ = [
   ],
   [
     'How do I lock or unlock the car?',
-    'On the main page of the watch app, tap the lock/unlock button. Your car will respond immediately.',
+    'Open the watch app and tap the lock/unlock button — the car responds right away. You can also assign the watch\'s physical button to do it (see "What does the watch button do?"). A short buzz confirms it worked; the padlock icon flips to the new state.',
   ],
   [
     'Where can I open it from?',
-    'Four ways, quickest last: (1) from the watch app list; (2) as a shortcut card — swipe sideways from the watch face; (3) as a key-card widget in your app cards; (4) mapped to a physical button. The app, the shortcut card and the widget all connect and control the car the same way.',
+    'Four ways, quickest last: (1) the watch app list; (2) a shortcut card — swipe sideways from the watch face; (3) a key-card widget in your app cards; (4) a physical button mapped to launch it. The app, the shortcut card and the widget all connect and control the car the same way, and share the same settings (auto-unlock, button action).',
   ],
   [
-    'Unlock with a single button press',
-    'On the watch, open Settings → Preferences → Press Button and assign "Amazla Key" to the button. Then turn on "Auto-Unlock on Connect" below. Now one press of that button opens the app, connects, and unlocks the car — no screen taps needed. (The app has to open to reach the car, so this is the closest thing to a car-key button.)',
+    'How do the widgets work?',
+    'The key-card widget and the shortcut card show a Tesla key card. They stay idle on the watch face to save battery; the moment you focus/open one it connects to the car, and a tap locks or unlocks. The status line reads Connecting → Connected, and turns green "Authorized" once the car accepts the watch during walk-up. They obey the same auto-unlock setting as the main app.',
+  ],
+  [
+    'What does the watch button do?',
+    'In Settings above, pick a "Watch Button Action": Lock/Unlock, Frunk, or Trunk. While the app is open, pressing the watch\'s side/shortcut button (or the crown) runs that action. If you\'re not connected yet, a press reconnects instead — press again once it shows Connected.',
+  ],
+  [
+    'How does Auto-Unlock work?',
+    'Turn on "Auto-Unlock on Connect" in Settings above. Then whenever the watch connects to the car and it\'s locked, it unlocks by itself — no tap. It works everywhere the app connects: the main app, the shortcut card, and the widget. (A change here reaches the watch on its next connection.)',
+  ],
+  [
+    'Open + unlock with one button press',
+    'On the watch, open Settings → Preferences → Press Button and assign "Amazla Key" to the button, then turn on Auto-Unlock on Connect above. Now one press of that watch button opens the app, connects, and unlocks the car — no screen taps. (The app has to be open to reach the car, so this is the closest thing to a car-key fob.)',
   ],
   [
     'Does it unlock as I walk up?',
-    'Yes — keep the app open as you approach and the car unlocks by itself, just like a phone key. Walk-away lock works the same, but only while the app stays open.',
+    'Yes — keep the app (or a widget/card) open as you approach and the car unlocks by itself, just like a phone key. When the status shows green "Authorized", the car has accepted the watch and passive entry is ready — pull the handle.',
   ],
   [
     'Why does walk-up unlock take a moment?',
@@ -29,7 +41,11 @@ const FAQ = [
   ],
   [
     'Does it work in the background?',
-    'No — the app must stay open on the watch screen. The watch OS does not allow Bluetooth connections from background apps, so passive entry and auto-lock stop the moment the app closes. This is a platform limit, not a setting.',
+    'No — the app must stay open on the watch screen. The watch OS does not allow Bluetooth connections from background apps, so passive entry stops the moment the app closes. This is a platform limit, not a setting.',
+  ],
+  [
+    'Does it lock the car when I leave?',
+    'Use your Tesla\'s built-in Walk-Away Door Lock — it locks automatically when your watch key moves away, using the car\'s own sensors. The app deliberately does not lock on its own: the watch has no reliable "someone is still inside" signal, so it could lock a passenger in. Auto-Unlock handles the arrival side.',
   ],
   [
     'Do I need my phone with me?',
@@ -42,10 +58,6 @@ const FAQ = [
   [
     'Is it secure?',
     'Yes — it uses the same digital-key protocol as the Tesla phone key. The keys live on your watch and phone only; nothing is uploaded or stored anywhere else.',
-  ],
-  [
-    'Can it lock the car automatically?',
-    'Enable "Auto-Lock on Exit" in settings: when you close the app, the car locks — unless someone is still inside. "Auto-Unlock on Connect" does the opposite on arrival.',
   ],
   [
     'How do I purchase the app?',

@@ -131,11 +131,25 @@ export const FOOTER_FEATURES = {
   alignItems: 'center',
   justifyContent: 'center',
   flexWrap: 'wrap',
-  gap: '6px',
+  gap: '8px',
   fontSize: '12px',
   color: 'rgba(255, 255, 255, 0.4)',
   textAlign: 'center',
   marginBottom: '16px',
+}
+
+export const FOOTER_FEATURE_ITEM = {
+  display: 'flex',
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: '6px',
+  whiteSpace: 'nowrap',
+}
+
+export const FOOTER_FEATURE_DOT = {
+  opacity: '0.7',
+  lineHeight: '1',
 }
 
 export const FOOTER_FEATURE_ICON = {
@@ -225,10 +239,61 @@ export const SETTING_TITLE = {
   color: TEXT,
 }
 
+// Row holding a setting's title + its little (i) info-icon button.
+export const SETTING_TITLE_ROW = {
+  display: 'flex',
+  flexDirection: 'row',
+  alignItems: 'center',
+  gap: '6px',
+}
+
 export const SETTING_DESC = {
   fontSize: '13px',
   color: TEXT_DIM,
   lineHeight: '1.5',
+}
+
+// Segmented select (button-action chooser): a title/description block above a row of
+// equal-width chips; the active chip goes Tesla-blue. Matches the toggle rows' spacing.
+export const SELECT_ROW = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '12px',
+  borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+  paddingTop: '14px',
+  marginTop: '2px',
+}
+
+export const CHIP_ROW = {
+  display: 'flex',
+  flexDirection: 'row',
+  gap: '8px',
+}
+
+export const CHIP = {
+  flex: '1',
+  padding: '10px 6px',
+  borderRadius: '10px',
+  background: CONTROL,
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
+export const CHIP_ON = {
+  background: BLUE,
+}
+
+export const CHIP_TEXT = {
+  fontSize: '14px',
+  fontWeight: '500',
+  color: TEXT_DIM,
+  textAlign: 'center',
+}
+
+export const CHIP_TEXT_ON = {
+  color: '#ffffff',
 }
 
 // Tesla-style toggle: gray pill → blue when on, flat white knob

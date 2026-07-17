@@ -21,6 +21,7 @@ import { getText } from '@zos/i18n'
 const COLORS = {
   checking: 0x3e6ae1,
   online: 0x00ef33,
+  authorized: 0x00ef33, // walk-up passive-entry accepted — same green as online
   offline: 0xff6666,
   failed: 0xff6666,
   unlicensed: 0xff9900,

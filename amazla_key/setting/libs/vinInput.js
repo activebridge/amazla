@@ -154,7 +154,8 @@ const injectStyles = (doc) => {
       border: 1px solid #3a3e44;
       background: #17191c;
       color: #e8eaed;
-      font-size: 14px; font-family: inherit;
+      /* 16px minimum — iOS zooms the whole page onto any focused input below 16px */
+      font-size: 16px; font-family: inherit;
       transition: border-color 160ms ease;
     }
     .vin-dialog-input::placeholder { color: rgba(255, 255, 255, 0.35); }

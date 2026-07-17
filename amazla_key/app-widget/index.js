@@ -5,6 +5,7 @@ import { safe } from '../shared/safe.js'
 import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // REAL (device): the BLE + crypto lib. MOCK (simulator — real lib OOMs the SIM):
 // swap the imports, same toggle as page/main.js.
+import store from '../lib/store.js'
 import tesla from '../lib/tesla.js'
 // import { tesla } from '../page/tesla-mock.js'
 
@@ -33,15 +34,22 @@ let ICON = null // geometry passed on every src swap — .set() re-centers witho
 let running = false
 
 // KPAY license lives on the app instance (app.js globalData). In the widget
-// runtime getApp() may be absent/uninitialized — treat that as unlicensed
-// (never key the car for free), same policy as page/main.js.
+// runtime getApp() may be absent/uninitialized; kpay can also be null after an
+// aborted app onCreate. Neither means "not paid" — fall back to the sticky
+// store.licensed flag so a paid driver is never locked out at the car, same
+// policy as page/main.js. No flag and no kpay answer = unlicensed (never key
+// the car for free).
 const isLicensed = () => {
   try {
     const app = getApp()
     const kpay = app && app._options && app._options.globalData && app._options.globalData.kpay
-    return kpay ? kpay.isLicensed() : false
+    if (kpay && kpay.isLicensed()) {
+      if (!store.licensed) store.licensed = true
+      return true
+    }
+    return store.licensed
   } catch (_e) {
-    return false
+    return store.licensed
   }
 }
 

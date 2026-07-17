@@ -1150,3 +1150,82 @@ describe('getVehicleStatus — passive-entry dispatch while waiting', () => {
     }
   })
 })
+
+// ── wake prod rate-limit guard ──────────────────────────────────────────────
+// The pre-command wake is an RKEAction itself and feeds the car's RKE rate limit:
+// a lock re-tapped every ~3.5s (each tap = wake + lock) tripped it after ~6 refusals
+// and the car went deaf to RKE for ~31s (device 2026-07-17 11:04). When the car
+// answered an ADDRESSED frame within awakeWindowMs its radio is demonstrably hot —
+// the wake's only job (prodding a cold radio) is already done, so it is skipped.
+describe('sendCommand wake prod — skipped while the car is demonstrably awake', () => {
+  let wakes, addressed
+  let origSNR, origSA, origConnected
+
+  function makeSession() {
+    store.vehicleVin = null
+    const s = new TeslaSession()
+    s.established = true
+    s.sessionKey = new Uint8Array(16).fill(0x0b)
+    s.epoch = new Uint8Array(16).fill(0xee)
+    s.counter = 5
+    s.clockTime = 1000
+    s.routingAddress = new Uint8Array(16).fill(0x01)
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    initSessionHmacs(s)
+    return s
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+    wakes = []
+    addressed = []
+    origSNR = teslaBLE.sendNoReply
+    origSA = teslaBLE.sendAddressed
+    origConnected = teslaBLE.connected
+    teslaBLE.connected = true
+    teslaBLE.sendNoReply = (msg) => { wakes.push(msg); return true }
+    teslaBLE.sendAddressed = (msg, match, cb) => { addressed.push({ msg, match, cb }); return 'tok' + addressed.length }
+  })
+  afterEach(() => {
+    jest.clearAllTimers()
+    jest.useRealTimers()
+    teslaBLE.sendNoReply = origSNR
+    teslaBLE.sendAddressed = origSA
+    teslaBLE.connected = origConnected
+  })
+
+  test('cold session (no reply seen yet) → wake prod sent before the command', () => {
+    const s = makeSession()
+    s.sendCommand(RKE_ACTION_LOCK, () => {})
+    expect(wakes.length).toBe(1) // the prod
+    expect(addressed.length).toBe(1) // the command
+  })
+
+  test('car answered an addressed frame moments ago → wake SKIPPED', () => {
+    const s = makeSession()
+    s._lastCarReplyTime = Date.now()
+    s.sendCommand(RKE_ACTION_LOCK, () => {})
+    expect(wakes.length).toBe(0)
+    expect(addressed.length).toBe(1) // command still goes out
+  })
+
+  test('last reply older than awakeWindowMs → wake sent again', () => {
+    const s = makeSession()
+    s._lastCarReplyTime = Date.now() - (s.awakeWindowMs + 1)
+    s.sendCommand(RKE_ACTION_LOCK, () => {})
+    expect(wakes.length).toBe(1)
+  })
+
+  test('an addressed reply stamps the gate: the NEXT command skips its wake', () => {
+    const s = makeSession()
+    s.sendCommand(RKE_ACTION_LOCK, (r) => {})
+    expect(wakes.length).toBe(1)
+    // Deliver a terminal addressed reply (field 10 present → payload → terminal).
+    const fromVcsec = encodeBytes(3, new Uint8Array([0x18, 0x02])) // any FromVCSEC content
+    addressed[0].cb({ success: true, data: encodeBytes(10, fromVcsec) })
+    // Re-tap within the window — the radio is hot, no second prod.
+    s.sendCommand(RKE_ACTION_LOCK, () => {})
+    expect(wakes.length).toBe(1)
+    expect(addressed.length).toBe(2)
+  })
+})

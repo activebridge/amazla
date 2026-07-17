@@ -2,7 +2,8 @@ import { Connecting } from './components/connecting.js'
 import Status from './components/status.js'
 import { setPageBrightTime, setWakeUpRelaunch } from '@zos/display'
 import { getText } from '@zos/i18n'
-import { KEY_EVENT_CLICK, KEY_SELECT, onKey } from '@zos/interaction'
+import { KEY_EVENT_CLICK, KEY_SELECT, KEY_SHORTCUT, onKey } from '@zos/interaction'
+import { home } from '@zos/router'
 import * as hmUI from '@zos/ui'
 import { CLOSE, LOCK, OPEN, UNLOCK } from '../../pages/styles'
 import UI, { button, height, img, width } from '../../pages/ui'
@@ -22,8 +23,9 @@ import { keepScreenOn, vibro } from '../../zeppify/index.js'
 // REAL (device / on-car): the BLE + crypto lib. tesla is the facade — it owns
 // session/BLE teardown (tesla.shutdown()).
 import Phone from '../lib/phone.js'
+import store from '../lib/store.js'
 import tesla from '../lib/tesla.js'
-import { autoUnlock } from './callbacks.js'
+import { autoExitOnLock, autoUnlock, clearSelfLock, noteSelfLock } from './callbacks.js'
 
 // MOCK (simulator only — the real lib OOMs the SIM): comment the 2 imports above
 // and uncomment the line below to develop the UI without a car.
@@ -33,10 +35,25 @@ let phone = null
 let status = null
 let navigate = null
 let syncListener = null
+// Walk-away auto-exit listener (see callbacks.js autoExitOnLock). Module-scope so
+// destroy() can deregister it — the secondary widget rebuilds per visit. home() not
+// exit(): this file also runs in the secondary-widget context, and going to the
+// watchface is right from both. A light buzz first — silent vanishing would read
+// as a crash; the buzz says "car locked, done".
+const exitListener = () =>
+  autoExitOnLock(() => {
+    vibro.light()
+    safe('home', () => home())
+  })
 // Unlicensed = KiezelPay reports no license. It's a terminal render state (no BLE,
 // no controls) rather than a connection state, so it's tracked separately and wins
 // in statusKey below — see build().
 let unlicensed = false
+// Passive-entry milestone: the car accepted our key during walk-up. Sticky while the
+// connection stays online (reset in render when we drop offline), so the status reads
+// 'Authorized' instead of 'Connected' — mirrors the app widget. Shared by the main page
+// AND the secondary widget (both run this file).
+let authorized = false
 
 // Map the live BLE connection state (tesla.js: checking → online → offline/error)
 // to a status-component key. Driven by tesla.onChange(render), so every real
@@ -44,7 +61,7 @@ let unlicensed = false
 // Unlicensed wins: we never connect while unlicensed, so it's not a connection state.
 const statusKey = () => {
   if (unlicensed) return 'unlicensed'
-  if (tesla.connection.status === 'online') return 'online'
+  if (tesla.connection.status === 'online') return authorized ? 'authorized' : 'online'
   if (tesla.connection.status === 'checking') return 'checking'
   return tesla.connection.error ? 'failed' : 'offline'
 }
@@ -62,6 +79,11 @@ const pillButton = ({ text, y, onClick }) => {
 
 const render = () => {
   UI.reset()
+  // 'Authorized' is only meaningful while online — drop it once we leave (so a
+  // reconnect starts back at 'Connecting'/'Connected', not a stale 'Authorized').
+  if (tesla.connection.status !== 'online') {
+    authorized = false
+  }
   // Single screen — no groups, no scroll. Status arc first so it's the bottom of the
   // z-stack; the car images and buttons paint on top of it and receive taps.
   status && status.update(statusKey())
@@ -123,7 +145,13 @@ const getKpay = () => {
 }
 const isLicensed = () => {
   const kpay = getKpay()
-  return kpay ? kpay.isLicensed() : false
+  if (kpay && kpay.isLicensed()) {
+    // Persist: kpay can be null (aborted app onCreate) and its KPAY_STATUS cache
+    // lives on the kpay lib's own LocalStorage instance — see store.licensed.
+    if (!store.licensed) store.licensed = true
+    return true
+  }
+  return store.licensed
 }
 const startPurchase = () => {
   const kpay = getKpay()
@@ -152,19 +180,25 @@ const onRetry = () => {
 }
 
 const onLock = () => {
+  // Mark this lock as user-initiated so the walk-away auto-exit (callbacks.js)
+  // doesn't close the app on the resulting locked flip; a FAILED lock clears the
+  // mark — no flip is coming, and it must not eat the next real walk-away exit.
+  noteSelfLock()
   tesla.lock((r) => {
     if (r.success) vibro.medium()
-    else hmUI.showToast({ text: r.error || 'Error' })
+    else {
+      clearSelfLock()
+      hmUI.showToast({ text: r.error || 'Error' })
+    }
   })
 }
 
 const onUnlock = () => {
-  // Toasts (not updateStatusBarTitle — the status bar is hidden via setStatusBarVisible(false),
-  // so those titles never show). Toast on send, then on the result.
-  hmUI.showToast({ text: 'Unlocking…' })
+  // Success is signalled by the haptic + the lock icon flipping (optimistic state);
+  // only surface a toast on failure — same as lock/trunk/frunk.
   tesla.unlock((r) => {
-    hmUI.showToast({ text: r.success ? '✓ Unlocked' : r.error || '✗ Error' })
     if (r.success) vibro.medium()
+    else hmUI.showToast({ text: r.error || 'Error' })
   })
 }
 
@@ -180,6 +214,31 @@ const onFrunk = () => {
     if (r.success) vibro.medium()
     else hmUI.showToast({ text: r.error || 'Error' })
   })
+}
+
+// Run the settings-chosen physical-button action. Reads the PERSISTED store.buttonAction
+// (synced from the phone); routes through the same handlers as the on-screen controls so
+// toasts/haptics/optimistic state all behave identically. Default = lock/unlock toggle.
+//
+// Not online yet? A press RETRIES the connection (same as tapping the screen when
+// offline/failed) instead of firing a command that would just toast "Offline". onRetry
+// no-ops while already 'checking', so a press mid-connect is ignored rather than stacking
+// dials. We only actuate the car once we're actually online.
+const runButtonAction = () => {
+  if (tesla.connection.status !== 'online') {
+    onRetry()
+    return
+  }
+  switch (store.buttonAction) {
+    case 'frunk':
+      onFrunk()
+      break
+    case 'trunk':
+      onTrunk()
+      break
+    default:
+      tesla.locked ? onUnlock() : onLock()
+  }
 }
 
 // Mount the main experience. host.navigate(url) is the only host-specific hook —
@@ -219,20 +278,24 @@ export function build(host) {
   phone = new Phone()
 
   tesla.onChange(render)
+  // Walk-away auto-exit: the car locking ITSELF (live push, not our tap) means the
+  // user left — close the app back to the watchface. Policy/state in callbacks.js;
+  // exit() is guarded for the secondary-widget context, which runs this same file.
+  tesla.onChange(exitListener)
 
-  // Passive-entry handshake toasts: show the user the walk-up handshake progressing
-  // (car detected the key → accepted it). One toast per milestone per connection.
-  // Short haptic acks: 'status' (car answered — synced on connect) and 'authorized'
-  // (key accepted by the car during walk-up). Both fire once per connection.
+  // Passive-entry handshake: HAPTIC-only feedback, no toasts (progress/success is
+  // silent per the toasts-on-errors-only rule). A short buzz when the car answers
+  // ('status', synced on connect) or accepts the key during walk-up ('authorized').
+  // 'authorized' also flips the status label to 'Authorized' (repaint — passive events
+  // don't go through onChange), matching the app widget.
   tesla.onPassiveEvent((evt) => {
-    const TXT = {
-      initiated: 'Passive entry…',
-      approaching: 'Approaching — authorizing',
-      authorized: '✓ Key authorized',
+    if (evt.type === 'status' || evt.type === 'authorized') {
+      vibro.medium()
     }
-    const text = TXT[evt.type]
-    if (text) hmUI.showToast({ text })
-    if (evt.type === 'status' || evt.type === 'authorized') vibro.medium()
+    if (evt.type === 'authorized') {
+      authorized = true
+      render()
+    }
   })
 
   // Auto-establish the BLE session on open and pull the live car state; once online
@@ -243,33 +306,32 @@ export function build(host) {
   // settles (first non-'checking' onChange) to avoid radio contention. It persists the
   // toggles into local storage for later reads.
   //
-  // Auto-unlock on connect is PAGE-owned (tesla is just the key facade): the first time
-  // we reach 'online', if the toggle is on and the car is locked, unlock. It reads the
-  // PERSISTED store.autoUnlock directly — it's fine to miss the very first connect after
-  // a toggle change, since the sync above updates storage for the next connect.
   // Tracked so destroy() can remove it — the secondary widget rebuilds per visit and an
   // untracked listener would accumulate.
   let synced = false
-  let autoUnlocked = false
   syncListener = () => {
     if (tesla.connection.status === 'checking') return
     if (!synced) {
       synced = true
       phone.syncSettings()
     }
-    if (!autoUnlocked && tesla.connection.status === 'online') {
-      autoUnlocked = true
-      autoUnlock()
-    }
   }
   tesla.onChange(syncListener)
+  // Auto-unlock is the connect PRE-LOAD step: it fires on the virgin connection,
+  // before the status read and before passive entry answers anything (the policy —
+  // toggle + cached lock state — lives in callbacks.js; tesla only sequences it).
+  tesla.beforeInitialLoad(autoUnlock)
   tesla.connect()
 
+  // Physical watch button → the user-chosen car action (settings Select, synced to
+  // store.buttonAction). SELECT (crown) and SHORTCUT (the dedicated side button) both
+  // fire it; default 'lockUnlock' preserves the original crown behavior.
   safe('onKey', () =>
     onKey({
       callback: (key, keyEvent) => {
-        if (key === KEY_SELECT && keyEvent === KEY_EVENT_CLICK) {
-          tesla.locked ? tesla.unlock() : tesla.lock()
+        if (keyEvent === KEY_EVENT_CLICK && (key === KEY_SELECT || key === KEY_SHORTCUT)) {
+          runButtonAction()
+          return true // consume — otherwise SHORTCUT also fires the system shortcut (leaves the app)
         }
         return false
       },
@@ -283,6 +345,7 @@ export function build(host) {
 
 export function destroy() {
   tesla.offChange(render)
+  tesla.offChange(exitListener)
   if (syncListener) {
     tesla.offChange(syncListener)
     syncListener = null

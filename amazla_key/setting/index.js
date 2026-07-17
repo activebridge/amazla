@@ -1,6 +1,7 @@
 import { Header } from './components/header.js'
 import { ICON_BLUETOOTH, ICON_INFO, ICON_NO_PHONE, ICON_OFFLINE, ICON_PENCIL } from './icons.js'
 import { openFaqDialog } from './libs/faq.js'
+import { openInfoDialog } from './libs/infoDialog.js'
 import { openPairStepsDialog } from './libs/pairSteps.js'
 import { openVehicleDialog } from './libs/vinInput.js'
 import {
@@ -10,19 +11,28 @@ import {
   CARD_EDIT_HINT,
   CARD_EDIT_ICON,
   CARD_EDIT_TEXT,
+  CHIP,
+  CHIP_ON,
+  CHIP_ROW,
+  CHIP_TEXT,
+  CHIP_TEXT_ON,
   FAQ_FAB,
+  FOOTER_FEATURE_DOT,
   FOOTER_FEATURE_ICON,
+  FOOTER_FEATURE_ITEM,
   FOOTER_FEATURES,
   INFO_ICON_BUTTON,
   MAIN,
   PAIR_BUTTON,
   PAIRED_VALUE_ROW,
   SECTION_SETUP,
+  SELECT_ROW,
   SETTING_DESC,
   SETTING_ROW,
   SETTING_ROW_DIVIDER,
   SETTING_TEXTS,
   SETTING_TITLE,
+  SETTING_TITLE_ROW,
   SWITCH_KNOB,
   SWITCH_KNOB_ON,
   SWITCH_TRACK,
@@ -79,6 +89,41 @@ AppSettingsPage({
               'Auto-Unlock on Connect',
               'Unlock the car as soon as the watch connects to it.',
               !isPaired,
+              false,
+              {
+                title: 'Auto-Unlock',
+                body:
+                  'When on, the car <b>unlocks by itself the moment the watch connects</b> to it and the car is locked — no tap needed.' +
+                  '<ul>' +
+                  '<li>Works everywhere the app connects: the main app, the shortcut card, and the key-card widget.</li>' +
+                  "<li>It only unlocks a <b>locked</b> car, so it never re-locks or interferes if you're already in.</li>" +
+                  '<li>A change here reaches the watch on its <b>next connection</b>, not instantly.</li>' +
+                  '</ul>',
+              },
+            ),
+            SettingSelect(
+              settingsStorage,
+              'buttonAction',
+              'lockUnlock',
+              'Watch Button Action',
+              'What a press of the watch button does while the app is open.',
+              [
+                { value: 'lockUnlock', label: 'Lock/Unlock' },
+                { value: 'frunk', label: 'Frunk' },
+                { value: 'trunk', label: 'Trunk' },
+              ],
+              !isPaired,
+              {
+                title: 'Watch Button',
+                body:
+                  "Pick what the watch's physical button does <b>while the app is open</b>:" +
+                  '<ul>' +
+                  '<li><b>Lock/Unlock</b> — toggles the doors.</li>' +
+                  '<li><b>Frunk</b> — opens/closes the front trunk.</li>' +
+                  '<li><b>Trunk</b> — opens/closes the rear trunk.</li>' +
+                  '</ul>' +
+                  "Press the side/shortcut button (or the crown) to trigger it. If you map that same button to launch Amazla Key, the first press opens the app and the second press runs your selected action (Lock/Unlock, Frunk, or Trunk). If you're not connected yet, a press <b>reconnects</b> instead — press again once it shows Connected.",
+              },
             ),
           ]),
         ]),
@@ -89,14 +134,20 @@ AppSettingsPage({
           'Your car unlocks with a secure digital key — stored only on your devices',
         ),
         View({ style: FOOTER_FEATURES }, [
-          Image({ alt: '', src: ICON_BLUETOOTH, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
-          Text({}, 'Pure Bluetooth'),
-          Text({}, '·'),
-          Image({ alt: '', src: ICON_NO_PHONE, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
-          Text({}, 'No phone needed'),
-          Text({}, '·'),
-          Image({ alt: '', src: ICON_OFFLINE, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
-          Text({}, 'Works offline'),
+          View({ style: FOOTER_FEATURE_ITEM }, [
+            Image({ alt: '', src: ICON_BLUETOOTH, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
+            Text({}, 'Pure Bluetooth'),
+          ]),
+          Text({ style: FOOTER_FEATURE_DOT }, '·'),
+          View({ style: FOOTER_FEATURE_ITEM }, [
+            Image({ alt: '', src: ICON_NO_PHONE, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
+            Text({}, 'No phone needed'),
+          ]),
+          Text({ style: FOOTER_FEATURE_DOT }, '·'),
+          View({ style: FOOTER_FEATURE_ITEM }, [
+            Image({ alt: '', src: ICON_OFFLINE, width: 13, height: 13, style: FOOTER_FEATURE_ICON }),
+            Text({}, 'Works offline'),
+          ]),
         ]),
         Text(
           { style: { fontSize: '11px', color: 'rgba(255,255,255,0.3)', textAlign: 'center', marginBottom: '32px' } },
@@ -130,7 +181,21 @@ function VehicleRow(label, value, settingsStorage) {
 // to the watch on its next GET_SETTINGS. Only the switch itself toggles — the row
 // body is inert. disabled: dimmed and non-interactive (needs a paired watch).
 // divider: separator line above the row (first toggle after the vehicle rows).
-function SettingToggle(settingsStorage, key, defaultOn, title, description, disabled, divider) {
+// Setting title + an optional little (i) info-icon that opens a help dialog. `info`,
+// when given, is { title, body } passed to openInfoDialog (same icon/pattern as the
+// pairing help). Reused by the toggle and the select so both look identical.
+function SettingTitle(title, info) {
+  return View({ style: SETTING_TITLE_ROW }, [
+    Text({ style: SETTING_TITLE }, title),
+    info
+      ? View({ style: INFO_ICON_BUTTON, onClick: (e) => openInfoDialog(e, info.title, info.body) }, [
+          Image({ alt: info.title, src: ICON_INFO, width: 16, height: 16 }),
+        ])
+      : null,
+  ])
+}
+
+function SettingToggle(settingsStorage, key, defaultOn, title, description, disabled, divider, info) {
   const raw = settingsStorage.getItem(key)
   const on = raw == null || raw === '' ? defaultOn : raw === '1'
   const trackStyle = on ? { ...SWITCH_TRACK, ...SWITCH_TRACK_ON } : SWITCH_TRACK
@@ -146,8 +211,36 @@ function SettingToggle(settingsStorage, key, defaultOn, title, description, disa
       [View({ style: on ? { ...SWITCH_KNOB, ...SWITCH_KNOB_ON } : SWITCH_KNOB })],
     ),
     View({ style: SETTING_TEXTS }, [
-      Text({ style: SETTING_TITLE }, title),
+      SettingTitle(title, info),
       Text({ paragraph: true, style: SETTING_DESC }, description),
     ]),
+  ])
+}
+
+// Segmented single-choice select (title/description + a row of chips). Persists the
+// chosen option's value to settingsStorage[key]; GET_SETTINGS syncs it to the watch
+// (store.buttonAction). options: [{ value, label }]. Custom (not the native Select) to
+// match the Tesla-dark toggle rows. Dimmed + inert until the watch is paired.
+function SettingSelect(settingsStorage, key, defaultValue, title, description, options, disabled, info) {
+  const current = settingsStorage.getItem(key) || defaultValue
+  const rowStyle = disabled ? { ...SELECT_ROW, ...CARD_DISABLED } : SELECT_ROW
+  return View({ style: rowStyle }, [
+    View({ style: SETTING_TEXTS }, [
+      SettingTitle(title, info),
+      Text({ paragraph: true, style: SETTING_DESC }, description),
+    ]),
+    View(
+      { style: CHIP_ROW },
+      options.map((o) => {
+        const active = o.value === current
+        return View(
+          {
+            style: active ? { ...CHIP, ...CHIP_ON } : CHIP,
+            onClick: disabled ? undefined : () => settingsStorage.setItem(key, o.value),
+          },
+          [Text({ style: active ? { ...CHIP_TEXT, ...CHIP_TEXT_ON } : CHIP_TEXT }, o.label)],
+        )
+      }),
+    ),
   ])
 }

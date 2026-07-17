@@ -180,6 +180,29 @@ const store = {
   set autoUnlock(value) {
     set('autoUnlock', value ? '1' : '0')
   },
+  // Physical-button action (settings Select, synced via GET_SETTINGS). One of
+  // 'lockUnlock' (default) | 'frunk' | 'trunk' — what a watch key press triggers
+  // while the main page is open (see page/main.js onKey).
+  get buttonAction() {
+    return localStorage.getItem('buttonAction') || 'lockUnlock'
+  },
+  set buttonAction(value) {
+    set('buttonAction', value || 'lockUnlock')
+  },
+  // KiezelPay license, sticky. Set the first time kpay reports 'licensed' and read
+  // as the fallback whenever kpay can't answer — kpay lives on the app instance
+  // (null after an aborted onCreate; possibly absent in the widget runtime) and its
+  // KPAY_STATUS cache sits on the kpay lib's OWN LocalStorage instance (clobber-
+  // prone, see connectId below). A paid driver must never be locked out of the car
+  // by licensing plumbing. Deliberately NOT cleared by reset(): the license is
+  // per-app, not per-vehicle.
+  get licensed() {
+    return localStorage.getItem('licensed') === '1'
+  },
+  set licensed(value) {
+    set('licensed', value ? '1' : null)
+  },
+
   // Last successful native BLE connect_id — persisted so the NEXT launch can
   // mstDisconnect a stuck connection even after a crash (no onDestroy). This lives
   // here, on the SINGLE store LocalStorage instance, NOT in a second `new

@@ -79,13 +79,14 @@ class Phone {
       })
   }
 
-  // Sync vehicle name, VIN and the auto-unlock pref from companion settings.
-  // Writes store.vehicleName/vehicleVin/autoUnlock.
+  // Sync vehicle name, VIN, the auto-unlock pref and the button-action choice from
+  // companion settings. Writes store.vehicleName/vehicleVin/autoUnlock/buttonAction.
   syncSettings() {
     return this._call('GET_SETTINGS', {}, null, (r) => {
       store.vehicleName = r.vehicleName || null
       store.vehicleVin = r.vehicleVin || null
       store.autoUnlock = !!r.autoUnlock
+      store.buttonAction = r.buttonAction || 'lockUnlock'
     })
   }
 

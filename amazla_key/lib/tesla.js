@@ -36,6 +36,7 @@ class Tesla {
 
     this._listeners = []
     this._passiveListeners = []
+    this._beforeLoadCb = null // page-installed pre-load step — see beforeInitialLoad()
     // Relay passive-entry handshake milestones from the session up to the UI (toasts).
     teslaSession.onPassiveEvent((evt) => this._emitPassive(evt))
     // Unexpected link loss (session already reset itself): flip the UI offline so
@@ -170,11 +171,32 @@ class Tesla {
       this._setConnection({ status: 'online', error: null })
       this._startLivePushes()
       if (cb) cb({ success: true }) // online now; live state refines as it arrives
-      this._loadInitialState()
-      // Auto-unlock on connect is owned by the page (page/main.js), which reads the
-      // synced store.autoUnlock toggle when the connection first reaches 'online' —
-      // tesla is just the key/transport facade.
+      // Page-installed pre-load step (see beforeInitialLoad below) runs first and
+      // EXCLUSIVELY — e.g. auto-unlock policy, which is the PAGE's decision, not this
+      // facade's. USER-SPECIFIED ORDER (2026-07-17): "first fire unlock, after unlock
+      // run everything else" — the passive responder is suppressed and nothing else
+      // is sent until the step settles; the status read and walk-up authorization
+      // (which flips the UI to 'Authorized') start strictly after.
+      if (this._beforeLoadCb) {
+        var self = this
+        teslaSession.suppressPassive(true)
+        this._beforeLoadCb(function () {
+          teslaSession.suppressPassive(false) // _loadInitialState re-suppresses for its read
+          self._loadInitialState()
+        })
+      } else {
+        this._loadInitialState()
+      }
     })
+  }
+
+  // Facade hook (mechanism only — like onLinkDown): a step the page wants run on the
+  // fresh connection BEFORE everything else — the passive responder is silent and the
+  // status read waits until the step's done() (see refresh above). The facade holds
+  // the load order; the page holds the policy. done() MUST be called (success or
+  // failure). Registered once; a re-register overwrites (page rebuilds).
+  beforeInitialLoad(fn) {
+    this._beforeLoadCb = fn
   }
 
   // Load live state on connect. Cached state (lock/doors) is already painted at the

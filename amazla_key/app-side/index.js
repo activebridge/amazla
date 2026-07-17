@@ -95,10 +95,11 @@ const actions = {
       const vehicleName = settings.settingsStorage.getItem('vehicleName') || null
       const vehicleVin = settings.settingsStorage.getItem('vehicleVin')
       const vehicleVinBinary = vehicleVin ? bytesToBinaryString(new TextEncoder().encode(vehicleVin)) : null
-      // Auto-unlock pref (settings page toggle). Unset = OFF.
+      // Auto-unlock pref (toggle) + button action (select). Unset → OFF / 'lockUnlock'.
       const autoUnlock = settings.settingsStorage.getItem('autoUnlock') === '1'
-      console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin, autoUnlock })
-      return { success: true, vehicleName, vehicleVin: vehicleVinBinary, autoUnlock }
+      const buttonAction = settings.settingsStorage.getItem('buttonAction') || 'lockUnlock'
+      console.log('[App] GET_SETTINGS', { vehicleName, vehicleVin, autoUnlock, buttonAction })
+      return { success: true, vehicleName, vehicleVin: vehicleVinBinary, autoUnlock, buttonAction }
     } catch (e) {
       return { success: false, error: e && e.message }
     }

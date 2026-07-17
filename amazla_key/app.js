@@ -14,7 +14,6 @@ App({
     const { appId } = getPackageInfo()
     const messageBuilder = new MessageBuilder({ appId, appDevicePort: 20, appSidePort: 0, ble })
     this.globalData.messageBuilder = messageBuilder
-    messageBuilder.connect()
 
     // Re-shake on side-service Close. The Zepp app spawns the side service ONLY in
     // response to a shake (launchType: peerAppLaunched); once the phone kills the
@@ -37,9 +36,23 @@ App({
       } catch (_e) {}
     })
 
+    // KPAY is constructed BEFORE connect(): connect()'s shake throws when the phone
+    // link is down at launch (ble.send returns false → sendBin throws), and an aborted
+    // onCreate stranded globalData.kpay null for the whole session — paying users saw
+    // 'Unlicensed' + a dead Purchase button (device 2026-07-14 and 2026-07-17).
+    // Licensing must never depend on the phone link. kpay.init() is safe pre-shake:
+    // its RPCs queue on waitingShakePromise (created in the MessageBuilder constructor).
     const kpay = new kpayApp({ ...kpayConfig, dialogPath: 'page/kpay/index.page', messageBuilder })
     this.globalData.kpay = kpay
     kpay.init()
+
+    try {
+      messageBuilder.connect()
+    } catch (e) {
+      // Phone unreachable at launch. The key works standalone; messaging recovers
+      // via the raw-Close re-shake above or the next app launch.
+      console.log('[APP] launch shake failed:', e)
+    }
   },
   onDestroy() {
     this.globalData.messageBuilder && this.globalData.messageBuilder.disConnect()
