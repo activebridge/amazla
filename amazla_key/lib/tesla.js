@@ -48,6 +48,11 @@ class Tesla {
       this.busy = false // any in-flight command's waiter was already failed by ble cleanup
       this._setConnection({ status: 'offline', error: 'Connection lost' })
     })
+    // Give the session its counter-persistence adapter. The session owns the anti-replay
+    // RULE (never seed below what it last sent, or the car replay-drops the command) but
+    // stays storage-agnostic via this injected interface; store.js owns the actual
+    // load/save. Wired once here (survives session.reset()), keyed by epoch.
+    teslaSession.counterStore = store.counterStore
   }
 
   // Paint the last-known state immediately on load. The car can take 10–20s to

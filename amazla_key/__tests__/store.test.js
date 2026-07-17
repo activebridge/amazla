@@ -208,6 +208,39 @@ describe('lib/store.js', () => {
     expect(store.isPaired).toBe(false)
   })
 
+  // ── counterState (anti-replay high-water) ───────────────────────────────────
+
+  test('counterState round-trips {epoch, counter}', () => {
+    store.counterState = { epoch: 'aabbccdd', counter: 42 }
+    expect(store.counterState).toEqual({ epoch: 'aabbccdd', counter: 42 })
+  })
+
+  test('counterState is null when unset and after clearing', () => {
+    expect(store.counterState).toBeNull()
+    store.counterState = { epoch: 'ff', counter: 7 }
+    store.counterState = null
+    expect(store.counterState).toBeNull()
+  })
+
+  test('counterState ignores malformed values (no epoch / non-numeric counter)', () => {
+    store.counterState = { counter: 5 } // no epoch
+    expect(store.counterState).toBeNull()
+    store.counterState = { epoch: 'ab', counter: 'x' } // non-numeric
+    expect(store.counterState).toBeNull()
+  })
+
+  test('reset() clears counterState (new pairing = new session)', () => {
+    store.counterState = { epoch: 'aa', counter: 99 }
+    store.reset()
+    expect(store.counterState).toBeNull()
+  })
+
+  test('counterStore adapter: save then load for a matching epoch; null for a different one', () => {
+    store.counterStore.save('deadbeef', 77)
+    expect(store.counterStore.load('deadbeef')).toBe(77)
+    expect(store.counterStore.load('otherepoch')).toBeNull() // epoch mismatch = no floor
+  })
+
   // ── reset ─────────────────────────────────────────────────────────────────
 
   test('reset clears all localStorage keys without throwing', () => {

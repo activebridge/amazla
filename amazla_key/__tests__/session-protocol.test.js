@@ -1218,7 +1218,7 @@ describe('sendCommand wake prod — skipped while the car is demonstrably awake'
 
   test('an addressed reply stamps the gate: the NEXT command skips its wake', () => {
     const s = makeSession()
-    s.sendCommand(RKE_ACTION_LOCK, (r) => {})
+    s.sendCommand(RKE_ACTION_LOCK, () => {})
     expect(wakes.length).toBe(1)
     // Deliver a terminal addressed reply (field 10 present → payload → terminal).
     const fromVcsec = encodeBytes(3, new Uint8Array([0x18, 0x02])) // any FromVCSEC content
@@ -1227,5 +1227,85 @@ describe('sendCommand wake prod — skipped while the car is demonstrably awake'
     s.sendCommand(RKE_ACTION_LOCK, () => {})
     expect(wakes.length).toBe(1)
     expect(addressed.length).toBe(2)
+  })
+})
+
+// ── anti-replay counter seeding (Tesla SDK parity) ──────────────────────────
+// The vehicle silently drops a signed message whose counter isn't strictly above the
+// last it accepted for the current epoch. On a fast reconnect the car's SessionInfo
+// counter can LAG what we already pushed, so seeding from it blindly replays counters
+// it already saw. Mirroring the SDK's UpdateSessionInfo, we seed with
+// max(persisted-high-water-for-this-epoch, sessionInfo.counter) — never lower.
+describe('_processSessionInfo — anti-replay counter seeding', () => {
+  const EPOCH_EE = 'ee'.repeat(16) // hex of 16 bytes of 0xee (the response epoch below)
+
+  function makeResponse(counter, epochByte = 0xee) {
+    return {
+      sessionInfo: {
+        publicKey: new Uint8Array(65).fill(0x04),
+        epoch: new Uint8Array(16).fill(epochByte),
+        counter,
+        clockTime: 1000,
+      },
+      sessionInfoTag: new Uint8Array(16).fill(0x01),
+    }
+  }
+  // In-memory counterStore injected into the session (the session is storage-agnostic;
+  // on device the facade injects store.counterStore). `mem` stands in for persistence.
+  let mem
+  function makeSession() {
+    store.reset()
+    store.vehicleVin = null
+    mem = null
+    const s = new TeslaSession()
+    s.ephemeralPublicKey = new Uint8Array(65).fill(0x04)
+    store.sessionKey = new Uint8Array(16).fill(0x0b)       // cached-key fast path
+    store.vehicleEcPublicKey = new Uint8Array(65).fill(0x04) // matches response pubkey
+    s._verifySessionInfoTag = () => true                    // skip real HMAC verify
+    s.counterStore = {
+      load: (ep) => (mem && mem.epoch === ep ? mem.counter : null),
+      save: (ep, counter) => { mem = { epoch: ep, counter } },
+    }
+    return s
+  }
+
+  test('same epoch + persisted high-water ABOVE SessionInfo → counter RAISED (no replay)', () => {
+    const s = makeSession()
+    mem = { epoch: EPOCH_EE, counter: 130 }
+    s._processSessionInfo(makeResponse(119), () => {})
+    expect(s.counter).toBe(130) // not the stale 119 the car reported
+  })
+
+  test('same epoch + persisted BELOW SessionInfo → SessionInfo wins (never lowered)', () => {
+    const s = makeSession()
+    mem = { epoch: EPOCH_EE, counter: 100 }
+    s._processSessionInfo(makeResponse(140), () => {})
+    expect(s.counter).toBe(140)
+  })
+
+  test('DIFFERENT epoch → persisted high-water ignored (car reset its counter space)', () => {
+    const s = makeSession()
+    mem = { epoch: 'aa'.repeat(16), counter: 999 }
+    s._processSessionInfo(makeResponse(5), () => {})
+    expect(s.counter).toBe(5)
+  })
+
+  test('no persisted state → SessionInfo value used as-is', () => {
+    const s = makeSession()
+    s._processSessionInfo(makeResponse(50), () => {})
+    expect(s.counter).toBe(50)
+  })
+
+  test('establish records the seed as the persisted high-water floor', () => {
+    const s = makeSession()
+    s._processSessionInfo(makeResponse(60), () => {})
+    expect(mem).toEqual({ epoch: EPOCH_EE, counter: 60 })
+  })
+
+  test('no counterStore wired → session simply does not persist (storage-agnostic)', () => {
+    const s = makeSession()
+    s.counterStore = null
+    expect(() => s._processSessionInfo(makeResponse(70), () => {})).not.toThrow()
+    expect(s.counter).toBe(70)
   })
 })

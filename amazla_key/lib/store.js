@@ -221,6 +221,45 @@ const store = {
     else localStorage.setItem('lastBleConnectId', String(id))
   },
 
+  // Anti-replay counter high-water, persisted across launches per epoch. The vehicle
+  // rejects (silently drops) any signed message whose counter isn't strictly above the
+  // last it accepted for the current epoch. The car's SessionInfo reports a counter on
+  // each connect, but on a fast reconnect it can LAG the value we actually pushed in the
+  // previous session (unlock + wake + passive-entry replies each burn one), so seeding
+  // from it alone replays counters the car already saw → the command is dropped with no
+  // fault. The Tesla SDK avoids this by never lowering its counter (max of local vs
+  // vehicle) and persisting it across process restarts (Export/ImportSessionInfo). We
+  // have no in-process continuity (each launch is a fresh process), so we persist it
+  // here. Stored as JSON {epoch: hex, counter: N} — LocalStorage-safe (no null bytes).
+  // Cleared on unpair (reset) since a new pairing brings a new session entirely.
+  get counterState() {
+    const s = localStorage.getItem('counterState')
+    if (!s) return null
+    try {
+      return JSON.parse(s)
+    } catch (_e) {
+      return null
+    }
+  },
+  set counterState(v) {
+    if (v && typeof v.counter === 'number' && v.epoch) localStorage.setItem('counterState', JSON.stringify(v))
+    else localStorage.removeItem('counterState')
+  },
+  // Adapter for the session's injected counter-persistence hook (session.counterStore,
+  // see lib/tesla-ble/session.js). Storage is THIS module's job, so the load/save
+  // mapping lives here — the session and the facade stay storage-agnostic and just move
+  // this opaque interface. load returns the high-water only for a MATCHING epoch (a
+  // different epoch = the car reset its counter space → no floor to honor).
+  counterStore: {
+    load(epochHex) {
+      const s = store.counterState
+      return s && s.epoch === epochHex ? s.counter : null
+    },
+    save(epochHex, counter) {
+      store.counterState = { epoch: epochHex, counter }
+    },
+  },
+
   removeBinary: (key) => {
     _fileCache[key] = undefined // keep the read cache coherent with the file
     try {
@@ -244,6 +283,7 @@ const store = {
     this.removeBinary('watch_public_key')
     this.removeBinary('vehicle_ec_public_key')
     this.removeBinary('session_key')
+    localStorage.removeItem('counterState')
   },
 }
 

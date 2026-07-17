@@ -120,6 +120,13 @@ class TeslaSession {
     this.awakeWindowMs = AWAKE_WINDOW_MS
     this._passiveEventCb = null // UI hook for passive-entry events (set by the Tesla facade)
     this._linkDownCb = null // facade hook: unexpected native link loss (set once, survives reset())
+    // Facade hook: persistence for the anti-replay counter high-water. The SESSION owns
+    // the anti-replay rule (seed above what we last sent so the car never replay-drops a
+    // command), but NOT where it's stored — that's the facade's job. Interface, wired
+    // once, survives reset(): load(epochHex) → last-persisted counter for that epoch (or
+    // null), save(epochHex, counter). Null until wired → the session simply doesn't
+    // persist (correct for tests / any storage-less host).
+    this.counterStore = null
     // The session owns connect_id persistence (crash-recovery across launches), not
     // the transport: ble.js reports the id via onConnectId and we save it to the
     // single store LocalStorage. Wired once here; survives session.reset().
@@ -185,6 +192,8 @@ class TeslaSession {
     this.vehiclePublicKey = null
     this.epoch = null
     this.counter = 0
+    this._seedCounter = 0 // the value we seeded from (SessionInfo, or persisted high-water)
+    this._persistedAt = 0 // last counter handed to counterStore.save (throttle gate)
     this.clockTime = 0
     this.sessionKey = null
     this.routingAddress = null
@@ -217,6 +226,12 @@ class TeslaSession {
   // clear) is what stops a poisoned mstConnect on the next launch. Owning teslaBLE
   // here keeps the reset out of the tesla facade, which only talks to this session.
   shutdown() {
+    // Flush the true counter high-water before tearing down, so a clean app close records
+    // every counter burned this session (the throttle in _buildAuthMessage may be up to
+    // 16 behind) and the next launch seeds strictly above it.
+    if (this.established && this.counter > this._persistedAt) {
+      try { this._persistCounter() } catch (_e) {}
+    }
     try {
       this.reset()
     } catch (_e) {}
@@ -513,7 +528,21 @@ class TeslaSession {
     }
 
     this.epoch = response.sessionInfo.epoch
+    // SDK-parity anti-replay seeding. The blind `this.counter = sessionInfo.counter`
+    // could LOWER our counter below what we already pushed in a prior session (the car's
+    // reported value can lag on a fast reconnect), replaying counters it already accepted
+    // → the command is silently dropped. Mirror the Tesla SDK's UpdateSessionInfo, which
+    // only ever RAISES the counter: seed with max(persisted-high-water-for-this-epoch,
+    // sessionInfo.counter). A DIFFERENT epoch means the car reset its counter space, so
+    // the persisted value doesn't apply — take the SessionInfo value as-is.
     this.counter = response.sessionInfo.counter
+    const hw = this.counterStore ? this.counterStore.load(this._epochHex()) : null
+    if (typeof hw === 'number' && hw > this.counter) {
+      console.log('[SESSION] counter seed raised ' + this.counter + ' → ' + hw + ' (persisted high-water, same epoch)')
+      this.counter = hw
+    }
+    this._seedCounter = this.counter
+    this._persistedAt = this.counter
     this.clockTime = response.sessionInfo.clockTime
     // Wall-clock instant we captured the vehicle's clock. expiresAt must track the
     // vehicle's clock as it advances in real time — see _buildAuthMessage.
@@ -592,7 +621,10 @@ class TeslaSession {
     const { cmdHmac } = createSessionHmacs(this.sessionKey)
     this._cmdHmacFn = cmdHmac
     this.established = true
-    console.log(`[SESSION] ✓ Established: counter=${this.counter}`)
+    // Record the seed as the high-water immediately so even a session that sends nothing
+    // leaves a durable floor for the next launch.
+    this._persistCounter()
+    console.log(`[SESSION] ✓ Established: counter=${this.counter} epoch=${this._epochHex().slice(0, 8)}…`)
     callback({ success: true, counter: this.counter, epoch: this.epoch ? this.epoch.length : 0 })
   }
   _verifySessionInfoTag(response, callback) {
@@ -627,10 +659,35 @@ class TeslaSession {
     console.log('[SESSION] ✓ SessionInfo tag verified')
     return true
   }
+  // Hex fingerprint of the current epoch — the key the injected counterStore uses for the
+  // persisted high-water. Full 16-byte epoch → 32 hex chars so distinct epochs never
+  // collide. Empty string when no epoch yet (pre-establish).
+  _epochHex() {
+    if (!this.epoch || !this.epoch.length) return ''
+    let h = ''
+    for (let i = 0; i < this.epoch.length; i++) h += ('0' + this.epoch[i].toString(16)).slice(-2)
+    return h
+  }
+  // Record the counter high-water for this epoch so the NEXT launch seeds above it (never
+  // replays). Hands off to the injected counterStore — the session doesn't know or care
+  // where it lands. Throttled by the caller (the store flushes a whole snapshot), so we
+  // don't write on every ~1Hz beacon reply.
+  _persistCounter() {
+    const ep = this._epochHex()
+    if (!ep || !this.counterStore) return
+    try {
+      this.counterStore.save(ep, this.counter)
+      this._persistedAt = this.counter
+    } catch (_e) {}
+  }
   // Shared auth message builder: counter++, HMAC tag, SignatureData, RoutableMessage.
   // Takes a pre-built UnsignedMessage; returns the RoutableMessage bytes ready to send.
   _buildAuthMessage(unsignedMessage, routingAddressOverride) {
     this.counter++
+    // Persist the high-water periodically (every 16 sends) so a crash/link-drop between
+    // command sends can't lose more than that many counts. Commands force an immediate
+    // persist in sendCommand; this throttle covers the frequent passive-entry replies.
+    if (this.counter - this._persistedAt >= 16) this._persistCounter()
     // The vehicle validates expiresAt against ITS clock, which keeps ticking after we
     // captured clockTime at connect. Using a static `clockTime + 60` means that ~60s
     // into a connection every message is already in the vehicle's past → it rejects
@@ -769,9 +826,11 @@ class TeslaSession {
 
         const message = this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)
         myUuids.push(this._lastBuiltUuid) // record THIS command's uuid (built after the wake → higher counter)
+        this._persistCounter() // a command MUST be durably recorded so the next launch can't replay it
 
         console.log(
-          `[SESSION] TX command: ${typeof rkeActionOrClosure === 'number' ? `RKE=${rkeActionOrClosure}` : 'closureMoveRequest'}`,
+          `[SESSION] TX command: ${typeof rkeActionOrClosure === 'number' ? `RKE=${rkeActionOrClosure}` : 'closureMoveRequest'}` +
+            ` counter=${this.counter} (seeded ${this._seedCounter})`,
         )
 
         // Track if we received the first response (status push)
