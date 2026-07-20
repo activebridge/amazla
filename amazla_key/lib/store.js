@@ -180,6 +180,15 @@ const store = {
   set autoUnlock(value) {
     set('autoUnlock', value ? '1' : '0')
   },
+  // Exit-on-lock pref synced from the phone (GET_SETTINGS). Stored as '1'/'0';
+  // never-synced (null) = OFF (opt-in). When ON, the app exits when the car
+  // walk-away locks itself (see page/callbacks.js autoExitOnLock).
+  get exitOnLock() {
+    return localStorage.getItem('exitOnLock') === '1'
+  },
+  set exitOnLock(value) {
+    set('exitOnLock', value ? '1' : '0')
+  },
   // Physical-button action (settings Select, synced via GET_SETTINGS). One of
   // 'lockUnlock' (default) | 'frunk' | 'trunk' — what a watch key press triggers
   // while the main page is open (see page/main.js onKey).

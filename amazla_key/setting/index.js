@@ -102,6 +102,25 @@ AppSettingsPage({
                   '</ul>',
               },
             ),
+            SettingToggle(
+              settingsStorage,
+              'exitOnLock',
+              false,
+              'Exit App on Walk-Away Lock',
+              'Close the app when the car locks itself as you walk away.',
+              !isPaired,
+              false,
+              {
+                title: 'Exit on Lock',
+                body:
+                  'When on, the app <b>closes by itself the moment the car walk-away locks</b> — no need to press back.' +
+                  '<ul>' +
+                  '<li>Only a lock the <b>car initiates</b> (walk-away lock) closes the app; tapping Lock on the watch keeps it open.</li>' +
+                  '<li>The watch gives a light buzz so the close never looks like a crash.</li>' +
+                  '<li>A change here reaches the watch on its <b>next connection</b>, not instantly.</li>' +
+                  '</ul>',
+              },
+            ),
             SettingSelect(
               settingsStorage,
               'buttonAction',

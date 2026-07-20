@@ -79,9 +79,10 @@ describe('autoUnlock()', () => {
 })
 
 // ─── autoExitOnLock (walk-away exit) ───────────────────────────────────────────
-// Called on every tesla.onChange notify. Exit fires ONLY when the car locks ITSELF
-// after we saw it unlocked this connection — a manual lock tap (noteSelfLock) and
-// an app opened on an already-locked car must not exit.
+// Called on every tesla.onChange notify. Exit fires ONLY when the settings toggle
+// (store.exitOnLock, default OFF) is on AND the car locks ITSELF after we saw it
+// unlocked this connection — a manual lock tap (noteSelfLock) and an app opened on
+// an already-locked car must not exit.
 
 describe('autoExitOnLock()', () => {
   const noop = () => {}
@@ -91,6 +92,17 @@ describe('autoExitOnLock()', () => {
     tesla.connection = { status: 'offline', error: null }
     autoExitOnLock(noop)
     tesla.connection = { status: 'online', error: null }
+    store.exitOnLock = true
+  })
+
+  test('toggle off (default) → walk-away lock never exits', () => {
+    store.exitOnLock = false
+    const exitFn = jest.fn()
+    tesla.locked = false
+    autoExitOnLock(exitFn) // saw unlocked
+    tesla.locked = true
+    autoExitOnLock(exitFn) // walk-away lock push
+    expect(exitFn).not.toHaveBeenCalled()
   })
 
   test('car-initiated unlocked→locked while online → exit', () => {

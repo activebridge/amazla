@@ -78,7 +78,7 @@ beforeEach(() => {
 describe('syncSettings()', () => {
   test('writes vehicleName and vehicleVin to store', async () => {
     const page = makeMb({
-      GET_SETTINGS: { success: true, vehicleName: 'Model Y', vehicleVin: 'ABCDEFGH123456789' },
+      GET_SETTINGS: { success: true, vehicleName: 'Model Y', vehicleVin: 'ABCDEFGH123456789', exitOnLock: true },
     })
     const phone = new Phone(page)
 
@@ -88,6 +88,19 @@ describe('syncSettings()', () => {
     // vehicleVin is stored as binary string and read back as Uint8Array
     expect(store.vehicleVin).toBeInstanceOf(Uint8Array)
     expect(store.vehicleVin.length).toBe(17)
+    expect(store.exitOnLock).toBe(true)
+  })
+
+  test('missing exitOnLock syncs to OFF (default)', async () => {
+    store.exitOnLock = true
+    const page = makeMb({
+      GET_SETTINGS: { success: true, vehicleName: 'Model Y', vehicleVin: null },
+    })
+    const phone = new Phone(page)
+
+    await phone.syncSettings()
+
+    expect(store.exitOnLock).toBe(false)
   })
 
   test('nulls out missing fields', async () => {

@@ -38,8 +38,8 @@ export function autoUnlock(done) {
 // and the car pushes locked=true over the still-alive link. The open app is then
 // just burning battery and holding the BLE radio — close it. Only a CAR-initiated
 // lock exits: a lock the user taps on the watch keeps the app open (they want to
-// see the icon flip), which is what the selfLock flag marks. Always on (no toggle
-// — user decision 2026-07-17).
+// see the icon flip), which is what the selfLock flag marks. Opt-in via the
+// settings toggle (store.exitOnLock, default OFF — user decision 2026-07-17).
 let sawUnlocked = false
 let selfLock = false
 
@@ -74,6 +74,9 @@ export function autoExitOnLock(exitFn) {
     selfLock = false // manual tap — stay open
     return
   }
+  // Tracking above always runs so a mid-connection settings sync takes effect;
+  // only the exit itself is gated on the toggle.
+  if (!store.exitOnLock) return
   console.log('[callbacks] car locked itself (walk-away) — exiting app')
   exitFn()
 }
