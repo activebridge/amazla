@@ -283,6 +283,19 @@ export function build(host) {
   // exit() is guarded for the secondary-widget context, which runs this same file.
   tesla.onChange(exitListener)
 
+  // Settings sync (vehicleName/VIN + autoUnlock/exitOnLock/buttonAction) is a PHONE RPC
+  // that shares the single BLE radio with the car link. Nothing on the connect→status→auth
+  // path consumes these during the handshake — autoUnlock is read pre-connect from cache
+  // (beforeInitialLoad); exitOnLock/buttonAction matter only later — so run it ONCE per
+  // session OFF the critical window: on 'authorized' (success) or on connection failure
+  // (offline/error — link already down, radio free). Persists the toggles for later reads.
+  let synced = false
+  const maybeSyncSettings = () => {
+    if (synced) return
+    synced = true
+    phone.syncSettings()
+  }
+
   // Passive-entry handshake: HAPTIC-only feedback, no toasts (progress/success is
   // silent per the toasts-on-errors-only rule). A short buzz when the car answers
   // ('status', synced on connect) or accepts the key during walk-up ('authorized').
@@ -295,25 +308,20 @@ export function build(host) {
     if (evt.type === 'authorized') {
       authorized = true
       render()
+      maybeSyncSettings() // success terminal — radio quiets after auth
     }
   })
 
   // Auto-establish the BLE session on open and pull the live car state; once online
   // this also arms the live-push listener so opening a door, etc. repaints the view.
   //
-  // Settings sync (vehicle name/VIN + the autoUnlock toggle) is a phone RPC
-  // that shares the single BLE radio with the car connection, so defer it until connect
-  // settles (first non-'checking' onChange) to avoid radio contention. It persists the
-  // toggles into local storage for later reads.
-  //
-  // Tracked so destroy() can remove it — the secondary widget rebuilds per visit and an
-  // untracked listener would accumulate.
-  let synced = false
+  // Settings sync runs on connection FAILURE here (the 'authorized' path above covers
+  // success). offline/error means the car link is down, so the phone RPC no longer
+  // contends. Tracked so destroy() can remove it — the secondary widget rebuilds per
+  // visit and an untracked listener would accumulate.
   syncListener = () => {
-    if (tesla.connection.status === 'checking') return
-    if (!synced) {
-      synced = true
-      phone.syncSettings()
+    if (tesla.connection.status === 'offline' || tesla.connection.status === 'error') {
+      maybeSyncSettings()
     }
   }
   tesla.onChange(syncListener)

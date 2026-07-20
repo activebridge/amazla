@@ -1,6 +1,12 @@
 import { BLEMaster } from '@silver-zepp/easy-ble'
 import * as hmBle from '@zos/ble'
 
+// Verbose per-frame transport logging (every RX frame, TX chunk counts, queueing). OFF by
+// default — the beacon-rate frame logs are the bulk of the noise, and the milestone/error
+// logs below carry the story. Flip to true only when deep-debugging the transport.
+const VERBOSE_BLE = false
+const logv = VERBOSE_BLE ? console.log.bind(console) : function () {}
+
 const TESLA_SERVICE_UUID = '00000211-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_WRITE_UUID = '00000212-b2d1-43f0-9b88-960cebf8b91e'
 const TESLA_READ_UUID = '00000213-b2d1-43f0-9b88-960cebf8b91e'
@@ -565,12 +571,12 @@ class TeslaBLE {
     // Serialized: a frame mid-chunking queues later frames (see _txBusy in ctor).
     if (this._txBusy) {
       this._txQueue.push(message)
-      console.log(`[BLE] TX queued ${message.length}B (a send is mid-chunking)`)
+      logv(`[BLE] TX queued ${message.length}B (a send is mid-chunking)`)
       return
     }
     this._txBusy = true
     const total = Math.ceil(message.length / BLE_CHUNK_SIZE)
-    console.log(`[BLE] TX ${message.length}B (${total} chunk(s) @ ${this.chunkIntervalMs}ms)`)
+    logv(`[BLE] TX ${message.length}B (${total} chunk(s) @ ${this.chunkIntervalMs}ms)`)
     this._sendChunk(message, 0)
   }
   _sendChunk(message, offset) {
@@ -659,7 +665,7 @@ class TeslaBLE {
       let matched = false
       try { matched = w.match(payload) } catch (_e) {}
       if (matched) {
-        console.log('[BLE] Got complete response:', payload.length, 'bytes (addr-matched)')
+        logv('[BLE] Got complete response:', payload.length, 'bytes (addr-matched)')
         w.callback({ success: true, data: payload })
         return
       }
@@ -670,7 +676,7 @@ class TeslaBLE {
     const cb = this.responseCallback || this.idleCallback
     if (this.responseCallback) this.responseCallback = null
     if (!cb) return
-    console.log('[BLE] Got complete response:', payload.length, 'bytes')
+    logv('[BLE] Got complete response:', payload.length, 'bytes')
     cb({ success: true, data: payload })
   }
   isConnected() {

@@ -34,6 +34,12 @@ import {
   RKE_ACTION_WAKE_VEHICLE,
 } from './protocol/vcsec.js'
 
+// Verbose per-frame / per-connect plumbing logs (raw RX sizes, intermediate acks, epoch/key
+// byte counts, MAC hints). OFF by default — the connection story lives in the milestone and
+// error logs, which stay always-on. Flip to true only when deep-debugging the handshake.
+const VERBOSE_SESSION = false
+const logv = VERBOSE_SESSION ? console.log.bind(console) : function () {}
+
 
 // Recovery when a SessionInfoRequest gets only ambient (fields:[3]) broadcasts
 // and no real SessionInfo. Leading cause is a dropped request chunk (unacked
@@ -282,8 +288,8 @@ class TeslaSession {
     }
     let vinStr = ''
     try { for (let i = 0; i < vinBytes.length; i++) vinStr += String.fromCharCode(vinBytes[i]) } catch (_e) {}
-    console.log(`[SESSION] VIN bytes (${vinBytes.length}B): "${vinStr}"`)
-    console.log(`[SESSION] Saved MAC (cached hint): ${store.vehicleMac || '<none>'}`)
+    logv(`[SESSION] VIN bytes (${vinBytes.length}B): "${vinStr}"`)
+    logv(`[SESSION] Saved MAC (cached hint): ${store.vehicleMac || '<none>'}`)
     // Do NOT read vehicleEcPublicKey / sessionKey here. They're file-backed (readBinary,
     // ~50-130ms each cold) and aren't needed until _processSessionInfo after SessionInfo
     // lands — reading them now just to log "present/absent" gated the scan by up to ~260ms
@@ -300,7 +306,7 @@ class TeslaSession {
       callback({ success: false, error: 'Could not derive BLE name from VIN.' })
       return
     }
-    console.log(`[SESSION] Derived Tesla BLE name from VIN: ${expectedName}`)
+    logv(`[SESSION] Derived Tesla BLE name from VIN: ${expectedName}`)
     this._scanThenConnect(expectedName, callback)
   }
   _scanThenConnect(expectedName, callback) {
@@ -312,10 +318,10 @@ class TeslaSession {
         teslaBLE.stopScan()
         const savedMAC = store.vehicleMac
         if (savedMAC !== foundMAC) {
-          console.log(`[SESSION] BLE address rotated: ${savedMAC || '(none)'} → ${foundMAC}`)
+          logv(`[SESSION] BLE address rotated: ${savedMAC || '(none)'} → ${foundMAC}`)
           store.vehicleMac = foundMAC
         } else {
-          console.log(`[SESSION] BLE address unchanged: ${foundMAC}`)
+          logv(`[SESSION] BLE address unchanged: ${foundMAC}`)
         }
         // Give the scan a beat to fully tear down before dialing — observed
         // races where mstConnect silently hangs when issued back-to-back.
@@ -346,7 +352,7 @@ class TeslaSession {
     // already proven reachable, so a hung re-dial should fail fast for the next attempt).
     const dialTimeoutMs = attempt === 1 ? CONNECTION_CONFIG.timeoutMs : CONNECTION_CONFIG.retryTimeoutMs
     teslaBLE.connect(mac, (result) => {
-      console.log('[SESSION] Connect callback fired, result:', JSON.stringify(result))
+      logv('[SESSION] Connect callback fired, result:', JSON.stringify(result))
       if (!result.success) {
         // Expected on a cold car: it drops the first GATT connection of a session.
         // ble.connect() has already run _cleanup() (fresh BLEMaster next dial), so
@@ -467,7 +473,7 @@ class TeslaSession {
         callback({ success: false, error: 'No data in response' })
         return
       }
-      console.log(`[SESSION] Raw response: ${result.data.length} bytes`)
+      logv(`[SESSION] Raw response: ${result.data.length} bytes`)
 
       const fieldKeys = Object.keys(decodeMessage(result.data))
         .sort((a, b) => a - b)
@@ -491,13 +497,13 @@ class TeslaSession {
       // Re-register for the real response and keep the watchdog running — if only
       // these arrive until it fires, _onSessionInfoTimeout recycles the link.
       if (!response.sessionInfo && !response.payload && !response.signedMessageStatus) {
-        console.log(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
+        logv(`[SESSION] Intermediate ack (fields:[${fieldKeys}]), waiting for SessionInfo...`)
         teslaBLE.responseCallback = handler
         return
       }
 
       this._clearSessionInfoTimer()
-      console.log(`[SESSION] RX bytes: ${result.data ? result.data.length : 0}`)
+      logv(`[SESSION] RX bytes: ${result.data ? result.data.length : 0}`)
       if (!response.sessionInfo) {
         console.log('[SESSION] ❌ ERROR: Response missing sessionInfo')
         console.log(`[SESSION] Fields present: [${fieldKeys}]`)
@@ -549,11 +555,11 @@ class TeslaSession {
     this._clockCapturedAtMs = Date.now()
 
     if (this.epoch && this.epoch.length > 0) {
-      console.log(`[SESSION] Epoch loaded: ${this.epoch.length} bytes`)
+      logv(`[SESSION] Epoch loaded: ${this.epoch.length} bytes`)
     } else {
       console.log('[SESSION] Epoch: <null or empty>')
     }
-    console.log(`[SESSION] Vehicle public key: ${this.vehiclePublicKey.length} bytes`)
+    logv(`[SESSION] Vehicle public key: ${this.vehiclePublicKey.length} bytes`)
     if (this.vehiclePublicKey.length !== 65) {
       console.log(`[SESSION] ❌ INVALID PUBLIC KEY: ${this.vehiclePublicKey.length} bytes, need 65`)
       callback({ success: false, error: `Invalid vehicle public key: ${this.vehiclePublicKey.length} bytes` })
