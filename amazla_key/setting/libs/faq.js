@@ -48,6 +48,10 @@ const FAQ = [
     'Use your Tesla\'s built-in Walk-Away Door Lock — it locks automatically when your watch key moves away, using the car\'s own sensors. The app deliberately does not lock on its own: the watch has no reliable "someone is still inside" signal, so it could lock a passenger in. Auto-Unlock handles the arrival side.',
   ],
   [
+    'Can the app close itself when I walk away?',
+    'Yes — turn on "Exit App on Walk-Away Lock" in Settings above. When your Tesla walk-away locks itself as you leave, the app closes on its own, so it isn\'t left open holding the Bluetooth link and draining battery. Only a lock the car starts closes it — tapping Lock yourself on the watch keeps the app open. It\'s off by default.',
+  ],
+  [
     'Do I need my phone with me?',
     'No. The watch talks to the car directly over Bluetooth. As long as your watch is near the car (within 30 feet), it works — no phone, no internet.',
   ],
