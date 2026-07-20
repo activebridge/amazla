@@ -36,6 +36,11 @@ const MAX_FRAME_SIZE = 2048
 // continuously (~1Hz auth beacons at minimum), so RX younger than this proves the
 // link is alive and the disconnect event belongs to another device.
 const FOREIGN_EVENT_RX_MS = 4000
+// After a disconnect is IGNORED as "probably foreign" (recent RX), verify it: a live car
+// streams ~1Hz beacons, so if the link then stays silent this long, the drop was really
+// ours — surface it as a dead link (→ onLinkDown → offline → tap-to-retry) instead of a
+// stuck "Connected". A hair over the beacon interval plus margin.
+const DEAD_LINK_SILENCE_MS = 2500
 const TESLA_NAME_PATTERN = /^S[a-f0-9]{16}C$/i
 const CONNECTION_CONFIG = {
   // 8 s is enough for any successful Tesla GATT connect we've observed (350 ms
@@ -118,6 +123,8 @@ class TeslaBLE {
     this._lastResponseData = null
     this._lastResponseTime = 0
     this._lastRxTime = 0 // last raw chunk arrival — link-health signal (foreign-event filter)
+    this._deadLinkTimer = null // silence watchdog armed when a disconnect is ignored as foreign
+    this.deadLinkSilenceMs = DEAD_LINK_SILENCE_MS // instance-level so tests can shrink it
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
@@ -180,6 +187,7 @@ class TeslaBLE {
     return this.ble
   }
   _cleanup() {
+    if (this._deadLinkTimer) { clearTimeout(this._deadLinkTimer); this._deadLinkTimer = null }
     if (this.ble) {
       try {
         if (this.ble.off) {
@@ -311,7 +319,23 @@ class TeslaBLE {
           // restart). A connected car streams frames continuously, so recent RX
           // proves the link is alive and this event belongs to another device.
           if (this.connected && Date.now() - this._lastRxTime < FOREIGN_EVENT_RX_MS) {
-            console.log(`[BLE] Ignoring native disconnect: RX ${Date.now() - this._lastRxTime}ms ago — link alive, foreign device's event`)
+            console.log(`[BLE] Ignoring native disconnect: RX ${Date.now() - this._lastRxTime}ms ago — likely foreign; verifying with silence watchdog`)
+            // Don't ignore forever. A real car-side drop can land within FOREIGN_EVENT_RX_MS
+            // of its last beacon and look identical to a foreign event (device 2026-07-20:
+            // swallowed, UI stuck "Connected" on a dead link, manual reopen needed). Since a
+            // live car keeps streaming ~1Hz, re-check after DEAD_LINK_SILENCE_MS: if frames
+            // resumed the link is genuinely alive (no-op); if still silent, it was our drop.
+            clearTimeout(this._deadLinkTimer)
+            this._deadLinkTimer = setTimeout(() => {
+              this._deadLinkTimer = null
+              if (this.connected && Date.now() - this._lastRxTime >= this.deadLinkSilenceMs) {
+                console.log('[BLE] Ignored disconnect but link went silent — treating as real drop')
+                this.connected = false
+                this._cleanup()
+                if (this.onLinkDown) { try { this.onLinkDown() } catch (_e) {} }
+                if (this.onDisconnect) this.onDisconnect()
+              }
+            }, this.deadLinkSilenceMs)
             return
           }
           // Genuine late disconnect on a link we still believed was up (device
