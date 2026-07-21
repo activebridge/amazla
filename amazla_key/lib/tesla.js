@@ -5,6 +5,12 @@ import teslaSession from './tesla-ble/session.js'
 // persist/hydrate below can't drift from the properties the UI renders. These are
 // PUSH-driven: while connected, the car streams VehicleStatus so they stay live.
 var VCSEC_STATE_KEYS = ['locked', 'df', 'dr', 'pf', 'pr', 'trunkOpen', 'frunkOpen', 'chargePortOpen', 'sleeping', 'userPresent']
+// Connect-health watchdog: how long after the session establishes we wait for ANY real car
+// response (command ack, status, or a passive-handshake event) before deciding the car is
+// mute and flipping to offline/retry. Generous — a slow-but-working car (dozing, or after
+// a ~6s auto-unlock pre-load) still answers well inside this; only a truly unresponsive car
+// (e.g. RKE rate-limited, device 2026-07-21) rides it out.
+var CONNECT_HEALTH_MS = 15000
 
 // Read-first: fire a clean GET_STATUS on a virgin connection (no beacons answered yet) to
 // get SDK-style fast status, before passive entry starts. Flip ENABLED to false to revert
@@ -30,6 +36,9 @@ class Tesla {
 
     // Connection state
     this.connection = { status: 'checking', error: null }
+    this._connectHealthTimer = null // watchdog for "established but car mute" (see refresh)
+    this._sawCarResponse = false
+    this.connectHealthMs = CONNECT_HEALTH_MS // instance-level so tests can shrink it
 
     // Command in-flight guard
     this.busy = false
@@ -104,7 +113,18 @@ class Tesla {
   onPassiveEvent(fn) {
     this._passiveListeners.push(fn)
   }
+  // Any passive-handshake event (initiated/approaching/authorized) or the first-status
+  // 'status' event means the car is actually talking to us — cancel the health watchdog.
+  _markCarResponsive() {
+    this._sawCarResponse = true
+    if (this._connectHealthTimer) {
+      clearTimeout(this._connectHealthTimer)
+      this._connectHealthTimer = null
+    }
+  }
+
   _emitPassive(evt) {
+    this._markCarResponsive()
     for (var i = 0; i < this._passiveListeners.length; i++) {
       try {
         this._passiveListeners[i](evt)
@@ -174,6 +194,23 @@ class Tesla {
       // pushes immediately so the UI shows the (cached) car at once, and a status
       // fetch that times out under the beacon flood never reads as "offline".
       this._setConnection({ status: 'online', error: null })
+      // Connect-health watchdog. Establishing only proves the SessionInfo exchange worked;
+      // the car can still be MUTE to everything after that — no command ack, no status, no
+      // passive handshake (device 2026-07-21: an RKE-rate-limited car answered SessionInfo
+      // then ignored all requests, leaving the UI stuck on "Connected" forever). If no real
+      // response arrives within connectHealthMs, flip to offline so the existing tap-to-retry
+      // screen takes over. Cancelled the instant the car responds (_markCarResponsive). Armed
+      // BEFORE live pushes so a status that lands immediately still cancels it.
+      this._sawCarResponse = false
+      if (this._connectHealthTimer) clearTimeout(this._connectHealthTimer)
+      var selfH = this
+      this._connectHealthTimer = setTimeout(function () {
+        selfH._connectHealthTimer = null
+        if (!selfH._sawCarResponse && selfH.connection.status === 'online') {
+          console.log('[Tesla] established but car never responded — marking offline')
+          selfH._setConnection({ status: 'offline', error: 'Vehicle not responding' })
+        }
+      }, this.connectHealthMs)
       this._startLivePushes()
       if (cb) cb({ success: true }) // online now; live state refines as it arrives
       // Page-installed pre-load step (see beforeInitialLoad below) runs first and
@@ -252,6 +289,7 @@ class Tesla {
   // doesn't inherit poisoned state (a stuck mstConnect returns "failed" for ~30s
   // otherwise). tesla talks only to teslaSession — the native BLE reset lives behind it.
   shutdown() {
+    if (this._connectHealthTimer) { clearTimeout(this._connectHealthTimer); this._connectHealthTimer = null }
     // Flush the last-known car state before the app closes, so the next launch's
     // connecting screen paints the REAL car (lock/doors) instead of the constructor
     // default (locked, all closed). _applyStatus/command-success already persist on
@@ -296,6 +334,7 @@ class Tesla {
     // no-op, not an error, and throwing here surfaced as a bogus
     // "getVehicleStatus error: closureStatuses of undefined" up the callback.
     if (!status) return
+    this._markCarResponsive() // the car sent us a status → it's responding; cancel the watchdog
     // DIAG: first VehicleStatus actually RECEIVED this connection (vs "painted" below,
     // which only fires when it CHANGES the display). The gap between the two tells us
     // whether status is arriving late, or arriving on time but matching the cache.
@@ -349,6 +388,12 @@ class Tesla {
   }
 
   _setConnection(patch) {
+    // Leaving 'online' (offline/error/checking) ends the connect-health window — cancel its
+    // watchdog so it can't fire against a later, unrelated state.
+    if (patch.status !== undefined && patch.status !== 'online' && this._connectHealthTimer) {
+      clearTimeout(this._connectHealthTimer)
+      this._connectHealthTimer = null
+    }
     var changed = false
     if (patch.status !== undefined && patch.status !== this.connection.status) {
       this.connection.status = patch.status
@@ -392,6 +437,7 @@ class Tesla {
         return
       }
 
+      self._markCarResponsive() // a terminal ack proves the car is responding
       // Command succeeded. Do NOT re-run refresh() to reload state — that re-enters
       // ensureSessionEstablished and, if the session is momentarily not established, flips
       // the UI to "Connection Failed" even though the link is fine (and the car just

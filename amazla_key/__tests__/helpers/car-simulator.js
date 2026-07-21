@@ -205,10 +205,10 @@ export class CarSimulator {
     // (no ToVCSECMessage/SignedMessage wrapper) — matches Tesla SDK executeRKEAction.
     const unsigned = decodeMessage(payloadBytes)
 
-    // Wake prod (RKE_ACTION_WAKE_VEHICLE = 30): the watch fires one before every
-    // command. It is NOT the command under test — it must not consume the one-shot
-    // drop/error injections below. Model a dozing car (the production rationale for
-    // the prod): no ack. The command that follows gets the real treatment.
+    // Bare wake action (RKE_ACTION_WAKE_VEHICLE = 30): the watch no longer fires a
+    // pre-command wake prod, but tolerate one if any test sends it directly — it is
+    // NOT a command under test, so it must not consume the one-shot drop/error
+    // injections below. Model a dozing car: no ack, just clear the sleep flag.
     if (unsigned[2] === 30) {
       this.state.sleeping = false
       return

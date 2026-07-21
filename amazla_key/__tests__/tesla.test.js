@@ -82,7 +82,6 @@ beforeEach(() => {
   store.reset()
   // Default the session calls to no-ops so connect-path tests don't hit the real BLE;
   // tests that assert on them override these.
-  jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
   // Read-first fires a connect-time getVehicleStatus; default it to a clean miss so
   // connect-path tests don't hit real BLE. Tests asserting status behaviour override this.
   jest.spyOn(teslaSession, 'getVehicleStatus').mockImplementation(cb => cb({ success: false }))
@@ -330,6 +329,30 @@ describe('refresh()', () => {
     expect(listener).toHaveBeenCalled()
   })
 
+  // Connect-health watchdog (device 2026-07-21): the session established but the car went
+  // MUTE — no command ack, no status, no passive handshake — and the UI sat on "Connected".
+  test('established but car never responds → flips offline (tap-to-retry) after the window', () => {
+    mockEstablished() // establishes; getVehicleStatus default-misses, no push, no passive event
+    jest.spyOn(teslaSession, 'startStatusPushListener').mockImplementation(() => {}) // no push
+    tesla.beforeInitialLoad(null)
+    tesla.connectHealthMs = 200
+    tesla.refresh()
+    expect(tesla.connection.status).toBe('online') // still "Connected" during the window
+    jest.advanceTimersByTime(250)
+    expect(tesla.connection.status).toBe('offline')
+    expect(tesla.connection.error).toBe('Vehicle not responding')
+  })
+
+  test('a real car response cancels the watchdog — stays online', () => {
+    mockEstablished()
+    mockPush({ vehicleLockState: 0 }) // status lands via the live-push channel → car responded
+    tesla.beforeInitialLoad(null)
+    tesla.connectHealthMs = 200
+    tesla.refresh()
+    jest.advanceTimersByTime(250)
+    expect(tesla.connection.status).toBe('online')
+  })
+
   test('session fail → connection offline with error', () => {
     jest.spyOn(teslaSession, 'ensureSessionEstablished')
       .mockImplementation(cb => cb({ success: false, error: 'BLE timeout' }))
@@ -366,7 +389,6 @@ describe('refresh()', () => {
     mockEstablished()
     jest.spyOn(teslaSession, 'getVehicleStatus')
       .mockImplementation(cb => cb({ success: false, error: 'No response' }))
-    jest.spyOn(teslaSession, 'wake').mockImplementation(cb => cb({ success: true }))
     const liveSpy = jest.spyOn(teslaSession, 'startStatusPushListener')
 
     tesla.refresh()

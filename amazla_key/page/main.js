@@ -284,11 +284,13 @@ export function build(host) {
   tesla.onChange(exitListener)
 
   // Settings sync (vehicleName/VIN + autoUnlock/exitOnLock/buttonAction) is a PHONE RPC
-  // that shares the single BLE radio with the car link. Nothing on the connect→status→auth
-  // path consumes these during the handshake — autoUnlock is read pre-connect from cache
-  // (beforeInitialLoad); exitOnLock/buttonAction matter only later — so run it ONCE per
-  // session OFF the critical window: on 'authorized' (success) or on connection failure
-  // (offline/error — link already down, radio free). Persists the toggles for later reads.
+  // that shares the single BLE radio with the car link. Fire it ONCE per session, fire-and-
+  // forget, on the FIRST 'status' — the first real car contact, right after the read-first
+  // GET completes (so it doesn't compete with that), before the (car-paced) auth exchange.
+  // NOT 'authorized': that fires ~5s in, so a quick open→unlock→close closes before it and
+  // the sync never runs — a toggle change failed to take across launches (device 2026-07-21).
+  // open→authorized is car-paced, not radio-bound, so the ~40ms RPC doesn't slow it. Falls
+  // back to 'authorized' (status never came) or connection failure. Persists for later reads.
   let synced = false
   const maybeSyncSettings = () => {
     if (synced) return
@@ -304,19 +306,19 @@ export function build(host) {
   tesla.onPassiveEvent((evt) => {
     if (evt.type === 'status' || evt.type === 'authorized') {
       vibro.medium()
+      maybeSyncSettings() // first car contact — sync here so quick sessions still sync; guard dedups
     }
     if (evt.type === 'authorized') {
       authorized = true
       render()
-      maybeSyncSettings() // success terminal — radio quiets after auth
     }
   })
 
   // Auto-establish the BLE session on open and pull the live car state; once online
   // this also arms the live-push listener so opening a door, etc. repaints the view.
   //
-  // Settings sync runs on connection FAILURE here (the 'authorized' path above covers
-  // success). offline/error means the car link is down, so the phone RPC no longer
+  // Settings sync also runs on connection FAILURE here (the 'status' path above covers the
+  // success case). offline/error means the car link is down, so the phone RPC no longer
   // contends. Tracked so destroy() can remove it — the secondary widget rebuilds per
   // visit and an untracked listener would accumulate.
   syncListener = () => {

@@ -31,7 +31,6 @@ import {
   RKE_ACTION_LOCK,
   RKE_ACTION_UNLOCK,
   RKE_ACTION_REMOTE_DRIVE,
-  RKE_ACTION_WAKE_VEHICLE,
 } from './protocol/vcsec.js'
 
 // Verbose per-frame / per-connect plumbing logs (raw RX sizes, intermediate acks, epoch/key
@@ -93,16 +92,6 @@ const COMMAND_TIMEOUT_MS = 6000
 // share the command deadline.
 const STATUS_TIMEOUT_MS = 15000
 
-// How recently the car must have answered an ADDRESSED frame (command ack/refusal,
-// status read, VehicleStatus push) for the pre-command wake prod to be skipped. The
-// wake is itself an RKEAction and counts toward the car's RKE rate limit: a lock
-// re-tapped every ~3.5s (each = wake + lock) tripped it after ~6 refusals and the
-// car went deaf to RKE for ~31s (device 2026-07-17 11:04). A car that answered an
-// addressed frame seconds ago has a hot radio — the wake's only job (prodding a cold
-// radio so the first TX frame isn't dropped) is already done. Beacons do NOT count:
-// a dozing car keeps beaconing while ignoring addressed traffic (device 2026-06-11).
-const AWAKE_WINDOW_MS = 10000
-
 // Passive entry ON — we answer the car's AuthenticationRequest beacons. A signed session
 // (SessionInfo) is necessary but NOT sufficient: the car also wants the per-connection
 // presence handshake (AuthenticationRequest → AuthenticationResponse) before it actuates,
@@ -123,7 +112,6 @@ class TeslaSession {
     this.commandTimeoutMs = COMMAND_TIMEOUT_MS
     this.statusTimeoutMs = STATUS_TIMEOUT_MS
     this.secondResponseTimeoutMs = 10000
-    this.awakeWindowMs = AWAKE_WINDOW_MS
     this._passiveEventCb = null // UI hook for passive-entry events (set by the Tesla facade)
     this._linkDownCb = null // facade hook: unexpected native link loss (set once, survives reset())
     // Facade hook: persistence for the anti-replay counter high-water. The SESSION owns
@@ -217,7 +205,6 @@ class TeslaSession {
     this._sessionInfoConnects = 0 // connections established this requestSessionInfo
     this._statusPushHandler = null
     this._suppressPassive = false // read-first window gate (see suppressPassive)
-    this._lastCarReplyTime = 0 // last ADDRESSED reply from the car (wake-skip gate; fresh session = cold)
     // Passive-entry toast latches — one toast per milestone per connection.
     this._pePresentEmitted = false
     this._peApproachEmitted = false
@@ -715,16 +702,15 @@ class TeslaSession {
     // Stash the uuid we put in field 51 so the command path can correlate the
     // vehicle's reply: the car echoes it back as request_uuid (field 50). A clean
     // RKE ack is an EMPTY FromVCSECMessage — identical in shape to the ack the car
-    // sends for the pre-command WAKE prod and for passive-entry handshake frames —
-    // so the ONLY way to tell "this is MY command's ack" from "this is the wake's
-    // ack" is the echoed uuid. Without it the command finishes on the wake's ack
-    // (instant false success, no actuation) or a status-poll frame (timeout).
+    // sends for passive-entry handshake frames — so the echoed uuid is a secondary
+    // signal (alongside the per-command routing address) for "this is MY command's
+    // ack" vs a passive-entry frame's ack landing on the shared slot.
     const uuid = generateUUID()
     this._lastBuiltUuid = uuid
     // routingAddressOverride lets a single request own a UNIQUE return address (SDK
     // dispatcher style) so its reply self-routes to that request's waiter instead of
     // the shared slot. Falls back to the stable session address for the passive-entry
-    // responder and the wake prod, whose replies we don't correlate.
+    // responder, whose replies we don't correlate.
     return buildRoutableMessage({
       toDomain: DOMAIN_VEHICLE_SECURITY,
       routingAddress: routingAddressOverride || this.routingAddress,
@@ -792,8 +778,8 @@ class TeslaSession {
       }
       // The uuids of every frame WE sent for THIS command (initial + each resend).
       // The car's terminal ack echoes one of them as request_uuid; only a reply whose
-      // request_uuid is in here is genuinely our actuation ack (not the wake's ack or
-      // a passive-entry frame, which carry different uuids).
+      // request_uuid is in here is genuinely our actuation ack (not a passive-entry
+      // frame, which carries a different uuid).
       const myUuids = []
       const _uuidMatches = (u) => {
         if (!u) return false
@@ -808,30 +794,16 @@ class TeslaSession {
         return false
       }
       try {
-        // Prod the radio awake FIRST. The phone unlocks a DOZING car instantly: VCSEC
-        // actuates RKE while dozing (only GET_STATUS needs a full wake), but a cold
-        // radio can drop the first frame, so fire a wake (fire-and-forget — a deep
-        // asleep car never ACKs it, the effect is on TX) ahead of the command.
-        //
-        // ORDER IS LOAD-BEARING: the anti-replay counter is assigned at BUILD time, and
-        // the vehicle rejects any message whose counter isn't strictly above the last it
-        // accepted (MESSAGEFAULT_ERROR_INVALID_TOKEN_OR_COUNTER = 6). If the wake were
-        // built AFTER the command it would carry the HIGHER counter; whenever its frame
-        // won the TX race the car would accept the wake then reject the command's lower
-        // counter as a replay — exactly the fault-6 we saw on whichever command lost the
-        // race. Build+send the wake first so the command always holds the higher counter.
-        //
-        // SKIPPED when the car answered an addressed frame within awakeWindowMs: the
-        // radio is demonstrably hot, and the wake (an RKEAction itself) only feeds the
-        // car's RKE rate limit — see AWAKE_WINDOW_MS.
-        if (!this._lastCarReplyTime || Date.now() - this._lastCarReplyTime >= this.awakeWindowMs) {
-          try {
-            teslaBLE.sendNoReply(this._buildAuthMessage(buildUnsignedMessage({ rkeAction: RKE_ACTION_WAKE_VEHICLE })))
-          } catch (_e) {}
-        }
-
+        // No pre-command wake prod. VCSEC actuates RKE while the car dozes (only GET_STATUS
+        // needs a full wake), so a wake was never required to LAND a lock/unlock — it existed
+        // only as first-frame insurance against a cold BLE radio dropping the initial TX. The
+        // Tesla Go SDK sends no wake before Lock/Unlock either (executeRKEAction → straight to
+        // the domain); its whole "didn't land" answer is a retry loop. We mirror that: send
+        // once, and let retriesOnTimeout re-send on a miss (below). Dropping the prod also
+        // removes an RKEAction that fed the car's RKE rate limit (device 2026-07-17: 6 refusals
+        // → 31s deaf) and the counter-order coupling it forced.
         const message = this.buildAuthenticatedCommand(rkeActionOrClosure, cmdAddr)
-        myUuids.push(this._lastBuiltUuid) // record THIS command's uuid (built after the wake → higher counter)
+        myUuids.push(this._lastBuiltUuid) // record THIS command's uuid
         this._persistCounter() // a command MUST be durably recorded so the next launch can't replay it
 
         console.log(
@@ -849,10 +821,11 @@ class TeslaSession {
         //
         // retriesOnTimeout (opts, lock/unlock ONLY — they're idempotent): on a
         // FULL-deadline expiry with no reply at all, re-run the whole command as a
-        // fresh build (new counter/uuid/address, wake prod included). Device
-        // 2026-07-13: after a nominalError refusal the car IGNORES a repeat of the
-        // same RKE action for ~5–15s (wake still acked, command swallowed) — one
-        // deadline-spaced retry rides that window out. This is NOT the old 1.5s
+        // fresh build (new counter/uuid/address). This is the SDK-shaped safety net —
+        // the Go SDK's getVCSECResult loop re-sends on a transient miss until the
+        // deadline; ours re-sends once. Device 2026-07-13: after a nominalError refusal
+        // the car IGNORES a repeat of the same RKE action for ~5–15s (command swallowed)
+        // — one deadline-spaced retry rides that window out. This is NOT the old 1.5s
         // blind resend (device 2026-06-26 double-unlock): a retry fires only after
         // the full deadline, when no ack can still be in flight. Never set it for
         // closures/drive — a duplicate there toggles.
@@ -892,14 +865,12 @@ class TeslaSession {
           }
           try {
             const response = parseRoutableMessage(result.data)
-            this._lastCarReplyTime = Date.now() // addressed reply — radio hot (wake-skip gate)
 
             // The frame is already matched to this command's address — it IS our reply.
             // The car sends up to two: a SessionInfo-only push (field 15, no field 10),
             // then the terminal ack (field 10, possibly EMPTY) or an auth fault (field 12).
-            // Now that address routing guarantees ownership, an empty field-10 here is
-            // genuinely OUR ack (the wake prod uses the stable address, so its ack never
-            // lands here). uuid match is kept as a redundant positive signal.
+            // Address routing guarantees ownership, so an empty field-10 here is genuinely
+            // OUR ack. uuid match is kept as a redundant positive signal.
             const isTerminal =
               !!response.payload ||
               !!response.signedMessageStatus ||
@@ -969,8 +940,8 @@ class TeslaSession {
     }
   }
   // timeoutMs (optional) overrides the default deadline — the initial app-load
-  // fetch uses a short one so a dozing car (which never answers) falls through
-  // to wake()+refetch quickly instead of burning the full 15s.
+  // fetch uses a short one so a dozing car (which never answers) falls through to
+  // the push-based path quickly instead of burning the full 15s.
   // Manual-refresh only — NOT used on connect. Device 2026-06-26 proved the car NEVER
   // serves an addressed GET_STATUS reply to a passive-entry key (it only streams
   // AuthenticationRequest beacons + an UNSOLICITED, domain-addressed VehicleStatus push
@@ -1034,7 +1005,6 @@ class TeslaSession {
         const response = parseRoutableMessage(result.data)
         if (!response.vehicleStatus) return // SessionInfo-only refresh — keep waiting
         console.log(`[SESSION] status RX ${result.data.length}B — applying VehicleStatus`)
-        this._lastCarReplyTime = Date.now() // addressed status served — radio hot (wake-skip gate)
         finish({ success: true, status: parseVehicleStatus(response.vehicleStatus) })
       } catch (e) {
         console.log(`[SESSION] getVehicleStatus error: ${e.message}`)
@@ -1050,24 +1020,6 @@ class TeslaSession {
     // by 3s means it didn't take — report failure fast (toast) instead of hanging 15s. No
     // resends; a miss is a retry (tap).
     this.sendCommand(RKE_ACTION_UNLOCK, callback, (opts && opts.timeoutMs) || 3000, opts)
-  }
-  wake(callback) {
-    // A dozing car keeps VCSEC beaconing but ignores GET_STATUS (device 2026-06-11:
-    // connect-time fetch silent, post-actuation fetch answered in 0.8s). Same wake
-    // the phone app sends on connect. FIRE-AND-FORGET: a deeply-asleep car never
-    // ACKs the wake (device 2026-06-12: 15s Command timeout), and the wake EFFECT
-    // is on TX. Crucially, we do NOT take the response slot / _commandInFlight gate
-    // here — doing so would freeze the passive-entry responder (the core key
-    // function) while waiting for an ack that never comes. Just sign, send, return.
-    try {
-      if (this.established) {
-        const unsigned = buildUnsignedMessage({ rkeAction: RKE_ACTION_WAKE_VEHICLE })
-        teslaBLE.sendNoReply(this._buildAuthMessage(unsigned))
-      }
-    } catch (e) {
-      console.log(`[SESSION] wake send error: ${e && e.message}`)
-    }
-    if (callback) callback({ success: true })
   }
   trunk(callback) {
     this.sendCommand({ closureMoveRequest: buildClosureMoveRequest(CLOSURE_REAR_TRUNK, CLOSURE_MOVE_OPEN) }, callback)
@@ -1099,14 +1051,10 @@ class TeslaSession {
         if (this._respondToVcsecRequest(response)) return
         if (response.vehicleStatus && response.vehicleStatus.length > 0) {
           const status = parseVehicleStatus(response.vehicleStatus)
-          // A VehicleStatus push is active engagement — radio hot (wake-skip gate).
-          // Beacons/auth requests deliberately do NOT count: a dozing car keeps
-          // beaconing while ignoring addressed traffic.
-          this._lastCarReplyTime = Date.now()
           if (this._statusPushHandler) this._statusPushHandler(status)
         }
-        // Anything else here is an idle frame we don't act on (e.g. a wake-prod ack
-        // on the stable session address) — drop it silently.
+        // Anything else here is an idle frame we don't act on (e.g. a stale ack on the
+        // stable session address) — drop it silently.
       } catch (e) {
         console.log(`[SESSION] idle frame parse error: ${e.message}`)
       }
