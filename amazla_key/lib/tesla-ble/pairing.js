@@ -54,10 +54,17 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
   const SESSION_DERIVE_DELAY_MS = 2000
 
   function deriveSessionKey(attempt) {
-    if (cancelled) return
+    if (cancelled) { BLE.suppressDeadLink(false); return }
+    // The car drops the link right after enrollment and stays silent while we re-dial
+    // for a signed SessionInfo. Gate off the BLE dead-link silence watchdog for this
+    // whole window so that expected quiet isn't torn down as a dropped link mid-derive
+    // (device 2026-07-22: watchdog from 02d29e3 tore the link, every attempt failed,
+    // pairing bounced to the start screen). Cleared on every terminal exit below.
+    BLE.suppressDeadLink(true)
     teslaSession.requestSessionInfo((sr) => {
-      if (cancelled) return
+      if (cancelled) { BLE.suppressDeadLink(false); return }
       if (sr && sr.success) {
+        BLE.suppressDeadLink(false)
         log('✓ Session key derived — standalone')
         onState('done')
         onSuccess()
@@ -68,6 +75,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
         setTimeout(() => { deriveSessionKey(attempt + 1) }, SESSION_DERIVE_DELAY_MS)
         return
       }
+      BLE.suppressDeadLink(false)
       log('Session key derivation skipped: ' + ((sr && sr.error) || '?') + ' (will retry on CONNECT)')
       onState('done')
       onSuccess()
@@ -92,6 +100,7 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
 
   function cancel() {
     cancelled = true
+    try { BLE.suppressDeadLink(false) } catch (_e) {}
     try { BLE.stopScan() } catch (_e) {}
     try { BLE.disconnect() } catch (_e) {}
   }

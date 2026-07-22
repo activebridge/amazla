@@ -32,6 +32,9 @@ const BLE = {
   reset() {
     teslaBLE.reset()
   },
+  suppressDeadLink(on) {
+    teslaBLE.suppressDeadLink(on)
+  },
 }
 
 export default BLE

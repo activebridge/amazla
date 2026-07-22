@@ -135,6 +135,14 @@ function startPairing() {
     },
     onSuccess: () => {
       setScreen('success')
+      // Close the pairing BLE link now (fix B, device 2026-07-22). Pairing derives a
+      // live session on this link; the main page throws it away and cold-dials the same
+      // car on load. Dialing into a still-open/closing pairing link (radios tearing it
+      // down on both ends) stalled the first ~3 GATT setups → ~40s of "could not connect"
+      // right after a successful pair. Closing here starts the teardown immediately; the
+      // time the user spends reading this success slide before tapping Done is the settle,
+      // so the main-page dial begins on a quiet radio. No timer — the human is the delay.
+      safe('BLE.disconnect', () => BLE.disconnect())
       // Mark paired on the phone (settings page "Paired At"). Fire-and-forget: the
       // phone is in range right now (it just did the pair RPCs).
       phone.savePaired(() => {})

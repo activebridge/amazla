@@ -125,6 +125,7 @@ class TeslaBLE {
     this._lastRxTime = 0 // last raw chunk arrival — link-health signal (foreign-event filter)
     this._deadLinkTimer = null // silence watchdog armed when a disconnect is ignored as foreign
     this.deadLinkSilenceMs = DEAD_LINK_SILENCE_MS // instance-level so tests can shrink it
+    this._suppressDeadLink = false // gate the silence watchdog off during expected quiet windows (pairing derive)
     this._rxBuf = null
     this._rxExpected = 0
     this._rxLastChunkTime = 0
@@ -226,6 +227,17 @@ class TeslaBLE {
     this._txBusy = false
     this._txQueue = []
   }
+  // Gate the dead-link silence watchdog. Callers wrap deliberately quiet windows
+  // (pairing's post-enrollment session derivation) so an expected car-side silence
+  // isn't mistaken for a dropped link. Disarming also cancels any timer already
+  // armed a moment earlier. Always clear it back to false when the window ends.
+  suppressDeadLink(on) {
+    this._suppressDeadLink = !!on
+    if (on && this._deadLinkTimer) {
+      clearTimeout(this._deadLinkTimer)
+      this._deadLinkTimer = null
+    }
+  }
   scan(callback, duration = 10000, expectedName = null) {
     console.log(`[BLE] scan() start: duration=${duration}ms expectedName=${expectedName || '<none>'}`)
     const devices = []
@@ -319,6 +331,17 @@ class TeslaBLE {
           // restart). A connected car streams frames continuously, so recent RX
           // proves the link is alive and this event belongs to another device.
           if (this.connected && Date.now() - this._lastRxTime < FOREIGN_EVENT_RX_MS) {
+            // During a deliberately quiet window (pairing's post-enrollment session
+            // derivation) the car drops the link and stays silent on purpose while we
+            // re-dial for a signed SessionInfo. The silence watchdog would read that
+            // expected quiet as a dead link, tear down the native link mid-handshake,
+            // fail every derive attempt, and bounce pairing back to the start screen
+            // (device 2026-07-22 regression from the watchdog added in 02d29e3). Skip
+            // arming it while suppressed — treat the event as foreign, as before 07-20.
+            if (this._suppressDeadLink) {
+              console.log(`[BLE] Ignoring native disconnect: RX ${Date.now() - this._lastRxTime}ms ago — dead-link watchdog suppressed (pairing derive)`)
+              return
+            }
             console.log(`[BLE] Ignoring native disconnect: RX ${Date.now() - this._lastRxTime}ms ago — likely foreign; verifying with silence watchdog`)
             // Don't ignore forever. A real car-side drop can land within FOREIGN_EVENT_RX_MS
             // of its last beacon and look identical to a foreign event (device 2026-07-20:

@@ -98,4 +98,52 @@ describe('teslaBLE — late native disconnect vs foreign-device noise', () => {
     expect(linkDowns).toBe(1)
     expect(teslaBLE.connected).toBe(false)
   })
+
+  // Device 2026-07-22: pairing's post-enrollment session derivation re-dials into a
+  // deliberately quiet window (the car drops the link and stays silent while it signs a
+  // fresh SessionInfo). The 07-20 watchdog read that expected silence as a dead link,
+  // tore the native link mid-derive, failed every attempt, and bounced pairing back to
+  // the start screen. suppressDeadLink() gates the watchdog off for that window: a
+  // silent link must NOT tear down while suppressed.
+  test('suppressed dead-link window → silent link is NOT torn down', async () => {
+    const { nativeCbs, results } = dial(30)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(results.length).toBe(1)
+
+    teslaBLE.deadLinkSilenceMs = 40
+    teslaBLE.connected = true
+    teslaBLE._lastRxTime = Date.now() // fresh → would normally arm the watchdog
+    teslaBLE.suppressDeadLink(true) // pairing derive window active
+    let linkDowns = 0
+    teslaBLE.onLinkDown = () => linkDowns++
+
+    nativeCbs[0]({ connected: false, status: 'disconnected' })
+    await new Promise((r) => setTimeout(r, 120)) // stay silent well past the deadline
+
+    expect(linkDowns).toBe(0)
+    expect(teslaBLE.connected).toBe(true)
+
+    teslaBLE.suppressDeadLink(false) // window ends — watchdog re-armed for real drops
+  })
+
+  test('suppressDeadLink(true) cancels a watchdog already armed a moment earlier', async () => {
+    const { nativeCbs, results } = dial(30)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(results.length).toBe(1)
+
+    teslaBLE.deadLinkSilenceMs = 40
+    teslaBLE.connected = true
+    teslaBLE._lastRxTime = Date.now()
+    let linkDowns = 0
+    teslaBLE.onLinkDown = () => linkDowns++
+
+    nativeCbs[0]({ connected: false, status: 'disconnected' }) // arms the watchdog
+    teslaBLE.suppressDeadLink(true) // ...then the derive window opens before it fires
+    await new Promise((r) => setTimeout(r, 120))
+
+    expect(linkDowns).toBe(0)
+    expect(teslaBLE.connected).toBe(true)
+
+    teslaBLE.suppressDeadLink(false)
+  })
 })
