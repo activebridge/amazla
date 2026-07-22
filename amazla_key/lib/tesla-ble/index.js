@@ -29,6 +29,9 @@ const BLE = {
   disconnect() {
     teslaBLE.disconnect()
   },
+  flushNative() {
+    teslaBLE.flushNative()
+  },
   reset() {
     teslaBLE.reset()
   },

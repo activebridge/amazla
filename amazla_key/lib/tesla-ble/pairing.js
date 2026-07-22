@@ -53,6 +53,17 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
   const SESSION_DERIVE_ATTEMPTS = 4
   const SESSION_DERIVE_DELAY_MS = 2000
 
+  // Initial-connect resilience. The native GATT stack can wedge during CCCD setup on
+  // the first dials of a pairing run (device 2026-07-22: repeated cccdWritten=false /
+  // descriptor-write timeouts that only an app relaunch cleared). Re-dialing into the
+  // same wedged stack keeps failing — so on each failed connect we run the session
+  // watchdog's proven wedge-recovery (disconnect + native flush + settle) before the
+  // next dial, and allow more attempts than the old 2 so a run rides out the flakiness
+  // instead of erroring and making the user re-tap. 4 dials × recovery covers what was
+  // seen on device (a clean CCCD landed by the 2nd–3rd dial once the stack was flushed).
+  const CONNECT_ATTEMPTS = 4
+  const CONNECT_RECYCLE_SETTLE_MS = 800
+
   function deriveSessionKey(attempt) {
     if (cancelled) { BLE.suppressDeadLink(false); return }
     // The car drops the link right after enrollment and stays silent while we re-dial
@@ -144,8 +155,13 @@ export function createPairingController(phone, { onState, onLog, onSuccess, onEr
     BLE.connect(mac, (result) => {
       if (cancelled) return
       if (!result.success) {
-        if (attempt < 1) {
-          setTimeout(() => { doConnect(mac, attempt + 1) }, 2000)
+        if (attempt + 1 < CONNECT_ATTEMPTS) {
+          // Wedge recovery before re-dialing — mirrors session.js Tier-1 recycle so a
+          // stuck native GATT stack is cleared in-app instead of re-dialing into it.
+          log('Connect failed (' + (result.error || '?') + ') — flushing + re-dialing (' + (attempt + 2) + '/' + CONNECT_ATTEMPTS + ')')
+          try { BLE.disconnect() } catch (_e) {}
+          try { BLE.flushNative() } catch (_e) {}
+          setTimeout(() => { doConnect(mac, attempt + 1) }, CONNECT_RECYCLE_SETTLE_MS)
           return
         }
         onError('Connection failed: ' + (result.error || 'check Bluetooth'))

@@ -336,6 +336,32 @@ describe('error paths', () => {
     expect(result.success).toBe(false)
     expect(result.error).toMatch(/rfcomm error|connection failed/i)
   })
+
+  test('failed connect flushes the native stack before each re-dial (wedge recovery)', async () => {
+    // Device 2026-07-22: the native GATT stack can wedge during CCCD setup on a
+    // pairing run's first dials; re-dialing into the same wedge keeps failing, and only
+    // an app relaunch cleared it. doConnect now runs the session watchdog's recovery
+    // (disconnect + flushNative + settle) before each re-dial. Force every connect to
+    // fail and assert the flush ran on each retry (attempts-1 times) rather than the
+    // controller re-dialing into a dirty stack.
+    const origConnect = teslaBLE.connect.bind(teslaBLE)
+    const origFlush = teslaBLE.flushNative.bind(teslaBLE)
+    let dials = 0
+    let flushes = 0
+    teslaBLE.connect = (_mac, cb) => { dials++; cb({ success: false, error: 'rfcomm error' }) }
+    teslaBLE.flushNative = () => { flushes++ }
+
+    const promise = runPairing(makePhone())
+    await jest.runAllTimersAsync()
+    const result = await promise
+
+    teslaBLE.connect = origConnect
+    teslaBLE.flushNative = origFlush
+    expect(result.success).toBe(false)
+    // One flush per re-dial: 4 dials total → 3 recoveries before giving up.
+    expect(dials).toBe(4)
+    expect(flushes).toBe(3)
+  })
 })
 
 // ─── NFC timeout ──────────────────────────────────────────────────────────────
