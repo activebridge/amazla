@@ -113,7 +113,18 @@ const CODE128_PATTERNS = [
 ];
 
 const START_B = 104; // Start Code B (for ASCII 32-127)
+const START_C = 105; // Start Code C (digit pairs)
+const CODE_C = 99;   // Switch to Code Set C mid-symbol
 const STOP = 106;
+
+const isAllDigits = (code) => {
+  if (!code.length) return false;
+  for (let i = 0; i < code.length; i++) {
+    const c = code.charCodeAt(i);
+    if (c < 48 || c > 57) return false;
+  }
+  return true;
+};
 
 /**
  * Validates if a string can be encoded as Code 128
@@ -131,7 +142,8 @@ export const isValidCode128 = (code) => {
     }
   }
 
-  // Check length (30 chars should fit comfortably in 360px)
+  // Hard ceiling; what actually fits a given screen at 2px/module is decided at
+  // render time, and the phone settings cap input well below this.
   if (code.length > 30) {
     return false;
   }
@@ -140,7 +152,40 @@ export const isValidCode128 = (code) => {
 };
 
 /**
- * Encodes a string as Code 128 barcode (using Code Set B)
+ * Symbol values for a code, picking the narrower code set.
+ * Code Set C packs two digits into one 11-module symbol, so a numeric code is
+ * about half as wide as in Set B — which is what decides whether it can be drawn
+ * with scannable 2px+ bars on a watch screen. Both sets decode to the same
+ * string, the code set is internal to the symbol.
+ * @param {string} code
+ * @returns {{ start: number, values: Array<number> }}
+ */
+const symbolValues = (code) => {
+  const values = [];
+  // Below four digits the switch symbol costs more than the pairs save.
+  if (!isAllDigits(code) || code.length < 4) {
+    for (let i = 0; i < code.length; i++) values.push(code.charCodeAt(i) - 32); // Set B offset
+    return { start: START_B, values };
+  }
+
+  // An odd digit count can't be paired from the start: emit the first digit in
+  // Set B, then switch to C for the even remainder.
+  let i = 0;
+  let start = START_C;
+  if (code.length % 2 === 1) {
+    start = START_B;
+    values.push(code.charCodeAt(0) - 32);
+    values.push(CODE_C);
+    i = 1;
+  }
+  for (; i < code.length; i += 2) {
+    values.push((code.charCodeAt(i) - 48) * 10 + (code.charCodeAt(i + 1) - 48));
+  }
+  return { start, values };
+};
+
+/**
+ * Encodes a string as Code 128 barcode (Code Set B, or C for numeric codes)
  * @param {string} code - The string to encode
  * @returns {Array<number>} - Array of 0s and 1s representing the barcode
  */
@@ -153,22 +198,17 @@ export const encodeCode128 = (code) => {
     return [];
   }
 
-  let encoded = '';
-  let checksum = START_B;
+  const { start, values } = symbolValues(code);
 
-  // Add start character (Start B)
-  encoded += CODE128_PATTERNS[START_B];
+  // Add start character
+  let encoded = CODE128_PATTERNS[start];
+  let checksum = start;
 
-  // Encode each character
-  for (let i = 0; i < code.length; i++) {
-    const charCode = code.charCodeAt(i);
-    const value = charCode - 32; // Code Set B offset
-
-    encoded += CODE128_PATTERNS[value];
-
-    // Calculate checksum: sum of (value * position)
-    // Position starts at 1 for the first data character
-    checksum += value * (i + 1);
+  // Encode each symbol. Checksum: sum of (value * position), position starts at
+  // 1 for the first symbol after the start character.
+  for (let i = 0; i < values.length; i++) {
+    encoded += CODE128_PATTERNS[values[i]];
+    checksum += values[i] * (i + 1);
   }
 
   // Add checksum character

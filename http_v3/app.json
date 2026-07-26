@@ -12,16 +12,12 @@
     "vender": "zepp",
     "description": "Send HTTP requests from your band"
   },
-  "permissions": [
-    "data:os.device.info",
-    "device:os.local_storage",
-    "device:os.notification"
-  ],
+  "permissions": ["data:os.device.info", "device:os.local_storage", "device:os.notification"],
   "runtime": {
     "apiVersion": {
-      "compatible": "3.0.0",
-      "target": "3.0.0",
-      "minVersion": "3.0"
+      "compatible": "2.0.0",
+      "target": "4.0.0",
+      "minVersion": "2.0"
     }
   },
   "debug": true,

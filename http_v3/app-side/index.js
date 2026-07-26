@@ -1,8 +1,9 @@
-import { BaseSideService, settingsLib } from '@zeppos/zml/base-side'
 import { initStore } from '../setting/store.js'
+import { MessageBuilder } from '../shared/message-side'
 import { xhr } from './xhr.js'
 
-const store = initStore(settingsLib)
+const messageBuilder = new MessageBuilder()
+const store = initStore(settings.settingsStorage)
 
 const testRequest = async (id) => {
   const action = store.actions.data.find((a) => a.id === String(id))
@@ -12,26 +13,31 @@ const testRequest = async (id) => {
   store.result = `${label} | ${status} ➜ ${JSON.stringify(body)}`
 }
 
-AppSideService(
-  BaseSideService({
-    onInit() {},
-    onRequest(req, res) {
-      console.log('AppSideService onRequest invoked', req)
-      const methods = {
-        SETTINGS: () => {
-          res(null, { result: { actions: store.actions.data, config: store.config.data } })
-        },
-        FETCH: async () => {
-          res(null, { result: await xhr(store.actions.data.find((a) => a.id === req.params.id)) })
-        },
+AppSideService({
+  onInit() {
+    messageBuilder.listen(() => {})
+
+    messageBuilder.on('request', async (ctx) => {
+      const { method, params } = messageBuilder.buf2Json(ctx.request.payload)
+
+      if (method === 'SETTINGS') {
+        ctx.response({ data: { result: { actions: store.actions.data, config: store.config.data } } })
+        return
       }
-      methods[req.method]?.()
-    },
-    onSettingsChange({ key, newValue, _oldValue }) {
-      if (key !== 'test') return
-      testRequest(newValue)
-    },
-    onRun() {},
-    onDestroy() {},
-  }),
-)
+
+      if (method === 'FETCH') {
+        const result = await xhr(store.actions.data.find((a) => a.id === params.id))
+        ctx.response({ data: { result } })
+      }
+    })
+
+    // Plain AppSideService has no onSettingsChange lifecycle (zml's BaseSideService
+    // wired settingsStorage 'change' for us). Register the listener directly.
+    settings.settingsStorage.addListener('change', ({ key, newValue }) => {
+      if (key === 'test') testRequest(newValue)
+    })
+  },
+
+  onRun() {},
+  onDestroy() {},
+})

@@ -55,9 +55,6 @@ const START_END_GUARD = '101';
 const MIDDLE_GUARD = '01010';
 
 export const encodeEAN13 = (ean13) => {
-  // if (!/^\d{13}$/.test(ean13)) {
-  //   throw new Error('Invalid EAN-13 code');
-  // }
 
   const firstDigit = parseInt(ean13[0], 10);
   const leftPart = ean13.slice(1, 7);

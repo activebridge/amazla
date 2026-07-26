@@ -6,8 +6,8 @@
 // live in the shim, not here. Top-level hmUI.*/hmSetting.* access is fine — those
 // globals always exist by the time this module evaluates.
 
-import * as hmSetting from '@zos/device'
-import * as hmUI from '@zos/ui'
+// import * as hmSetting from '@zos/device'
+// import * as hmUI from '@zos/ui'
 
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
@@ -19,7 +19,9 @@ export const getAppWidgetSize = () => {
   const sz = hmUI.getAppWidgetSize ? hmUI.getAppWidgetSize() : null
   return sz || { w: width, margin: 0 }
 }
-export const setAppWidgetSize = (o) => { if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o) }
+export const setAppWidgetSize = (o) => {
+  if (hmUI.setAppWidgetSize) hmUI.setAppWidgetSize(o)
+}
 
 export const push = (o) => {
   if (typeof hmApp !== 'undefined' && hmApp.gotoPage) hmApp.gotoPage(o)

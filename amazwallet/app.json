@@ -16,7 +16,7 @@
   "runtime": {
     "apiVersion": {
       "compatible": "1.0.0",
-      "target": "1.0.1",
+      "target": "2.0.0",
       "minVersion": "1.0.0"
     }
   },
@@ -24,9 +24,27 @@
     "common": {
       "module": {
         "page": {
-          "pages": [
-            "pages/index",
-            "pages/card"
+          "pages": ["pages/index", "pages/card"]
+        },
+        "secondary-widget": {
+          "widgets": [
+            {
+              "path": "widget/index",
+              "icon": "icon.png",
+              "name": "AmazWallet",
+              "preview": "preview.png",
+              "runtime": { "type": "js" }
+            }
+          ]
+        },
+        "app-widget": {
+          "widgets": [
+            {
+              "path": "widget/card",
+              "icon": "icon.png",
+              "name": "AmazWallet Card",
+              "runtime": { "type": "js" }
+            }
           ]
         },
         "app-side": {
@@ -123,7 +141,7 @@
         { "name": "t-rex2", "deviceSource": 418 },
         { "name": "t-rex2", "deviceSource": 419 }
       ],
-      "designWidth": 198
+      "designWidth": 480
     }
   },
   "i18n": {

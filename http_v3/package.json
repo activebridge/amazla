@@ -10,10 +10,6 @@
   "license": "ISC",
   "devDependencies": {
     "@biomejs/biome": "^2.3.7",
-    "@zeppos/device-types": "^3.0.0"
-  },
-  "dependencies": {
-    "@silver-zepp/easy-storage": "^2.0.2",
-    "@zeppos/zml": "^0.0.9"
+    "@zeppos/device-types": "^4.0.0"
   }
 }
