@@ -18,14 +18,19 @@ const BUTTON_STYLE = {
   boxShadow: '3px 3px 6px #0d0d0d, -2px -2px 5px #272727',
 }
 
+// Same glass as the edit dialog: light scrim so the cards stay readable behind,
+// a frosted panel with a lit top-left edge. Values kept in step with the
+// .cd-overlay / .cd-box rules in libs/editDialog.js.
 const OVERLAY_STYLE = {
   position: 'fixed',
   top: 0,
   left: 0,
   right: 0,
   bottom: 0,
-  background: 'rgba(0,0,0,0.5)',
-  zIndex: 999,
+  background: 'rgba(10, 11, 13, 0.45)',
+  WebkitBackdropFilter: 'blur(3px)',
+  backdropFilter: 'blur(3px)',
+  zIndex: 9999,
   transition: 'opacity 0.3s ease',
 }
 
@@ -35,11 +40,15 @@ const POPUP_STYLE = {
   left: '5%',
   width: '90%',
   bottom: '5%',
-  zIndex: 1000,
-  backgroundColor: '#1D1E1F',
+  zIndex: 10000,
+  background:
+    'linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 46%),' +
+    ' rgba(30, 33, 38, 0.5)',
+  WebkitBackdropFilter: 'blur(18px) saturate(160%)',
+  backdropFilter: 'blur(18px) saturate(160%)',
   borderRadius: '20px',
-  border: 'none',
-  boxShadow: '8px 8px 16px #0a0a0a, -6px -6px 12px #2a2a2a',
+  border: '1px solid rgba(255, 255, 255, 0.16)',
+  boxShadow: '0 20px 50px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.22)',
   display: 'flex',
   flexDirection: 'column',
   overflow: 'hidden',
@@ -50,8 +59,7 @@ const POPUP_HEADER = {
   position: 'relative',
   padding: '20px',
   paddingBottom: '15px',
-  backgroundColor: '#151515',
-  boxShadow: '0 4px 8px #0d0d0d',
+  borderBottom: '1px solid rgba(255, 255, 255, 0.18)',
   flexShrink: 0,
 }
 
@@ -75,11 +83,13 @@ const CLOSE_BUTTON = {
   fontSize: '18px',
   lineHeight: '32px',
   textAlign: 'center',
-  color: 'white',
-  background: 'linear-gradient(145deg, #e63428, #c22b20)',
-  border: 'none',
+  color: '#e8eaed',
+  // Glass disc, not a red button: closing help is not destructive, and the
+  // edit dialog's ✕ is quiet for the same reason.
+  background: 'rgba(255, 255, 255, 0.08)',
+  border: '1px solid rgba(255, 255, 255, 0.18)',
   cursor: 'pointer',
-  boxShadow: '2px 2px 5px #0d0d0d, -1px -1px 3px #272727',
+  boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.2)',
   paddingBottom: '2px',
 }
 
@@ -107,12 +117,10 @@ const TEXT_STYLE = {
 }
 
 const HR_STYLE = {
-  height: '2px',
-  background: '#1D1E1F',
-  margin: '15px 0',
+  height: '1px',
+  background: 'rgba(255, 255, 255, 0.14)',
+  margin: '16px 0',
   width: '100%',
-  boxShadow: 'inset 1px 1px 2px #0d0d0d, inset -1px -1px 2px #272727',
-  borderRadius: '1px',
 }
 
 const Title = (text) => Text({ style: TITLE_STYLE }, text)
@@ -159,10 +167,14 @@ export const HelpButton = () => {
             color: 'white',
             fontSize: '14px',
             cursor: 'pointer',
-            background: 'linear-gradient(145deg, #1c7efa, #1865c5)',
-            borderRadius: '10px',
+            // Matches .cd-save: translucent blue, light rim, colored glow.
+            background:
+              'linear-gradient(145deg, rgba(92, 162, 255, 0.95), rgba(28, 98, 220, 0.95))',
+            border: '1px solid rgba(255, 255, 255, 0.24)',
+            borderRadius: '12px',
             textAlign: 'center',
-            boxShadow: '3px 3px 6px #0d0d0d, -2px -2px 5px #272727',
+            boxShadow:
+              '0 8px 20px rgba(20, 80, 200, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.35)',
           },
         }, [
           Auth({
@@ -180,32 +192,34 @@ export const HelpButton = () => {
 
         Section('➕ Adding a Card'),
         P('• Tap the ➕ button to add a card'),
-        P('• Enter a title (e.g. the shop name)'),
-        P('• Enter the card number from the barcode'),
-        P('• The barcode type is auto-detected'),
+        P('• Enter a name (e.g. the shop name)'),
+        P('• Enter the number printed under the barcode'),
+        P('• Pick the code type and a card colour'),
 
         Hr(),
 
-        Section('🔖 Barcode Types'),
-        P('• EAN-13 — 13-digit numeric cards'),
-        P('• CODE 39 — letters & numbers'),
-        P('• CODE 128 — any characters'),
+        Section('🔖 Code Types'),
+        P('• EAN-13 — 8 to 13 digits (EAN-13, UPC-A, EAN-8)'),
+        P('• CODE 39 — letters and numbers, up to 10'),
+        P('• CODE 128 — up to 20 digits, or 11 other characters'),
         P('• QR — URLs or long text'),
-        P('Tap the Type button to override auto-detect.'),
+        P('EAN-13 checks the last digit for you — a red border means it does not match the rest of the number.'),
 
         Hr(),
 
         Section('⚙️ Managing Cards'),
-        P('🔍 Search — filter cards by name'),
+        P('🔍 Search — filter by name or number'),
+        P('✏️ Edit — tap a card'),
         P('🗑️ Delete — swipe a card left'),
-        P('↕️ Reorder — use the ↑ handle'),
+        P('↕️ Reorder — drag the ≡ handle'),
 
         Hr(),
 
         Section('⌚ On Your Watch'),
         P('🔄 Cards sync automatically'),
-        P('👆 Tap a card to show its barcode full-screen'),
-        P('🔦 Screen brightens for easier scanning'),
+        P('👆 Tap a card to show its code full-screen'),
+        P('🔦 The screen brightens for easier scanning'),
+        P('📱 A card can also be added as a watch widget'),
       ]),
     ]),
   ])

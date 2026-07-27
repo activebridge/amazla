@@ -1,14 +1,14 @@
 import { rect, width, height } from './../../../pages/ui.js'
 
 // Same look as the authenticator v1 background: a horizontal gradient built from
-// tall FILL_RECT columns — black at the side edges fading to a dim green center.
+// tall FILL_RECT columns — black at the side edges fading to a dim purple center.
 // Static (no timer). Thinner than authenticator: a wider edge fade => a narrower
 // bright center band.
-const GREEN = 0xaff05b
+const PURPLE = 0xb15bf0
 const COLS = 16
 const BAND = 0.78 // fraction of width that fades at each edge (bigger = thinner center)
-const DIM = 0.42 // overall brightness of the center
-const OVER = 40 // extend past the top so overscroll still shows the bg
+const DIM = 0.55 // overall brightness of the center (purple reads darker than the old green)
+const OVER = 100 // bleed past both ends so overscroll never shows bare black
 
 const dim = (color, b) =>
   ((((color >> 16) & 0xff) * b | 0) << 16) |
@@ -22,6 +22,6 @@ export const Background = (h = height) => {
     const cx = (x + colW / 2) / width // column center, 0..1
     const edge = Math.min(cx, 1 - cx) // 0 at edges -> 0.5 at center
     const b = Math.min(1, edge / BAND) // 0 (edge) -> 1 (center)
-    rect({ centered: false, x, y: -OVER, w: colW, h: h + OVER, color: dim(GREEN, b * DIM) })
+    rect({ centered: false, x, y: -OVER, w: colW, h: h + OVER * 2, color: dim(PURPLE, b * DIM) })
   }
 }

@@ -1,4 +1,5 @@
 import { setDocument, getDocument, findElementByText, findCardsByHandle } from './dom.js'
+import { store } from '../store.js'
 
 let initialized = false
 let input = null
@@ -32,6 +33,18 @@ const setup = () => {
     style.textContent = `
       input[type="search"]::placeholder { color: #6e7377; }
       input[type="search"]:focus { outline: none; }
+      /* The datalist arrow Chrome parks at the right edge — it collides with the
+         card counter and the clear button. Suggestions still drop while typing. */
+      input[type="search"]::-webkit-calendar-picker-indicator {
+        display: none !important;
+        opacity: 0;
+        appearance: none;
+        -webkit-appearance: none;
+      }
+      input[type="search"]::-webkit-list-button {
+        display: none !important;
+        -webkit-appearance: none;
+      }
       input[type="search"]::-webkit-search-cancel-button {
         -webkit-appearance: none;
         height: 16px;
@@ -57,6 +70,42 @@ const setup = () => {
     } else {
       countEl.textContent = totalCount.toString()
     }
+  }
+
+  // Native autocomplete for the search box: every card name as a datalist
+  // option, so typing offers the existing names instead of guessing spelling.
+  const DATALIST_ID = 'aw-card-names'
+  let datalist = null
+  let lastNames = null
+
+  const cardNames = () => {
+    const seen = []
+    store.cards.all.forEach(({ title }) => {
+      if (title && seen.indexOf(title) === -1) seen.push(title)
+    })
+    return seen
+  }
+
+  const syncDatalist = () => {
+    if (!datalist) return
+    const names = cardNames()
+    const key = names.join('\n')
+    if (key === lastNames) return
+    lastNames = key
+    while (datalist.firstChild) datalist.removeChild(datalist.firstChild)
+    names.forEach((name) => {
+      const option = doc.createElement('option')
+      option.value = name
+      datalist.appendChild(option)
+    })
+  }
+
+  const createDatalist = () => {
+    if (datalist) return
+    datalist = doc.createElement('datalist')
+    datalist.id = DATALIST_ID
+    doc.body.appendChild(datalist)
+    syncDatalist()
   }
 
   const createInput = () => {
@@ -101,6 +150,8 @@ const setup = () => {
     `
 
     injectStyles()
+    createDatalist()
+    input.setAttribute('list', DATALIST_ID)
     input.addEventListener('input', onSearch)
     searchContainer.classList.add('search-container')
     searchContainer.style.position = 'relative'
@@ -217,6 +268,9 @@ const setup = () => {
     const countChanged = cards.length !== totalCount
 
     if (!hasNewCards && !countChanged) return
+
+    // A card came or went — refresh the autocomplete options with it.
+    syncDatalist()
 
     // Re-apply filter to all cards
     let visibleCount = 0
