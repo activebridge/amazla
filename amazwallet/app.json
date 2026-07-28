@@ -42,7 +42,7 @@
             {
               "path": "widget/card",
               "icon": "icon.png",
-              "name": "AmazWallet Card",
+              "name": "AmazWallet",
               "runtime": { "type": "js" }
             }
           ]
@@ -122,6 +122,10 @@
         { "name": "t-rex3", "deviceSource": 8716544 },
         { "name": "t-rex3", "deviceSource": 8716545 },
         { "name": "t-rex3", "deviceSource": 8716547 },
+
+        { "name": "balance", "deviceSource": 8519936 },
+        { "name": "balance", "deviceSource": 8519937 },
+        { "name": "balance", "deviceSource": 8519939 },
 
         { "name": "bip5", "deviceSource": 8454400 },
         { "name": "bip5", "deviceSource": 8454401 },

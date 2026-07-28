@@ -1,11 +1,12 @@
 import UI, { text, rect, img, button, width, height } from './../../pages/ui.js'
 import { readFileSync } from './../utils/fs'
 import * as fs from './../shared/fs'
-import { Code } from './../pages/components/code.js'
+import { Code, turnsCard } from './../pages/components/code.js'
 
 // The card page, one swipe from the watch face: the same background, the same
-// scannable code, plus a chevron above and below to walk the wallet. Tapping the
-// code opens the real card page (max brightness, screen kept on).
+// scannable code, plus a chevron either side of it to walk the wallet — above
+// and below an upright code, left and right of a turned one. Tapping the code
+// opens the real card page (max brightness, screen kept on).
 //
 // Which card the widget is parked on, kept across launches. Its own file — the
 // app widget keeps its own position, and the card list file is written by the
@@ -26,9 +27,17 @@ const PAD = 10 // screen edge to the ink
 // if a device's font draws the glyphs elsewhere in the box.
 const UP_INK = 0.55
 const DOWN_INK = 0.51
+// A card whose code turns onto the screen's long axis takes its chevrons round
+// with it: '‹' / '›' on the left and right, where the width they cost is width
+// the turned code was never going to use. The glyphs are the app widget's own,
+// and so is the fraction of the box their ink fills. A QR never turns, so a
+// wallet can hold cards that want the chevrons either way.
+const LEFT = '‹'
+const RIGHT = '›'
+const SIDE_INK = 0.34
 // What the chevrons take off each end: their ink, its padding, and a gap before
 // the code. Everything else — the code, its labels, the tap zones — follows.
-const BAND = PAD + ((CHEV * DOWN_INK) | 0) + 8
+const bandFor = (sides) => PAD + ((CHEV * (sides ? SIDE_INK : DOWN_INK)) | 0) + 8
 
 let cards = []
 let index = 0
@@ -64,12 +73,14 @@ const background = (color) => {
 // Engraved the way the card's decorative dot is: a light edge peeking out from
 // under a black glyph, so the chevrons read as punched into the card rather than
 // printed on it.
-const chevron = (glyph, y) => {
+const chevron = (glyph, at, sides) => {
+  // Sideways the glyph is placed by its own box against the screen edge; upright
+  // it spans the full width and only the box's top matters.
+  const box = sides
+    ? { x: at, y: ((height - CHEV) / 2) | 0, w: CHEV, h: CHEV }
+    : { x: 0, y: at, w: width, h: CHEV }
   const layer = (dy, color) =>
-    text({
-      centered: false, x: 0, y: y + dy, w: width, h: CHEV,
-      text: glyph, text_size: CHEV, color,
-    })
+    text({ centered: false, ...box, y: box.y + dy, text: glyph, text_size: CHEV, color })
   layer(2, 0xcecece)
   layer(0, 0x000000)
 }
@@ -105,9 +116,15 @@ const render = () => {
   const card = cards[index]
   background(card.color)
 
+  // Which way this card's code will lie. The screen's own proportions decide it,
+  // so the band can be reserved before the code is drawn without the two ever
+  // disagreeing. Only a QR differs, and only because it cannot turn.
+  const sides = turnsCard(card)
   // A single card has nothing to cycle through, so it gets the whole screen.
-  const band = cards.length > 1 ? BAND : 0
-  const area = { x: 0, y: band, w: width, h: height - band * 2 }
+  const band = cards.length > 1 ? bandFor(sides) : 0
+  const area = sides
+    ? { x: band, y: 0, w: width - band * 2, h: height }
+    : { x: 0, y: band, w: width, h: height - band * 2 }
   Code(card, area)
   button({
     centered: false, x: area.x, y: area.y, w: area.w, h: area.h,
@@ -116,18 +133,24 @@ const render = () => {
 
   if (band) {
     // Boxes placed so the ink itself, not the box, ends up PAD from the edge.
-    chevron(UP, PAD - ((CHEV * UP_INK) | 0))
-    chevron(DOWN, height - PAD - ((CHEV * DOWN_INK) | 0))
+    if (sides) {
+      chevron(LEFT, PAD - ((CHEV * SIDE_INK) | 0), sides)
+      chevron(RIGHT, width - PAD - CHEV + ((CHEV * SIDE_INK) | 0), sides)
+    } else {
+      chevron(UP, PAD - ((CHEV * UP_INK) | 0), sides)
+      chevron(DOWN, height - PAD - ((CHEV * DOWN_INK) | 0), sides)
+    }
     // Tap targets last, above the glyphs — the text widgets would otherwise eat
-    // the tap. Full-width bands: the whole end of the screen reads as "the arrow".
-    button({
-      centered: false, x: 0, y: 0, w: width, h: band,
-      radius: 0, src: 'clear', click_func: () => cycle(-1),
-    })
-    button({
-      centered: false, x: 0, y: height - band, w: width, h: band,
-      radius: 0, src: 'clear', click_func: () => cycle(1),
-    })
+    // the tap. Full bands: the whole end of the screen reads as "the arrow".
+    const strip = (x, y, dir) =>
+      button({
+        centered: false, x, y,
+        w: sides ? band : width,
+        h: sides ? height : band,
+        radius: 0, src: 'clear', click_func: () => cycle(dir),
+      })
+    strip(0, 0, -1)
+    strip(sides ? width - band : 0, sides ? 0 : height - band, 1)
   }
 }
 

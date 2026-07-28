@@ -22,7 +22,6 @@ const MIN_QUIET_MODULES = 6
 const MARGIN = 10 // white kept between the panel's edge and what it holds
 const MIN_QUIET = 6 // last-resort quiet zone for a code that barely fits
 const MIN_BAR_LENGTH = 60 // shortest bar a scanner's line can be swept across
-const MIN_UPRIGHT_WIDTH = 240 // Band 7 (194) is always rotated: too narrow to be worth it
 const EAN_MODULES = 95 // an EAN-13 symbol, guards included — the layout below assumes it
 const NAME_SIZE = 36
 const CODE_SIZE = 32
@@ -39,6 +38,17 @@ const QR_RADIUS = 40
 
 const PILL = NAME_SIZE + 12 // the name plate's own height
 const NAME_GAP = 10 // card showing between the name plate and the panel
+// Turned, the name plate stands on the left edge instead of lying above the
+// panel, so it takes a column out of the width the way BAND takes a band out of
+// the height — held off the edge itself, which on a turned code is where the
+// chevron's own hit strip runs.
+const NAME_INSET = 10
+// Card showing between the standing plate and the panel. Tighter than the gap an
+// upright plate keeps: stood on end the plate is a tall thin thing beside a tall
+// wide one, and the same gap that reads as a seam under a lying plate reads as a
+// gutter beside a standing one. Every pixel taken off it is a pixel of bar.
+const COLUMN_GAP = 5
+const COLUMN = PILL + COLUMN_GAP + NAME_INSET
 const ROUND = screenShape === 1
 const CENTER_Y = (height / 2) | 0
 const GLASS = (Math.min(width, height) / 2) | 0
@@ -60,6 +70,70 @@ const glassW = (top, h) => {
 // on a full-screen page it also strands the name at the very top, far from the
 // code it names.
 const place = (box, areaCy, h) => Math.max(areaCy, box.y + (h / 2 | 0))
+
+// Which way the code is laid out: a screen taller than it is wide lays it along
+// the tall axis, and that is the whole rule. Round glass never turns — width and
+// height are equal there, so there is nothing to turn onto.
+//
+// A turned code is set differently as well as laid differently: its printed
+// digits stand in a column beside the bars rather than a row under them, so the
+// whole height goes to the modules.
+const turns = () => height > width
+
+// How tall a wrapped line stands as a multiple of its font size. Measured twice
+// off a device: a 33.5px step at 23px with 6px of line_space read as ~1.2, but a
+// 13-digit run set to that still hung 3px off each end of its column, which puts
+// the real height at ~1.29. Set over both — over-estimating costs a column that
+// ends a few pixels short, under-estimating costs characters off both ends, and
+// only one of those is visible to a scanner's owner.
+const LINE = 1.35
+
+// One character per line, spelled out. Letting CHAR_WRAP find the breaks needs a
+// box exactly one glyph wide, and in a proportional font no such width exists:
+// wide enough for 'C' is wide enough for 'r' and 't' together. A newline between
+// every character breaks where we say, whatever the glyphs measure.
+const down = (t) => {
+  let out = ''
+  for (let i = 0; i < t.length; i++) out += (i ? '\n' : '') + t.charAt(i)
+  return out
+}
+
+// A run of text set down a column. The TEXT widget has no angle of its own —
+// arc text turns glyphs, but only along a circle, and a radius big enough to
+// read as straight did not draw on device — so the letters stay upright and the
+// run goes vertical one line at a time. `line_space` is what spreads those lines
+// over the height the column was given.
+const stack = (t, box, cap, color) => {
+  if (!t) return
+  const cell = Math.max(1, (box.h / t.length) | 0)
+  // A wrapped line stands taller than its font size, and `line_space` is added
+  // ON TOP of that height, not inside it. Measured off a device screenshot: 23px
+  // digits stepped 33.5px with 6px of line_space, so a line is ~1.2 sizes tall.
+  // Sized against the size alone the run overshoots its column by a fifth, which
+  // is a digit and a half off each end of a 13-digit code.
+  // The column holds whichever glyph is widest, so the size is capped by what
+  // fits across it as well as by what fits down it.
+  const size = Math.min(cap, (cell / LINE) | 0, (box.w / GLYPH) | 0)
+  const line = Math.ceil(size * LINE)
+  const space = Math.max(0, cell - line)
+  // What the rounding leaves over, split top and bottom, so the run sits centred
+  // on the bars it belongs to rather than riding the top of the column.
+  const slack = Math.max(0, box.h - t.length * (line + space))
+  const y = box.y + ((slack / 2) | 0)
+  text({
+    centered: false,
+    x: box.x, y, w: box.w, h: box.h - (y - box.y),
+    text: down(t), text_size: size, color,
+    line_space: space,
+  })
+}
+
+// Which way a card is laid out, for a caller that has to reserve its own
+// furniture before handing the area over: the widget's chevrons follow the card
+// round, and the band they take comes off the width. A QR's own symbol is square
+// and cannot turn, but the page it sits on does — the chevrons move to the sides
+// with every other card's, so walking the wallet never moves the arrows around.
+export const turnsCard = () => turns()
 
 // Old cards carry a `qr` boolean and no type at all.
 export const typeOf = (card) => {
@@ -114,6 +188,24 @@ const name = (card, area, panelW, panelY) => {
   })
 }
 
+// The same plate stood on end, against the area's left edge, the name set down
+// it. Sized to the panel it stands beside, so the two share a top and a bottom
+// the way the upright plate shares its width with the panel below it. The light
+// edge peeks out from under the BOTTOM, exactly as it does upright: the card is
+// lit from above however its furniture is turned, so an edge showing down the
+// side would read as a different light altogether.
+const nameColumn = (card, area, plate) => {
+  const w = PILL
+  const h = Math.min(plate.h, area.h)
+  const y = plate.y + ((plate.h - h) / 2 | 0)
+  const x = area.x + NAME_INSET
+  const radius = (w / 2.5) | 0
+  const base = { centered: false, x, y: y + 2, w, radius }
+  rect({ ...base, h: h - 2, color: 0xcecece })
+  rect({ ...base, h: h - 4, radius: Math.max(0, radius - 2), color: 0x000000 })
+  stack(card.title || '', { x, y: y + 12, w, h: h - 24 }, NAME_SIZE, 0xffffff)
+}
+
 // A digit's advance as a fraction of the font size. Measured at ~0.51 off a
 // screenshot (10 digits at 32px with 4px of tracking spanned 200px) — set well
 // over that deliberately. The widget appears to round each advance up and to
@@ -163,6 +255,13 @@ const printed = (t, plate, span) => {
   run(t, plate.x + ((plate.w - w) / 2 | 0), w, y)
 }
 
+// The turned code's digits: the same printed row stood on end in the column the
+// panel keeps for it, against the panel's right edge and spanning exactly the
+// bars it belongs to.
+const printedColumn = (t, plate, start, span) => {
+  stack(t, { x: plate.x + plate.w - ROW, y: start, w: ROW, h: span }, CODE_SIZE, 0x000000)
+}
+
 const QR = (card, area, cx, areaCy) => {
   // No name plate on a QR card: the code's content is printed under it, which is
   // all such a card has to say. That leaves the whole area for the panel — the
@@ -195,20 +294,18 @@ const QR = (card, area, cx, areaCy) => {
 }
 
 // Measure a barcode against a box, or null when even 2px bars don't fit it.
-// `along` is the axis the modules run along, `across` is the bar length. A code
-// is laid out upright whenever it fits the box width at a scannable module — no
-// reason to make the wrist turn for a short code — and only rotates onto the
-// taller axis when width alone can't hold it.
-const fit = (lines, box, areaCy) => {
+// `along` is the axis the modules run along, `across` is the bar length. Which
+// way round it goes is settled by `turns()` before the box is even cut, since
+// the box itself differs: the name's band comes off the top upright and off the
+// left turned.
+const fit = (lines, box, areaCy, horizontal) => {
   if (box.w <= 0 || box.h <= 0) return null
 
-  const modules = lines.length + QUIET_MODULES * 2
-  const moduleFor = (axis) => Math.floor((axis - MARGIN * 2) / modules)
-  const horizontal = box.w >= MIN_UPRIGHT_WIDTH && moduleFor(box.w) >= MIN_BAR_WIDTH
-  // The code's row is printed inside the panel, so it always comes off the
-  // vertical axis: the bar length upright, the code's own length once rotated.
-  const alongMax = (horizontal ? box.w : box.h - ROW) - MARGIN * 2
-  const acrossMax = (horizontal ? box.h - ROW : box.w) - MARGIN * 2
+  // The code is printed inside the panel beside the bars, never among them, so
+  // it always comes off the across axis: a row under the bars upright, a column
+  // to their right turned. The modules keep their axis whole either way.
+  const alongMax = (horizontal ? box.w : box.h) - MARGIN * 2
+  const acrossMax = (horizontal ? box.h - ROW : box.w - ROW) - MARGIN * 2
 
   const onGlass = (plateW, plateH) => {
     const cy = place(box, areaCy, plateH)
@@ -248,17 +345,19 @@ const fit = (lines, box, areaCy) => {
       // Bars as long as the box allows, never longer than the code is wide: past
       // that a barcode stops reading as one, and the scan gains nothing.
       for (let across = Math.min(acrossMax, barcodeLength); across >= minBars + MARGIN * 2; across -= 4) {
-        const plateW = horizontal ? along : across
-        const plateH = (horizontal ? across : along) + ROW
+        // The printed code's row is the panel's own, so it lands on whichever
+        // side of the panel the bars are not using.
+        const plateW = (horizontal ? along : across) + (horizontal ? 0 : ROW)
+        const plateH = (horizontal ? across : along) + (horizontal ? ROW : 0)
         if (!onGlass(plateW, plateH)) continue
         return {
           horizontal,
           barWidth,
           barcodeLength,
-          // Upright bars keep their white above but run flush down to the code's
+          // Bars keep their white on the far side but run flush into the code's
           // row, the way print sets a barcode on its own digits — so they gain
           // the margin they used to leave there.
-          barLength: across - (horizontal ? MARGIN : MARGIN * 2),
+          barLength: across - MARGIN,
           plateW,
           plateH,
         }
@@ -271,13 +370,10 @@ const fit = (lines, box, areaCy) => {
 // Returns false when nothing scannable could be drawn (a message is drawn in
 // its place), so the caller can skip anything that only makes sense over a code.
 export const Code = (card, area) => {
-  const cx = area.x + (area.w / 2 | 0)
   const areaCy = area.y + (area.h / 2 | 0)
-  // The name's band comes off the top; what is left is the code's.
-  const box = { x: area.x, y: area.y + BAND, w: area.w, h: area.h - BAND }
 
   const type = typeOf(card)
-  if (type === 'qr') return QR(card, area, cx, areaCy)
+  if (type === 'qr') return QR(card, area, area.x + (area.w / 2 | 0), areaCy)
 
   const text = digits(type, card.code || '')
   const lines = encode(type, card.code || '')
@@ -286,10 +382,31 @@ export const Code = (card, area) => {
     return false
   }
 
-  // A screen too small to hold a scannable code under the name takes the band
+  // The name's band comes off the top upright, off the left turned; what is
+  // left is the code's.
+  const boxFor = (flat) =>
+    flat
+      ? { x: area.x, y: area.y + BAND, w: area.w, h: area.h - BAND }
+      : { x: area.x + COLUMN, y: area.y, w: area.w - COLUMN, h: area.h }
+
+  // A screen too small to hold a scannable code beside the name takes the band
   // back and goes without it rather than not showing the code at all.
-  const banded = fit(lines, box, areaCy)
-  const dims = banded || fit(lines, area, areaCy)
+  const measure = (flat) => {
+    const box = boxFor(flat)
+    const banded = fit(lines, box, areaCy, flat)
+    return { flat, box, banded, dims: banded || fit(lines, area, areaCy, flat) }
+  }
+
+  // Which way round is settled by the screen alone. The other way is tried only
+  // when the chosen one cannot hold the code at all — a code drawn the second
+  // choice of way still scans, and a screen saying "too long" does not.
+  let laid = measure(!turns())
+  if (!laid.dims) laid = measure(!laid.flat)
+
+  const { flat: horizontal, box, banded, dims } = laid
+  // Everything is centred on the box the code actually got, which is the area
+  // less whatever the name took off it.
+  const cx = box.x + (box.w / 2 | 0)
 
   // Past the input limits (Code 39 caps at 10 chars in settings) even 2px bars
   // don't fit — say so rather than draw an unreadable code.
@@ -298,41 +415,49 @@ export const Code = (card, area) => {
     return false
   }
 
+  // Without the band the code takes the whole area back, so it re-centres on it.
   const cy = place(banded ? box : area, areaCy, dims.plateH)
+  const px = banded ? cx : area.x + (area.w / 2 | 0)
 
-  const { horizontal, barWidth, barcodeLength, barLength, plateW, plateH } = dims
-  const plate = { x: cx - (plateW / 2 | 0), y: cy - (plateH / 2 | 0), w: plateW, h: plateH }
+  const { barWidth, barcodeLength, barLength, plateW, plateH } = dims
+  const plate = { x: px - (plateW / 2 | 0), y: cy - (plateH / 2 | 0), w: plateW, h: plateH }
 
-  if (banded) name(card, area, plateW, plate.y)
+  if (banded) {
+    if (horizontal) name(card, area, plateW, plate.y)
+    else nameColumn(card, area, plate)
+  }
   panel(plate)
 
   // The bars sit in what the code's row leaves, so their block centre is half a
-  // row above the panel's — plus half the margin they no longer leave above the
-  // row, which is what carries them down onto the numbers.
-  const bars = cy - (ROW / 2 | 0) + (horizontal ? (MARGIN / 2 | 0) : 0)
-  const start = (horizontal ? cx : bars) - (barcodeLength / 2 | 0)
-  const edge = (horizontal ? bars : cx) - (barLength / 2 | 0)
+  // row off the panel's — above it upright, left of it turned — plus half the
+  // margin they no longer leave against the row, which is what carries them onto
+  // the numbers.
+  const bars = (horizontal ? cy : px) - (ROW / 2 | 0) + (MARGIN / 2 | 0)
+  const start = (horizontal ? px : cy) - (barcodeLength / 2 | 0)
+  const edge = bars - (barLength / 2 | 0)
 
   // EAN-13's guards run deeper than the rest — far enough to read as guards,
-  // short of the digits, which stay one evenly tracked row. Rotated there is no
-  // band below the bar ends at all, so the symbol stays flat.
-  const ean = type === 'ean13' && horizontal && lines.length === EAN_MODULES
+  // short of the digits, which stay one evenly set run. They reach into the
+  // code's own row, so they run whichever way that row does.
+  const ean = type === 'ean13' && lines.length === EAN_MODULES
   const drop = ean ? Math.max(0, Math.min(barWidth * 5, ROW - 10) - 10) : 0
 
   lines.map((l, i) => {
     if (l !== 1) return
     const at = start + i * barWidth
     const guard = ean && (i < 3 || (i >= 45 && i < 50) || i >= 92)
+    const deeper = guard ? drop : 0
     rect({
       centered: false,
       x: horizontal ? at : edge,
       y: horizontal ? edge : at,
-      w: horizontal ? barWidth : barLength,
-      h: (horizontal ? barLength : barWidth) + (guard ? drop : 0),
+      w: horizontal ? barWidth : barLength + deeper,
+      h: horizontal ? barLength + deeper : barWidth,
       color: 0x000000,
     })
   })
 
-  printed(text, plate, horizontal ? barcodeLength : barLength)
+  if (horizontal) printed(text, plate, barcodeLength)
+  else printedColumn(text, plate, start, barcodeLength)
   return true
 }

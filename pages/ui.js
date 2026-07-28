@@ -56,9 +56,18 @@ const attach = (w) => {
 // Numbers (the raw enum) pass through untouched.
 const ALIGN_H = { left: hmUI.align.LEFT, center: hmUI.align.CENTER_H, right: hmUI.align.RIGHT }
 const ALIGN_V = { top: hmUI.align.TOP, center: hmUI.align.CENTER_V, bottom: hmUI.align.BOTTOM }
+// Same courtesy for the wrap mode, so a caller can ask for 'char_wrap' — a box
+// one glyph wide with that set is how a vertical run of text is drawn.
+const TEXT_STYLE = {
+  none: hmUI.text_style.NONE,
+  wrap: hmUI.text_style.WRAP,
+  char_wrap: hmUI.text_style.CHAR_WRAP,
+  ellipsis: hmUI.text_style.ELLIPSIS,
+}
 const normalizeAlign = (o) => {
   if (typeof o.align_h === 'string') o.align_h = ALIGN_H[o.align_h]
   if (typeof o.align_v === 'string') o.align_v = ALIGN_V[o.align_v]
+  if (typeof o.text_style === 'string') o.text_style = TEXT_STYLE[o.text_style]
   return o
 }
 
