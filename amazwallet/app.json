@@ -5,8 +5,8 @@
     "appName": "AmazWallet",
     "appType": "app",
     "version": {
-      "code": 112,
-      "name": "1.1.2"
+      "code": 120,
+      "name": "1.2.0"
     },
     "icon": "icon.png",
     "vender": "zepp",
@@ -55,6 +55,15 @@
         }
       },
       "platforms": [
+        { "name": "active2r", "deviceSource": 8913152 },
+        { "name": "active2r", "deviceSource": 8913153 },
+        { "name": "active2r", "deviceSource": 8913155 },
+        { "name": "active2r", "deviceSource": 8913159 },
+        { "name": "active2r", "deviceSource": 10092800 },
+        { "name": "active2r", "deviceSource": 10092801 },
+        { "name": "active2r", "deviceSource": 10092803 },
+        { "name": "active2r", "deviceSource": 10092807 },
+
         { "name": "active2s", "deviceSource": 10223872 },
         { "name": "active2s", "deviceSource": 10223873 },
         { "name": "active2s", "deviceSource": 10223875 },
@@ -106,15 +115,6 @@
         { "name": "balance2", "deviceSource": 9568513 },
         { "name": "balance2", "deviceSource": 9568515 },
 
-        { "name": "active2r", "deviceSource": 8913152 },
-        { "name": "active2r", "deviceSource": 8913153 },
-        { "name": "active2r", "deviceSource": 8913155 },
-        { "name": "active2r", "deviceSource": 8913159 },
-        { "name": "active2r", "deviceSource": 10092800 },
-        { "name": "active2r", "deviceSource": 10092801 },
-        { "name": "active2r", "deviceSource": 10092803 },
-        { "name": "active2r", "deviceSource": 10092807 },
-
         { "name": "bip5u", "deviceSource": 8782081 },
         { "name": "bip5u", "deviceSource": 8782088 },
         { "name": "bip5u", "deviceSource": 8782089 },
@@ -122,10 +122,6 @@
         { "name": "t-rex3", "deviceSource": 8716544 },
         { "name": "t-rex3", "deviceSource": 8716545 },
         { "name": "t-rex3", "deviceSource": 8716547 },
-
-        { "name": "balance", "deviceSource": 8519936 },
-        { "name": "balance", "deviceSource": 8519937 },
-        { "name": "balance", "deviceSource": 8519939 },
 
         { "name": "bip5", "deviceSource": 8454400 },
         { "name": "bip5", "deviceSource": 8454401 },

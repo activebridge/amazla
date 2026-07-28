@@ -16,7 +16,9 @@ const dim = (color, b) =>
   ((color & 0xff) * b | 0)
 
 export const Background = (h = height) => {
-  const colW = Math.ceil(width / COLS) + 1
+  // Half the pitch: 16px wide on a 480px screen, leaving a black gap between
+  // each column instead of filling the row edge to edge.
+  const colW = Math.ceil(width / COLS / 2) + 1
   for (let i = 0; i < COLS; i++) {
     const x = (i * width / COLS) | 0
     const cx = (x + colW / 2) / width // column center, 0..1

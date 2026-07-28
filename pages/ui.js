@@ -162,6 +162,8 @@ export const stroke = define('STROKE_RECT', {
   angle: 0,
 })
 
+export const qrcode = define('QRCODE')
+
 export const progress = define('ARC_PROGRESS')
 
 export const animation = define('IMG_ANIM')
