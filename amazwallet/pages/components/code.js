@@ -42,6 +42,13 @@ const NAME_GAP = 10 // card showing between the name plate and the panel
 // panel, so it takes a column out of the width the way BAND takes a band out of
 // the height — held off the edge itself, which on a turned code is where the
 // chevron's own hit strip runs.
+// What a turned code keeps clear of the left and right edges. Upright the code
+// runs the full width and the screen's own bezel is margin enough; turned, the
+// panel is a tall slab, and one that reaches the glass reads as spilling off it.
+// This is the width of the widget's side chevron band, by the same arithmetic —
+// so a full-screen card page and the widget lay a turned code out identically,
+// and the widget's own area passes through the clamp untouched.
+const TURN_EDGE = 10 + ((Math.min(76, (height * 0.17) | 0) * 0.34) | 0) + 8
 const NAME_INSET = 10
 // Card showing between the standing plate and the panel. Tighter than the gap an
 // upright plate keeps: stood on end the plate is a tall thin thing beside a tall
@@ -369,41 +376,56 @@ const fit = (lines, box, areaCy, horizontal) => {
 
 // Returns false when nothing scannable could be drawn (a message is drawn in
 // its place), so the caller can skip anything that only makes sense over a code.
-export const Code = (card, area) => {
-  const areaCy = area.y + (area.h / 2 | 0)
-
+export const Code = (card, box0) => {
   const type = typeOf(card)
-  if (type === 'qr') return QR(card, area, area.x + (area.w / 2 | 0), areaCy)
+  if (type === 'qr') {
+    const cy = box0.y + (box0.h / 2 | 0)
+    return QR(card, box0, box0.x + (box0.w / 2 | 0), cy)
+  }
 
   const text = digits(type, card.code || '')
   const lines = encode(type, card.code || '')
   if (!lines || lines.length === 0) {
-    message('Invalid barcode data', area)
+    message('Invalid barcode data', box0)
     return false
   }
 
-  // The name's band comes off the top upright, off the left turned; what is
-  // left is the code's.
-  const boxFor = (flat) =>
-    flat
-      ? { x: area.x, y: area.y + BAND, w: area.w, h: area.h - BAND }
-      : { x: area.x + COLUMN, y: area.y, w: area.w - COLUMN, h: area.h }
+  // Turned, the code is held off the long edges whatever the caller handed over.
+  // The widget already reserves exactly this much for its chevrons, so the only
+  // caller this moves is one that passed the whole screen.
+  const held = (inset) => ({
+    x: Math.max(box0.x, inset),
+    y: box0.y,
+    w: Math.min(box0.w, width - inset * 2),
+    h: box0.h,
+  })
 
   // A screen too small to hold a scannable code beside the name takes the band
   // back and goes without it rather than not showing the code at all.
-  const measure = (flat) => {
-    const box = boxFor(flat)
+  const measure = (flat, inset) => {
+    const area = held(flat ? 0 : inset)
+    const areaCy = area.y + (area.h / 2 | 0)
+    // The name's band comes off the top upright, off the left turned; what is
+    // left is the code's.
+    const box = flat
+      ? { x: area.x, y: area.y + BAND, w: area.w, h: area.h - BAND }
+      : { x: area.x + COLUMN, y: area.y, w: area.w - COLUMN, h: area.h }
     const banded = fit(lines, box, areaCy, flat)
-    return { flat, box, banded, dims: banded || fit(lines, area, areaCy, flat) }
+    return { flat, area, areaCy, box, banded, dims: banded || fit(lines, area, areaCy, flat) }
   }
 
-  // Which way round is settled by the screen alone. The other way is tried only
-  // when the chosen one cannot hold the code at all — a code drawn the second
-  // choice of way still scans, and a screen saying "too long" does not.
-  let laid = measure(!turns())
-  if (!laid.dims) laid = measure(!laid.flat)
+  // Which way round is settled by the screen alone, and the margin is a
+  // preference, not a requirement — both give way before the screen is allowed
+  // to say "too long", in the order they cost the least. A narrow screen spends
+  // that margin on nothing: TURN_EDGE is scaled off the height (the chevron it
+  // matches is) but paid out of the width, and on Band 7's 194px it takes 40% of
+  // it, leaving too little for the modules and the shortest scannable bar.
+  const turned = turns()
+  let laid = measure(!turned, TURN_EDGE)
+  if (!laid.dims && turned) laid = measure(false, 0)
+  if (!laid.dims) laid = measure(turned, 0)
 
-  const { flat: horizontal, box, banded, dims } = laid
+  const { flat: horizontal, area, areaCy, box, banded, dims } = laid
   // Everything is centred on the box the code actually got, which is the area
   // less whatever the name took off it.
   const cx = box.x + (box.w / 2 | 0)
