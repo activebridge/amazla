@@ -1,6 +1,6 @@
-# Amazla landing (GitHub Pages + Jekyll)
+# Amazla Key landing (GitHub Pages + Jekyll)
 
-This branch hosts the Amazla landing as a static site from repository root.
+This branch hosts the Amazla Key landing as a static site from repository root.
 
 ## Local run
 

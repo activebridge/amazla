@@ -3,24 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>How Amazla Works - BLE and Secure Tesla Commands</title>
-  <meta name="description" content="Learn how Amazla connects an Amazfit watch to Tesla using BLE, secure VCSEC sessions, encrypted commands, and instant vehicle status updates." />
+  <title>How Amazla Key Works - BLE and Secure Tesla Commands</title>
+  <meta name="description" content="Learn how Amazla Key connects an Amazfit watch to Tesla using BLE, secure VCSEC sessions, encrypted commands, and instant vehicle status updates." />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <link rel="canonical" href="https://amazla.app/how-it-works.html" />
   <link rel="alternate" hreflang="en" href="https://amazla.app/how-it-works.html" />
   <link rel="alternate" hreflang="x-default" href="https://amazla.app/how-it-works.html" />
   <meta property="og:type" content="article" />
-  <meta property="og:site_name" content="Amazla" />
-  <meta property="og:title" content="How Amazla Works - BLE and Secure Tesla Commands" />
-  <meta property="og:description" content="Technical overview of BLE connection, VCSEC session setup, authenticated encrypted commands, and watch-side updates in Amazla." />
+  <meta property="og:site_name" content="Amazla Key" />
+  <meta property="og:title" content="How Amazla Key Works - BLE and Secure Tesla Commands" />
+  <meta property="og:description" content="Technical overview of BLE connection, VCSEC session setup, authenticated encrypted commands, and watch-side updates in Amazla Key." />
   <meta property="og:url" content="https://amazla.app/how-it-works.html" />
-  <meta property="og:image" content="https://amazla.app/images/logo-key.svg" />
+  <meta property="og:image" content="https://amazla.app/images/logo-amazla-key.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="How Amazla Works" />
-  <meta name="twitter:description" content="A technical breakdown of how Amazla sends secure Tesla commands from your Amazfit watch." />
-  <meta name="twitter:image" content="https://amazla.app/images/logo-key.svg" />
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <link rel="shortcut icon" href="/favicon.svg" />
+  <meta name="twitter:title" content="How Amazla Key Works" />
+  <meta name="twitter:description" content="A technical breakdown of how Amazla Key sends secure Tesla commands from your Amazfit watch." />
+  <meta name="twitter:image" content="https://amazla.app/images/logo-amazla-key.png" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="shortcut icon" href="/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -28,15 +28,15 @@
     {
       "@context": "https://schema.org",
       "@type": "TechArticle",
-      "headline": "How Amazla controls Tesla from your watch",
+      "headline": "How Amazla Key controls Tesla from your watch",
       "description": "Technical overview of BLE communication and secure command execution between Amazfit watch and Tesla.",
       "author": {
         "@type": "Organization",
-        "name": "Amazla"
+        "name": "Amazla Key"
       },
       "publisher": {
         "@type": "Organization",
-        "name": "Amazla"
+        "name": "Amazla Key"
       },
       "mainEntityOfPage": "https://amazla.app/how-it-works.html"
     }
@@ -47,20 +47,15 @@
 <body class="bg-amazla-background text-amazla-dark font-sans antialiased">
   <header class="fixed top-0 left-0 right-0 z-50 bg-amazla-background/90 backdrop-blur-sm border-b border-slate-200/50">
     <nav class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2" aria-label="Amazla home">
-        <svg class="h-8 w-auto" width="160" height="50" viewBox="0 0 320 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Amazla">
-          <defs>
-            <style>.dark-text{fill:#243043;font-family:sans-serif;font-weight:bold}.gray-text{fill:#64748B;font-family:sans-serif;font-weight:normal}</style>
-          </defs>
-          <text x="0" y="52" font-size="48" class="dark-text">AMAZL<tspan fill="#E82127">A</tspan></text>
-          <text x="0" y="88" font-size="22" class="gray-text">Amazfit to Tesla Control</text>
-        </svg>
+      <a href="/" class="flex items-center gap-2" aria-label="Amazla Key home">
+        <img src="/images/logo-amazla-key.png" alt="" class="h-8 w-8 rounded-full object-cover" width="32" height="32" />
+        <span class="font-bold text-amazla-dark text-lg tracking-tight">Amazla <span class="text-amazla-primary">Key</span></span>
       </a>
       <div class="flex items-center gap-6">
         <a href="/index.html#features" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Features</a>
         <a href="/index.html#devices" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Devices</a>
         <a href="/how-it-works.html" class="text-sm font-semibold text-amazla-dark bg-slate-100/60 hover:bg-slate-100 rounded-lg px-4 py-2 transition-colors shadow-sm hidden sm:block">How it works</a>
-        <a href="/index.html#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get the app</a>
+        <a href="/index.html#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get Amazla Key</a>
       </div>
     </nav>
   </header>
@@ -84,11 +79,11 @@
           </div>
 
           <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-amazla-dark" data-animate="up">
-            How Amazla controls Tesla from your watch
+            How Amazla Key controls Tesla from your watch
           </h1>
 
           <p class="mt-6 text-lg sm:text-xl text-amazla-secondary max-w-2xl mx-auto lg:mx-0" data-animate="up">
-            Amazla connects to your Tesla over Bluetooth (BLE), establishes a secure VCSEC session, and sends authenticated, encrypted commands directly from your watch.
+            Amazla Key connects to your Tesla over Bluetooth (BLE), establishes a secure VCSEC session, and sends authenticated, encrypted commands directly from your watch.
           </p>
         </div>
         <div class="flex-1 min-w-0 lg:flex-[1]"></div>
@@ -166,7 +161,7 @@
           <div class="rounded-3xl border border-slate-200/60 bg-amazla-primary/5 p-7 lg:p-8" data-animate="up">
             <h2 class="text-2xl sm:text-3xl font-bold text-amazla-dark">Ready to control your Tesla?</h2>
             <p class="mt-3 text-slate-600">
-              Install Amazla and pair your Tesla once. After that, most actions are available from your watch while you’re within BLE range.
+              Install Amazla Key and pair your Tesla once. After that, most actions are available from your watch while you’re within BLE range.
             </p>
 
             <div class="mt-6 flex flex-col sm:flex-row gap-4">
@@ -189,14 +184,14 @@
 
   <footer class="bg-amazla-dark text-slate-400 py-12">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-      <span class="font-semibold text-white">Amazla</span>
+      <span class="font-semibold text-white">Amazla Key</span>
       <div class="flex gap-8 text-sm">
         <a href="/privacy-and-terms.html#privacy" class="hover:text-white transition-colors">Privacy</a>
         <a href="/privacy-and-terms.html#terms" class="hover:text-white transition-colors">Terms</a>
       </div>
     </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-8 border-t border-white/10 text-center text-sm text-slate-500">
-      © Amazla. Not affiliated with Tesla or Amazfit. For Amazfit watch owners with a Tesla vehicle.
+      © Amazla Key. One-time $10 purchase inside Zepp. No subscription. Not affiliated with Tesla or Amazfit. For Amazfit watch owners with a Tesla vehicle.
     </div>
   </footer>
 
