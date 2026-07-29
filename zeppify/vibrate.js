@@ -1,32 +1,22 @@
 /**
  * Zeppify Vibrator Module
- * Unified vibrator for ZeppOS v1 (hmSensor global) and v2/v3 (@zos/sensor).
+ * Drives the motor through the v1 hmSensor VIBRATE sensor: set the numeric
+ * `.scene` property, then start().
  *
- * The two platforms drive the motor DIFFERENTLY, so this branches by platform:
- *   v1: hmSensor VIBRATE sensor — set the numeric `.scene` property, then start().
- *   v2/v3: @zos/sensor Vibrator — setMode(VIBRATOR_SCENE_*), then start().
- * The v1 scene NUMBERS and the v3 constant VALUES are NOT the same enum, so each
- * platform gets its own map (passing v1 numbers to the v3 Vibrator just yields the
- * default buzz — which is why every scene felt identical). Sources:
- *   v1: docs.zepp.com/docs/1.0/reference/device-app-api/hmSensor/sensorId/VIBRATE
- *   v3: docs.zepp.com/docs/reference/device-app-api/newAPI/sensor/Vibrator
+ * hmSensor is available on EVERY runtime, v1 through v4 — same legacy global
+ * namespace as the hmUI / hmSetting that pages/ui.js reads at module top level in
+ * both build types. So there is no @zos/sensor branch and no import here, which is
+ * also what lets a v1-config build (one package for every device) load this file:
+ * a single `import ... from '@zos/*'` compiles to a top-level __$$RQR$$__(...) the
+ * v1 runtime can't load.
+ *
+ * Scene table:
+ *   docs.zepp.com/docs/1.0/reference/device-app-api/hmSensor/sensorId/VIBRATE
  */
-import {
-  Vibrator,
-  VIBRATOR_SCENE_CALL,
-  VIBRATOR_SCENE_DURATION,
-  VIBRATOR_SCENE_DURATION_LONG,
-  VIBRATOR_SCENE_NOTIFICATION,
-  VIBRATOR_SCENE_SHORT_LIGHT,
-  VIBRATOR_SCENE_SHORT_MIDDLE,
-  VIBRATOR_SCENE_SHORT_STRONG,
-  VIBRATOR_SCENE_STRONG_REMINDER,
-  VIBRATOR_SCENE_TIMER,
-} from '@zos/sensor'
 
-// v1 hmSensor `.scene` numeric values (docs table). 20ms buzzes 23/24/25; 28=600ms,
+// hmSensor `.scene` numeric values (docs table). 20ms buzzes 23/24/25; 28=600ms,
 // 27=1000ms; 0=notification (×2), 9=reminder (×4); 1=call, 5=timer (both continuous).
-const V1 = {
+const SCENES = {
   light: 23,
   medium: 24,
   strong: 25,
@@ -38,21 +28,7 @@ const V1 = {
   timer: 5,
 }
 
-// v2/v3 @zos/sensor scene constants, keyed the same way.
-const V3 = {
-  light: VIBRATOR_SCENE_SHORT_LIGHT,
-  medium: VIBRATOR_SCENE_SHORT_MIDDLE,
-  strong: VIBRATOR_SCENE_SHORT_STRONG,
-  duration: VIBRATOR_SCENE_DURATION,
-  long: VIBRATOR_SCENE_DURATION_LONG,
-  notification: VIBRATOR_SCENE_NOTIFICATION,
-  reminder: VIBRATOR_SCENE_STRONG_REMINDER,
-  call: VIBRATOR_SCENE_CALL,
-  timer: VIBRATOR_SCENE_TIMER,
-}
-
-// v1 exposes the hmSensor global (and its VIBRATE sensor uses `.scene`); v2/v3 don't.
-const isV1 = typeof hmSensor !== 'undefined' && !!hmSensor.createSensor
+const hasSensor = () => typeof hmSensor !== 'undefined' && !!hmSensor.createSensor
 
 // LAZY singleton. ZeppOS v1 forbids creating the VIBRATE sensor more than once per
 // page ("Pages can only create one instance of the VIBRATE sensor"), so we create
@@ -61,20 +37,24 @@ const isV1 = typeof hmSensor !== 'undefined' && !!hmSensor.createSensor
 // never spin up a VIBRATE sensor they don't use.
 let _sensor = null
 const getSensor = () => {
-  if (!_sensor) {
-    _sensor = isV1 ? hmSensor.createSensor(hmSensor.id.VIBRATE) : new Vibrator()
-  }
+  if (!_sensor && hasSensor()) _sensor = hmSensor.createSensor(hmSensor.id.VIBRATE)
   return _sensor
 }
 
-// Fire a scene by semantic key. v1 sets `.scene`; v2/v3 calls setMode() — the two
-// APIs use different values, so we pick the right map per platform.
+// Fire a scene by semantic key.
+//
+// Two ways to select it, because modern firmware hands back the NEW Vibrator under
+// the legacy hmSensor name: there `.scene` is inert (assigning it changes nothing —
+// device-checked on Balance, where scene 27's 1000ms buzz came out as the default
+// short one) and setMode() is what picks the pattern. The v1 scene table and the
+// v2/v3 VIBRATOR_SCENE_* constants describe the same nine patterns, so the same
+// number goes to whichever the sensor understands. Set both, then start.
 const play = (key) => {
   const sensor = getSensor()
   if (!sensor) return sensor
   sensor.stop() // clear any in-flight scene first (esp. the continuous ones)
-  if (isV1) sensor.scene = V1[key]
-  else sensor.setMode(V3[key])
+  sensor.scene = SCENES[key]
+  if (sensor.setMode) sensor.setMode(SCENES[key])
   sensor.start()
   return sensor
 }

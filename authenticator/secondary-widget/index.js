@@ -1,8 +1,7 @@
-import { push } from '@zos/router'
-import { height, width, button } from './../../pages/ui.js'
-import { keepScreenOn } from './../../zeppify/screen.js'
+import { height, width, button, push } from './../../pages/ui.js'
+import { keepScreenOn } from './../shared/screen.js'
 import { localStorage } from './../page/utils.js'
-import { Layout, refreshCodes, updateAccounts } from 'zosLoader:./index.[pf].layout.js'
+import { Layout, refreshCodes, updateAccounts } from './layout.js'
 import { createTimer } from './../shared/timer.js'
 
 let timer = null
@@ -36,7 +35,7 @@ SecondaryWidget({
     const totalPages = Math.ceil(this.accounts.length / pageSize)
 
     if (totalPages <= 1) {
-      push({ url: 'page/index.page' })
+      push({ url: 'page/index' })
     } else {
       page = (page + 1) % totalPages
       const start = page * pageSize

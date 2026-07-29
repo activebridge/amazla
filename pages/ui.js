@@ -1,5 +1,7 @@
-// NO @zos imports here. This file is shared by v1 (native hmUI/hmSetting globals)
-// and v2/v3 (globals seeded by zeppify/zos-globals.js, imported first in app.js).
+// NO @zos imports here. This file is shared by v1-config builds (native
+// hmUI/hmSetting globals — authenticator, amazwallet, which ship ONE build to
+// every device) and by v2/v3 builds (globals seeded by zeppify/zos-globals.js,
+// imported first in app.js — amazla_key, http_v3).
 // Any `import ... from '@zos/*'` compiles to a top-level __$$RQR$$__(...) that the
 // v1 runtime can't load and that breaks zeus's v1 context extraction
 // ("ReferenceError: '__$$RQR$$__' is not defined"). The @zos imports for v2/v3
@@ -11,6 +13,20 @@
 
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
+export const isRound = screenShape === 1
+
+// API-1.0 watches (GTR 3, GTR 3 Pro, GTS 3, GTS 4 Mini, Band 7) run a v1-config
+// build on the old runtime, where a TEXT widget with a custom TTF renders nothing
+// and ARC / VIEW_CONTAINER don't exist. Callers use this to pick the modern path
+// or the plain one. The set is closed — Zepp ships no new API-1.0 hardware — so a
+// deviceSource allowlist backs up the capability probe. Sources are the curated
+// list from the authenticator's old v1/app.json.
+const V1_SOURCES = [224, 225, 226, 227, 229, 230, 242, 246, 247, 252, 253, 254, 6095106]
+export const isV1 =
+  !(hmUI.widget && hmUI.widget.VIEW_CONTAINER !== undefined) ||
+  V1_SOURCES.indexOf(deviceSource) !== -1
+
+console.log('[ui] device: w=' + width + ' h=' + height + ' shape=' + screenShape + ' source=' + deviceSource + ' v1=' + isV1)
 
 // app-widget slot geometry (API_LEVEL 3.0). Guarded so runtimes without the
 // APIs fall back to full width. Used by authenticator/app-widget and

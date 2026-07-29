@@ -31,7 +31,7 @@ export class EventBus {
   }
 
   emit(type, ...args) {
-    for (let cb of this.map.get(type) ? this.map.get(type) : []) {
+    for (let cb of(this.map.get(type) ? this.map.get(type) : [])) {
       cb && cb(...args)
     }
   }

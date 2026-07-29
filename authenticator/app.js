@@ -1,21 +1,20 @@
-import "../zeppify/zos-globals"; // MUST be first: seeds hmUI/hmSetting globals that ui.js needs
+// One build for every device: v1 globals only (hmApp/hmUI/hmSetting/hmFS/hmBle),
+// no @zos imports anywhere the watch evaluates. A single `import ... from '@zos/*'`
+// compiles to a top-level __$$RQR$$__(...) the v1 runtime can't load.
 import "./shared/device-polyfill";
 import { MessageBuilder } from "./shared/message";
-import { getPackageInfo } from "@zos/app";
-import * as ble from "@zos/ble";
 
 App({
   globalData: {
     messageBuilder: null,
   },
+
   onCreate() {
-    const { appId } = getPackageInfo();
-    const messageBuilder = new MessageBuilder({
-      appId,
-      appDevicePort: 20,
-      appSidePort: 0,
-      ble,
-    });
+    if (!hmApp.packageInfo) {
+      throw new Error("Set appId, appId needs to be the same as the configuration in app.json");
+    }
+    const { appId } = hmApp.packageInfo();
+    const messageBuilder = new MessageBuilder({ appId });
     this.globalData.messageBuilder = messageBuilder;
     messageBuilder.connect();
   },

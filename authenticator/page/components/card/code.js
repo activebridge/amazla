@@ -1,14 +1,17 @@
-import { text } from './../../../../pages/ui.js'
+import { text, isV1 } from './../../../../pages/ui.js'
 import { GRADIENT_COLORS } from './../../../shared/colors.js'
+
+// API 1.0 TEXT has no custom-font support — the widget renders nothing at all —
+// so old watches (GTR 3, GTR 3 Pro, GTS 3, GTS 4 Mini, Band 7) fall back to the
+// system font. Every caller inherits this; a caller can still pass its own.
+const DEFAULT_FONT = isV1 ? null : 'fonts/Jua.ttf'
 
 const parse = (code) => {
   const parts = code.split(' ')
   return [parts[0] || '---', parts[1] || '---']
 }
 
-// font defaults to Jua; v1 passes font: null (custom TTF unsupported on API 1.0
-// — the TEXT widget renders nothing at all) to fall back to the system font.
-export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size, gap = 10, font = 'fonts/Jua.ttf' }) => {
+export const Code = (code = '--- ---', colorIndex, { centerX, y, w, h, text_size, gap = 10, font = DEFAULT_FONT }) => {
   const c = font ? { font, centered: false } : { centered: false }
   const halfW = w / 2 | 0
   const [p1, p2] = parse(code)

@@ -1,4 +1,4 @@
-import { MessageBuilder } from "../shared/message-side";
+import { MessageBuilder } from "../shared/message";
 
 const messageBuilder = new MessageBuilder();
 

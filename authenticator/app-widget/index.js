@@ -1,8 +1,8 @@
-import { push } from '@zos/router'
-import { text, button, img, rect, width, getAppWidgetSize, setAppWidgetSize } from './../../pages/ui.js'
+import { text, button, img, rect, width, push, getAppWidgetSize, setAppWidgetSize } from './../../pages/ui.js'
 import { localStorage } from './../page/utils.js'
 import { getCode, getTimeRemaining } from './../page/libs/totp.js'
 import { Card } from './../page/components/card.js'
+import { DIMS as APP_DIMS } from './../page/components/list.js'
 import { createTimer } from './../shared/timer.js'
 
 // Widget geometry isn't available at module-eval under @zos (getAppWidgetSize()
@@ -29,39 +29,33 @@ AppWidget({
   },
 
   build() {
-    // Card width = slot width (OS-reported, else device width) minus a 20px
-    // gutter each side; the card is then centered. (getAppWidgetSize() reports
-    // the full slot width here, so we always inset it ourselves.)
-    // getAppWidgetSize() gives the real slot on hardware (e.g. GTR4:
-    // {w:388,h:114,margin:39}) — w is the content width, margin the inset.
-    // Use them directly; fall back only when absent.
+    // getAppWidgetSize() reports the real slot on hardware (e.g. GTR4:
+    // {w:388,h:233,margin:39}) — w is the content width, margin the inset. The card
+    // fills that width edge to edge, like amazwallet's widget does, so the two sit
+    // flush when they're stacked on the same watchface.
     const sz = getAppWidgetSize() || {}
     CARD_W = sz.w || (width - 40)
-    margin = sz.margin || ((width - CARD_W) / 2 | 0)
-    CARD_H = sz.h || (CARD_W * 0.33 | 0)
+    margin = sz.margin != null ? sz.margin : ((width - CARD_W) / 2 | 0)
+
+    // Height comes from the in-app card (page/components/list.js DIMS) instead of
+    // the slot: the OS offers a half-screen band (T-Rex 3 240px, GTR 4 233) that is
+    // far taller than a card, so we ask for a card-tall slot and leave the rest to
+    // the system chrome. Taking the app's height also gives the app's type sizes and
+    // box positions for free, so the widget reads as one of the list's cards.
+    // NOT clamped to sz.h: it's already shorter everywhere except Balance 2, which
+    // reports a short 132 slot (not the usual height/2) against a 140 card — and
+    // DEVICES.md flags that device's reported slot as not matching hardware.
+    CARD_H = APP_DIMS.card.h
     setAppWidgetSize({ h: CARD_H })
 
-    // Content sized off CARD_H to match the in-app card (list.js), but capped to
-    // the width so an unstable/tall slot (GTR4 reported sz.h up to 233) can't blow
-    // the font up to 111px and make the chevrons overlap the digits.
-    const codeFont = Math.min(CARD_H * 0.48, CARD_W * 0.18) | 0
-    const titleFont = Math.min(CARD_H * 0.28, CARD_W * 0.12) | 0
-
-    // Title stays where it is (top). Center the digits in the space BELOW it, so
-    // on a tall slot they sit mid-area instead of pinned high. On flat cards this
-    // resolves to the same position as before.
-    // Top padding = the title's 10px horizontal inset (pill draws at y+2), so the
-    // gap above the pill matches the gap on its sides.
-    const nameY = 8
-    const nameH = (CARD_H * 0.35 | 0) + 10
-    const digitH = codeFont + 20
-    const digitY = ((nameY + nameH + CARD_H) / 2 - digitH / 2) | 0
-
+    // Title and digit boxes are the app card's, so they land in the same places;
+    // only the horizontal extent follows the wider widget card.
     DIMS = {
-      card: { x: margin, w: CARD_W, h: CARD_H, radius: sz.radius || (CARD_H * 0.2 | 0) },
-      name: { y: nameY, h: nameH, text_size: titleFont, radius: sz.radius },
-      digit: { y: digitY, w: CARD_W, h: digitH, text_size: codeFont },
+      card: { x: margin, w: CARD_W, h: CARD_H, radius: sz.radius || APP_DIMS.card.radius },
+      name: { ...APP_DIMS.name },
+      digit: { ...APP_DIMS.digit, w: CARD_W },
     }
+    const codeFont = DIMS.digit.text_size
 
     if (!accounts.length) {
       // No card: request a minimal slot so the system widget chrome below us
@@ -117,7 +111,7 @@ AppWidget({
   },
 
   openApp() {
-    push({ url: 'page/index.page' })
+    push({ url: 'page/index' })
   },
 
   onResume() {
