@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Amazla Key - Control Tesla from Amazfit Watch</title>
-  <meta name="description" content="Amazla Key lets you control your Tesla from an Amazfit watch: lock and unlock, climate, frunk, trunk, charge port, and vehicle status. No phone required for daily actions." />
+  <title>Amazla — Control Tesla from Your Amazfit Watch</title>
+  <meta name="description" content="Two Amazfit Tesla apps: Amazla (free, cloud, full features) and Amazla Key ($10, BLE, no phone for daily use). Lock, climate, frunk, trunk, and more." />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
-  <meta name="author" content="Amazla Key" />
+  <meta name="author" content="Amazla" />
   <link rel="canonical" href="https://amazla.app/" />
   <link rel="alternate" hreflang="en" href="https://amazla.app/" />
   <link rel="alternate" hreflang="x-default" href="https://amazla.app/" />
   <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Amazla Key" />
-  <meta property="og:title" content="Amazla Key - Control Tesla from Amazfit Watch" />
-  <meta property="og:description" content="Control lock, climate, frunk, trunk, charge port, and vehicle status from your Amazfit watch with Amazla Key." />
+  <meta property="og:site_name" content="Amazla" />
+  <meta property="og:title" content="Amazla — Control Tesla from Your Amazfit Watch" />
+  <meta property="og:description" content="Amazla (free, cloud) and Amazla Key ($10, BLE). Choose the Tesla watch app that fits how you drive." />
   <meta property="og:url" content="https://amazla.app/" />
   <meta property="og:image" content="https://amazla.app/images/logo-amazla-key.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Amazla Key - Control Tesla from Amazfit Watch" />
-  <meta name="twitter:description" content="Control your Tesla from your Amazfit watch. Fast commands, no phone for daily use." />
+  <meta name="twitter:title" content="Amazla — Tesla Control for Amazfit" />
+  <meta name="twitter:description" content="Free cloud app or $10 BLE key — control your Tesla from your Amazfit watch." />
   <meta name="twitter:image" content="https://amazla.app/images/logo-amazla-key.png" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="shortcut icon" href="/favicon.png" />
@@ -28,23 +28,33 @@
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      "name": "Amazla Key",
-      "applicationCategory": "UtilitiesApplication",
-      "operatingSystem": "Zepp OS",
-      "description": "Amazla Key helps Tesla owners control their vehicle from an Amazfit watch using Bluetooth and secure commands.",
-      "url": "https://amazla.app/",
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD"
-      },
-      "featureList": [
-        "Lock and unlock",
-        "Open frunk and trunk",
-        "Climate control",
-        "Charge port control",
-        "Vehicle status on watch"
+      "@graph": [
+        {
+          "@type": "SoftwareApplication",
+          "name": "Amazla",
+          "applicationCategory": "UtilitiesApplication",
+          "operatingSystem": "Zepp OS 1.x",
+          "description": "Free Tesla control for Amazfit watches via Tesla Fleet API. Climate, defrost, charge port, remote commands anywhere with internet.",
+          "url": "https://amazla.app/#amazla",
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD"
+          }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "name": "Amazla Key",
+          "applicationCategory": "UtilitiesApplication",
+          "operatingSystem": "Zepp OS 3.0+",
+          "description": "Premium BLE Tesla key for Amazfit watches. Lock, unlock, frunk, and trunk over Bluetooth with no phone for daily use.",
+          "url": "https://amazla.app/#amazla-key",
+          "offers": {
+            "@type": "Offer",
+            "price": "10",
+            "priceCurrency": "USD"
+          }
+        }
       ]
     }
   </script>
@@ -76,22 +86,104 @@
         transform: rotate(-90deg);
       }
     }
+    .compare-table th,
+    .compare-table td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .compare-table th {
+      font-weight: 600;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    .compare-table td {
+      color: #64748b;
+      font-size: 0.875rem;
+    }
+    .compare-table tr:last-child td {
+      border-bottom: none;
+    }
+    .compare-table th:nth-child(4),
+    .compare-table td:nth-child(4) {
+      background: #f1f5f9;
+      color: #94a3b8;
+    }
+    .compare-table th:nth-child(4) {
+      color: #64748b;
+    }
+    .device-tab-active {
+      background: white;
+      color: #0f172a;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .device-tabs {
+      display: inline-flex;
+      padding: 0.375rem;
+      gap: 0.25rem;
+      border-radius: 9999px;
+      background: rgba(255, 255, 255, 0.1);
+    }
+    .device-tab {
+      padding: 0.625rem 1.5rem;
+    }
+    .product-tabs {
+      display: inline-flex;
+      padding: 0.375rem;
+      gap: 0.25rem;
+      border-radius: 9999px;
+      background: #f1f5f9;
+    }
+    .product-tab {
+      padding: 0.625rem 1.5rem;
+    }
+    .product-tab-active {
+      background: white;
+      color: #0f172a;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .product-tabs-wrap {
+      margin-top: 2.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .download-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+    .hero-product-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem 1rem;
+    }
+    @media (max-width: 640px) {
+      .download-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .device-panel[hidden],
+    .product-panel[hidden] {
+      display: none;
+    }
+    footer {
+      scroll-snap-align: end;
+      scroll-snap-stop: always;
+    }
   </style>
-
 </head>
 <body class="bg-amazla-background text-amazla-dark font-sans antialiased">
   <header class="fixed top-0 left-0 right-0 z-50 bg-amazla-background/90 backdrop-blur-sm border-b border-slate-200/50">
     <nav class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <a href="#" class="flex items-center gap-2" aria-label="Amazla Key home">
+      <a href="#" class="flex items-center gap-2" aria-label="Amazla home">
         <img src="/images/logo-amazla-key.png" alt="" class="h-8 w-8 rounded-full object-cover" width="32" height="32" />
-        <span class="font-bold text-amazla-dark text-lg tracking-tight">Amazla <span class="text-amazla-primary">Key</span></span>
+        <span class="font-bold text-amazla-dark text-lg tracking-tight">Amazla</span>
       </a>
-      <div class="flex items-center gap-6">
-        <a href="#features" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Features</a>
-        <a href="#coming-soon" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Coming Soon</a>
+      <div class="flex items-center gap-4 sm:gap-6">
+        <a href="#products" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Products</a>
+        <a href="#compare" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Compare</a>
         <a href="#devices" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Devices</a>
         <a href="/how-it-works.html" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">How it works</a>
-        <a href="#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get Amazla Key</a>
+        <a href="#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get started</a>
       </div>
     </nav>
   </header>
@@ -104,7 +196,6 @@
         <div class="absolute bottom-1/4 right-1/4 w-80 h-80 bg-amazla-accent/5 rounded-full blur-3xl" data-parallax="0.12"></div>
         <div class="absolute -top-24 right-10 w-64 h-64 border border-amazla-primary/20 rounded-3xl rotate-6" data-parallax="0.05"></div>
         <div class="absolute -bottom-28 -left-10 w-72 h-72 border border-amazla-accent/15 rounded-3xl -rotate-6" data-parallax="0.04"></div>
-        <div class="absolute top-2/3 left-1/2 w-48 h-48 bg-amazla-accent/10 rounded-full blur-2xl" data-parallax="0.06"></div>
       </div>
       <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28 flex flex-col lg:flex-row items-center lg:items-start gap-0 md:gap-12 lg:gap-16">
         <div class="flex-1 min-w-0 lg:flex-[2] order-last lg:order-none text-center lg:text-left" data-animate="left">
@@ -113,35 +204,42 @@
             <span class="text-amazla-primary">from your wrist</span>
           </h1>
           <div class="hero-reveal-after">
-            <p class="mt-6 text-lg sm:text-xl text-amazla-secondary max-w-xl mx-auto lg:mx-0">
-              No phone required. Unlock, climate, frunk, trunk, and charge port—right from your Amazfit watch.
-            </p>
+            <div class="hero-product-split mt-6 max-w-xl mx-auto lg:mx-0 text-left">
+              <div class="px-1 py-2">
+                <p class="text-base sm:text-lg font-semibold text-amazla-dark">Amazla</p>
+                <p class="mt-1 text-sm sm:text-base text-amazla-secondary">Full cloud control from anywhere</p>
+              </div>
+              <div class="px-1 py-2">
+                <p class="text-base sm:text-lg font-semibold text-amazla-dark">Amazla Key</p>
+                <p class="mt-1 text-sm sm:text-base text-amazla-secondary">Direct BLE key for near-car daily access</p>
+              </div>
+            </div>
             <div class="mt-10 flex flex-col sm:flex-row flex-wrap gap-4 justify-center lg:justify-start">
-              <a href="https://apps.apple.com/ua/app/zepp/id1127269366?l=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
-                Install Zepp on iPhone
+              <a href="#amazla" class="inline-flex items-center justify-center font-semibold text-white bg-amazla-accent hover:bg-sky-600 rounded-xl px-8 py-4 transition-all duration-200 shadow-lg shadow-sky-500/20">
+                Amazla — Free
               </a>
-              <a href="https://play.google.com/store/apps/details?id=com.huami.watch.hmwatchmanager&hl=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
-                Install Zepp on Android
+              <a href="#amazla-key" class="inline-flex items-center justify-center font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-xl px-8 py-4 transition-all duration-200 shadow-lg shadow-red-500/25">
+                Amazla Key
               </a>
-              <a href="#features" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
-                See features
+              <a href="#compare" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
+                Compare apps
               </a>
             </div>
             <p class="mt-4 text-sm text-amazla-secondary max-w-xl mx-auto lg:mx-0">
-              Install Zepp first, then get Amazla Key inside Zepp.
+              Install Zepp on your phone first, then find the app inside Zepp.
             </p>
           </div>
         </div>
         <div class="relative flex-1 min-w-0 lg:flex-[1] order-first lg:order-none flex flex-row items-end justify-center gap-1 min-h-0 -mt-12 lg:mt-0 lg:flex-col lg:items-end lg:justify-start w-full gap-6 lg:gap-8" data-animate="right">
           <div class="flex-shrink-0 order-2 lg:order-none w-1/2 justify-start flex items-center lg:justify-end max-lg:h-40 max-lg:max-h-[180px] lg:w-full h-[42vh] min-h-[220px] lg:h-[48vh] lg:min-h-[260px] lg:ml-0" data-parallax="0.03">
-            <svg id="hero-logo-key" class="h-full w-auto object-contain block" viewBox="-200 0 600 521.8436873747495" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Amazla Key app on Amazfit watch"><g class="logo-key-slide"><g id="svgg"><path id="path0" class="logo-key-rotate" d="M152.295 12.967 C 146.190 15.477,143.868 19.310,141.815 30.261 C 140.961 34.823,140.578 36.847,140.012 39.800 C 139.759 41.120,139.368 43.190,139.144 44.400 C 138.604 47.307,138.175 49.255,137.383 52.400 C 137.023 53.830,136.589 55.630,136.420 56.400 C 136.250 57.170,135.837 58.520,135.503 59.400 C 135.169 60.280,134.662 61.810,134.376 62.800 C 134.090 63.790,133.738 64.780,133.593 65.000 C 133.449 65.220,132.904 66.480,132.382 67.800 C 131.326 70.470,129.188 74.697,127.265 77.918 C 126.569 79.082,126.000 80.125,126.000 80.234 C 126.000 80.776,119.908 88.233,116.861 91.421 C 112.645 95.833,110.343 98.363,108.076 101.077 C 106.488 102.978,106.244 103.124,104.993 102.921 C 104.061 102.770,103.147 102.955,102.079 103.512 C 101.063 104.042,100.328 104.200,99.961 103.968 C 96.890 102.023,94.207 104.219,89.993 112.130 C 88.214 115.468,86.491 118.650,86.165 119.200 C 82.991 124.545,82.861 128.237,85.780 130.150 C 86.617 130.698,86.800 131.133,86.800 132.574 C 86.800 134.033,87.002 134.499,88.000 135.339 C 89.467 136.573,89.540 137.814,88.366 141.547 C 86.971 145.988,86.800 146.627,86.795 147.428 C 86.772 150.597,85.423 152.895,83.190 153.568 C 81.301 154.138,80.871 154.463,80.060 155.932 C 79.381 157.163,78.797 157.701,77.956 157.869 C 74.085 158.643,73.000 161.998,73.000 173.200 C 73.000 184.447,73.442 185.825,77.500 187.218 C 78.859 187.684,79.508 188.207,80.150 189.353 C 80.815 190.540,81.435 191.021,82.999 191.561 C 85.263 192.343,85.695 192.978,86.431 196.600 C 86.896 198.886,87.602 201.737,88.462 204.800 C 89.356 207.980,89.354 207.998,88.051 209.272 C 86.983 210.316,86.800 210.784,86.800 212.473 C 86.800 214.161,86.631 214.594,85.652 215.418 C 82.693 217.907,82.926 220.504,86.788 228.118 C 93.621 241.592,95.322 243.310,100.112 241.578 C 101.357 241.127,101.627 241.164,102.712 241.938 C 103.390 242.420,104.531 242.800,105.304 242.800 C 106.342 242.800,106.924 243.090,107.655 243.972 C 110.744 247.701,115.223 252.468,120.271 257.400 C 123.423 260.480,126.002 263.164,126.001 263.364 C 126.001 263.564,126.682 264.644,127.516 265.764 C 130.442 269.693,134.313 276.752,135.873 281.000 C 136.196 281.880,136.602 282.873,136.776 283.208 C 137.461 284.527,139.860 292.854,141.181 298.500 C 144.102 310.983,144.864 312.882,148.166 315.899 C 152.972 320.292,153.913 320.446,175.373 320.345 C 198.621 320.236,195.557 320.237,220.800 320.342 C 256.226 320.490,255.985 320.618,260.800 299.000 C 262.563 291.084,263.708 287.179,265.606 282.600 C 265.789 282.160,266.263 280.990,266.661 280.000 C 267.956 276.773,272.193 268.648,273.961 266.000 C 274.328 265.450,274.892 264.473,275.214 263.828 C 275.725 262.806,277.780 260.484,283.200 254.804 C 283.970 253.997,286.130 251.564,288.000 249.396 C 289.870 247.229,292.030 244.762,292.800 243.914 L 294.200 242.373 296.361 242.788 C 298.399 243.179,298.600 243.142,299.915 242.139 C 301.063 241.263,301.440 241.157,302.049 241.538 C 302.941 242.095,305.574 242.142,306.931 241.626 C 308.014 241.215,310.251 237.693,314.540 229.649 C 319.594 220.172,319.860 218.138,316.440 215.097 C 315.449 214.215,315.200 213.677,315.200 212.413 C 315.200 211.076,314.947 210.598,313.562 209.316 C 311.870 207.751,311.589 205.576,312.779 203.265 C 312.968 202.899,313.310 201.880,313.539 201.000 C 314.779 196.245,315.076 195.439,315.996 194.345 C 316.827 193.357,317.611 193.015,320.533 192.367 C 329.308 190.420,329.577 189.810,329.590 171.779 L 329.600 159.357 328.559 157.267 C 326.977 154.092,325.668 153.323,319.965 152.218 C 318.449 151.924,317.002 150.639,315.835 148.550 L 314.805 146.708 316.011 144.921 C 320.199 138.716,319.875 132.534,315.125 128.002 C 312.974 125.951,313.026 125.573,315.601 124.575 C 320.152 122.812,320.169 118.967,315.656 112.450 C 315.256 111.873,313.978 109.600,312.816 107.400 C 310.292 102.623,308.259 99.830,306.522 98.754 L 305.243 97.962 303.522 98.839 C 302.575 99.321,301.243 100.139,300.562 100.658 C 298.909 101.916,298.989 101.970,298.008 98.933 C 295.964 92.606,292.637 90.023,286.384 89.907 C 281.411 89.815,277.454 85.322,270.969 72.400 C 268.852 68.183,268.807 68.077,267.583 64.400 C 267.107 62.970,266.568 61.440,266.386 61.000 C 265.535 58.947,263.096 48.423,261.982 42.000 C 261.772 40.790,261.429 38.900,261.218 37.800 C 261.007 36.700,260.631 34.720,260.381 33.400 C 260.131 32.080,259.779 30.280,259.600 29.400 C 259.421 28.520,259.083 26.740,258.849 25.445 C 257.971 20.580,255.165 16.155,251.646 14.085 C 247.959 11.916,250.319 12.012,200.800 12.016 L 154.600 12.019 152.295 12.967 M214.400 53.175 C 215.610 53.417,217.590 53.805,218.800 54.037 C 223.267 54.895,232.478 57.391,233.400 57.994 C 233.620 58.138,234.610 58.501,235.600 58.800 C 236.590 59.099,237.580 59.462,237.800 59.607 C 238.020 59.751,239.280 60.296,240.600 60.818 C 246.071 62.982,254.614 67.990,259.594 71.954 C 261.673 73.609,259.923 73.186,256.620 71.234 C 254.725 70.116,253.107 69.200,253.023 69.200 C 252.940 69.200,251.550 68.584,249.936 67.831 C 244.239 65.173,237.796 62.928,228.739 60.442 C 223.472 58.997,211.505 57.200,207.150 57.200 L 204.879 57.200 204.620 61.900 C 204.285 68.007,204.212 68.283,202.689 69.211 C 198.400 71.826,195.650 68.648,195.638 61.059 C 195.631 56.632,196.232 56.965,189.315 57.553 C 174.605 58.803,161.098 62.657,146.989 69.631 C 138.270 73.941,137.692 73.834,144.612 69.192 C 156.226 61.400,168.898 56.246,181.900 54.027 C 183.275 53.792,185.435 53.420,186.700 53.199 C 187.965 52.978,189.720 52.726,190.600 52.638 C 193.726 52.324,212.236 52.742,214.400 53.175 M210.779 88.434 C 212.661 88.673,214.830 89.013,215.600 89.189 C 225.348 91.416,226.834 91.846,232.200 93.995 C 234.651 94.976,242.039 98.692,243.472 99.665 C 244.392 100.289,245.249 100.800,245.376 100.800 C 245.595 100.800,247.806 102.304,251.400 104.898 C 286.782 130.436,295.730 183.950,270.813 221.000 C 253.163 247.246,219.761 262.862,190.833 258.393 C 184.371 257.395,182.377 257.022,179.000 256.183 C 177.020 255.690,174.320 254.892,173.000 254.409 C 171.680 253.925,169.661 253.186,168.514 252.766 C 166.355 251.976,162.400 250.256,161.000 249.499 C 156.788 247.220,155.322 246.347,152.200 244.263 C 147.014 240.801,141.312 236.091,138.488 232.935 C 137.141 231.431,135.297 229.390,134.390 228.400 C 122.221 215.124,114.323 193.773,114.267 174.000 C 114.166 138.333,133.974 108.572,167.600 93.872 C 172.186 91.867,180.916 89.584,188.400 88.432 C 191.652 87.932,206.833 87.933,210.779 88.434 M121.075 98.361 C 123.781 100.337,123.575 105.565,120.734 107.034 C 115.917 109.525,110.901 104.545,113.650 100.000 C 115.302 97.269,118.587 96.543,121.075 98.361 M286.710 98.529 C 288.828 100.459,289.175 102.172,287.959 104.685 C 285.058 110.677,276.027 106.819,278.591 100.682 C 279.932 97.474,284.287 96.319,286.710 98.529 M309.100 134.250 C 312.192 137.777,309.783 142.797,305.000 142.797 C 302.184 142.797,299.600 140.385,299.600 137.757 C 299.600 132.924,305.899 130.599,309.100 134.250 M121.414 239.213 C 123.497 241.170,123.572 245.111,121.563 247.036 C 118.776 249.706,114.277 248.447,113.229 244.704 C 111.862 239.820,117.811 235.828,121.414 239.213 M285.087 238.668 C 289.961 240.981,288.217 248.400,282.800 248.400 C 277.773 248.400,275.858 241.382,280.168 238.754 C 281.692 237.825,283.252 237.797,285.087 238.668 M142.800 274.006 C 148.433 277.813,165.571 284.509,174.000 286.196 C 174.770 286.350,177.020 286.818,179.000 287.236 C 182.962 288.072,195.052 289.339,195.634 288.979 C 195.835 288.855,196.000 286.774,196.000 284.357 C 196.000 278.446,197.166 276.381,200.486 276.413 C 203.635 276.443,204.794 278.558,204.797 284.276 C 204.799 286.857,204.971 288.859,205.204 289.003 C 205.902 289.434,216.757 288.258,222.400 287.140 C 234.171 284.808,241.144 282.392,253.300 276.431 C 256.765 274.731,259.600 273.408,259.600 273.489 C 259.600 276.461,240.029 286.366,225.800 290.594 C 204.011 297.068,178.219 294.192,155.000 282.698 C 150.157 280.300,140.777 274.225,140.489 273.300 C 140.302 272.699,141.331 273.013,142.800 274.006 " stroke="none" fill="#243043" fill-rule="evenodd"></path><g id="hero-logo-mark" class="logo-key-rotate"><g class="logo-key-counter"><defs><clipPath id="hero-logo-clip"><circle cx="201.2" cy="172.7" r="87.5"/></clipPath></defs><image href="/images/logo-amazla-key.png" xlink:href="/images/logo-amazla-key.png" x="113.7" y="85.2" width="175" height="175" preserveAspectRatio="xMidYMid meet" clip-path="url(#hero-logo-clip)" /></g></g><path id="path1-blade" class="logo-key-rotate" d="M163.842 321.015 C 163.153 321.704,163.015 325.485,163.535 329.386 C 163.888 332.032,165.474 333.194,168.759 333.213 C 172.716 333.235,172.400 331.260,172.400 355.980 L 172.400 377.672 175.124 380.336 C 176.623 381.801,178.779 383.810,179.916 384.800 C 182.173 386.766,182.137 386.631,182.036 392.737 L 182.000 394.873 178.180 398.522 C 171.499 404.903,171.491 404.989,177.000 410.362 L 181.200 414.459 181.200 418.932 L 181.200 423.405 177.960 426.803 C 172.436 432.595,172.400 432.664,172.400 437.282 L 172.400 441.244 177.600 446.291 L 182.800 451.338 182.800 453.678 L 182.800 456.019 179.500 459.506 C 177.685 461.424,175.866 463.243,175.458 463.549 C 175.050 463.854,174.195 464.926,173.558 465.930 L 172.400 467.757 172.400 476.699 L 172.400 485.642 175.900 489.086 C 185.976 499.001,192.071 504.800,192.415 504.800 C 192.661 504.800,192.800 471.422,192.800 412.628 L 192.800 320.457 178.642 320.415 C 166.145 320.379,164.408 320.449,163.842 321.015 M199.600 415.001 C 199.600 508.091,199.612 509.578,200.374 509.986 C 201.674 510.682,202.107 510.479,204.800 507.911 C 213.248 499.854,214.669 498.472,215.777 497.234 L 217.000 495.869 217.200 486.634 L 217.400 477.400 227.481 477.200 C 238.974 476.972,238.489 477.135,238.321 473.559 L 238.200 471.000 227.800 470.800 L 217.400 470.600 217.182 466.800 C 216.920 462.235,216.893 462.171,214.322 459.972 C 210.172 456.423,209.955 455.056,213.146 452.577 C 216.459 450.005,216.520 449.805,216.714 440.994 C 216.928 431.279,216.762 430.608,213.341 427.332 L 210.764 424.863 210.882 421.932 L 211.000 419.000 219.100 418.892 L 227.200 418.783 227.200 409.565 C 227.200 399.174,227.282 398.800,229.565 398.800 C 232.075 398.800,232.184 399.154,232.327 407.760 L 232.454 415.400 233.884 416.875 C 235.466 418.507,237.455 419.519,237.979 418.958 C 238.418 418.487,238.763 394.794,238.347 393.669 C 238.066 392.910,222.108 392.181,221.518 392.900 C 221.473 392.955,221.338 397.410,221.218 402.800 L 221.000 412.600 219.000 412.600 L 217.000 412.600 216.800 405.200 C 216.578 396.994,216.593 397.043,213.401 394.000 C 211.408 392.101,210.800 390.803,210.800 388.448 C 210.800 385.066,210.209 385.200,225.179 385.200 L 238.300 385.200 238.550 383.950 C 238.688 383.263,238.800 378.508,238.800 373.384 L 238.800 364.068 236.933 362.425 C 235.084 360.797,233.424 360.043,232.881 360.585 C 232.727 360.739,232.546 364.989,232.479 370.030 C 232.359 379.131,232.352 379.197,231.466 379.419 C 229.569 379.895,212.060 379.422,211.519 378.880 C 211.045 378.405,210.930 371.519,211.167 357.887 C 211.200 356.001,212.215 354.442,214.136 353.328 C 216.427 352.000,216.800 350.380,216.800 341.758 C 216.800 332.619,216.879 332.383,219.697 333.113 L 221.000 333.450 221.200 343.825 L 221.400 354.200 229.798 354.200 L 238.196 354.200 238.549 352.529 C 238.743 351.610,238.785 350.395,238.643 349.829 L 238.385 348.800 233.669 348.800 C 227.148 348.800,227.557 349.361,227.690 340.598 L 227.800 333.400 232.441 333.200 C 238.656 332.932,238.400 333.224,238.400 326.394 L 238.400 320.887 237.401 320.636 C 236.852 320.498,228.122 320.396,218.001 320.408 L 199.600 320.431 199.600 415.001 M221.467 426.667 C 221.128 427.005,221.124 450.676,221.462 451.939 C 221.988 453.903,226.066 451.868,226.784 449.283 C 227.309 447.393,227.328 433.040,226.808 431.227 C 226.134 428.879,222.423 425.710,221.467 426.667 M232.643 427.033 C 232.093 428.466,232.379 451.418,232.956 452.208 C 233.646 453.151,236.272 451.572,237.553 449.444 C 239.321 446.507,239.091 431.252,237.248 429.252 C 235.044 426.861,233.073 425.911,232.643 427.033 " stroke="none" fill="#c82a29" fill-rule="evenodd"></path></g></g>            </svg>
+            <svg id="hero-logo-key" class="h-full w-auto object-contain block" viewBox="-200 0 600 521.8436873747495" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Amazla app on Amazfit watch"><g class="logo-key-slide"><g id="svgg"><path id="path0" class="logo-key-rotate" d="M152.295 12.967 C 146.190 15.477,143.868 19.310,141.815 30.261 C 140.961 34.823,140.578 36.847,140.012 39.800 C 139.759 41.120,139.368 43.190,139.144 44.400 C 138.604 47.307,138.175 49.255,137.383 52.400 C 137.023 53.830,136.589 55.630,136.420 56.400 C 136.250 57.170,135.837 58.520,135.503 59.400 C 135.169 60.280,134.662 61.810,134.376 62.800 C 134.090 63.790,133.738 64.780,133.593 65.000 C 133.449 65.220,132.904 66.480,132.382 67.800 C 131.326 70.470,129.188 74.697,127.265 77.918 C 126.569 79.082,126.000 80.125,126.000 80.234 C 126.000 80.776,119.908 88.233,116.861 91.421 C 112.645 95.833,110.343 98.363,108.076 101.077 C 106.488 102.978,106.244 103.124,104.993 102.921 C 104.061 102.770,103.147 102.955,102.079 103.512 C 101.063 104.042,100.328 104.200,99.961 103.968 C 96.890 102.023,94.207 104.219,89.993 112.130 C 88.214 115.468,86.491 118.650,86.165 119.200 C 82.991 124.545,82.861 128.237,85.780 130.150 C 86.617 130.698,86.800 131.133,86.800 132.574 C 86.800 134.033,87.002 134.499,88.000 135.339 C 89.467 136.573,89.540 137.814,88.366 141.547 C 86.971 145.988,86.800 146.627,86.795 147.428 C 86.772 150.597,85.423 152.895,83.190 153.568 C 81.301 154.138,80.871 154.463,80.060 155.932 C 79.381 157.163,78.797 157.701,77.956 157.869 C 74.085 158.643,73.000 161.998,73.000 173.200 C 73.000 184.447,73.442 185.825,77.500 187.218 C 78.859 187.684,79.508 188.207,80.150 189.353 C 80.815 190.540,81.435 191.021,82.999 191.561 C 85.263 192.343,85.695 192.978,86.431 196.600 C 86.896 198.886,87.602 201.737,88.462 204.800 C 89.356 207.980,89.354 207.998,88.051 209.272 C 86.983 210.316,86.800 210.784,86.800 212.473 C 86.800 214.161,86.631 214.594,85.652 215.418 C 82.693 217.907,82.926 220.504,86.788 228.118 C 93.621 241.592,95.322 243.310,100.112 241.578 C 101.357 241.127,101.627 241.164,102.712 241.938 C 103.390 242.420,104.531 242.800,105.304 242.800 C 106.342 242.800,106.924 243.090,107.655 243.972 C 110.744 247.701,115.223 252.468,120.271 257.400 C 123.423 260.480,126.002 263.164,126.001 263.364 C 126.001 263.564,126.682 264.644,127.516 265.764 C 130.442 269.693,134.313 276.752,135.873 281.000 C 136.196 281.880,136.602 282.873,136.776 283.208 C 137.461 284.527,139.860 292.854,141.181 298.500 C 144.102 310.983,144.864 312.882,148.166 315.899 C 152.972 320.292,153.913 320.446,175.373 320.345 C 198.621 320.236,195.557 320.237,220.800 320.342 C 256.226 320.490,255.985 320.618,260.800 299.000 C 262.563 291.084,263.708 287.179,265.606 282.600 C 265.789 282.160,266.263 280.990,266.661 280.000 C 267.956 276.773,272.193 268.648,273.961 266.000 C 274.328 265.450,274.892 264.473,275.214 263.828 C 275.725 262.806,277.780 260.484,283.200 254.804 C 283.970 253.997,286.130 251.564,288.000 249.396 C 289.870 247.229,292.030 244.762,292.800 243.914 L 294.200 242.373 296.361 242.788 C 298.399 243.179,298.600 243.142,299.915 242.139 C 301.063 241.263,301.440 241.157,302.049 241.538 C 302.941 242.095,305.574 242.142,306.931 241.626 C 308.014 241.215,310.251 237.693,314.540 229.649 C 319.594 220.172,319.860 218.138,316.440 215.097 C 315.449 214.215,315.200 213.677,315.200 212.413 C 315.200 211.076,314.947 210.598,313.562 209.316 C 311.870 207.751,311.589 205.576,312.779 203.265 C 312.968 202.899,313.310 201.880,313.539 201.000 C 314.779 196.245,315.076 195.439,315.996 194.345 C 316.827 193.357,317.611 193.015,320.533 192.367 C 329.308 190.420,329.577 189.810,329.590 171.779 L 329.600 159.357 328.559 157.267 C 326.977 154.092,325.668 153.323,319.965 152.218 C 318.449 151.924,317.002 150.639,315.835 148.550 L 314.805 146.708 316.011 144.921 C 320.199 138.716,319.875 132.534,315.125 128.002 C 312.974 125.951,313.026 125.573,315.601 124.575 C 320.152 122.812,320.169 118.967,315.656 112.450 C 315.256 111.873,313.978 109.600,312.816 107.400 C 310.292 102.623,308.259 99.830,306.522 98.754 L 305.243 97.962 303.522 98.839 C 302.575 99.321,301.243 100.139,300.562 100.658 C 298.909 101.916,298.989 101.970,298.008 98.933 C 295.964 92.606,292.637 90.023,286.384 89.907 C 281.411 89.815,277.454 85.322,270.969 72.400 C 268.852 68.183,268.807 68.077,267.583 64.400 C 267.107 62.970,266.568 61.440,266.386 61.000 C 265.535 58.947,263.096 48.423,261.982 42.000 C 261.772 40.790,261.429 38.900,261.218 37.800 C 261.007 36.700,260.631 34.720,260.381 33.400 C 260.131 32.080,259.779 30.280,259.600 29.400 C 259.421 28.520,259.083 26.740,258.849 25.445 C 257.971 20.580,255.165 16.155,251.646 14.085 C 247.959 11.916,250.319 12.012,200.800 12.016 L 154.600 12.019 152.295 12.967 M214.400 53.175 C 215.610 53.417,217.590 53.805,218.800 54.037 C 223.267 54.895,232.478 57.391,233.400 57.994 C 233.620 58.138,234.610 58.501,235.600 58.800 C 236.590 59.099,237.580 59.462,237.800 59.607 C 238.020 59.751,239.280 60.296,240.600 60.818 C 246.071 62.982,254.614 67.990,259.594 71.954 C 261.673 73.609,259.923 73.186,256.620 71.234 C 254.725 70.116,253.107 69.200,253.023 69.200 C 252.940 69.200,251.550 68.584,249.936 67.831 C 244.239 65.173,237.796 62.928,228.739 60.442 C 223.472 58.997,211.505 57.200,207.150 57.200 L 204.879 57.200 204.620 61.900 C 204.285 68.007,204.212 68.283,202.689 69.211 C 198.400 71.826,195.650 68.648,195.638 61.059 C 195.631 56.632,196.232 56.965,189.315 57.553 C 174.605 58.803,161.098 62.657,146.989 69.631 C 138.270 73.941,137.692 73.834,144.612 69.192 C 156.226 61.400,168.898 56.246,181.900 54.027 C 183.275 53.792,185.435 53.420,186.700 53.199 C 187.965 52.978,189.720 52.726,190.600 52.638 C 193.726 52.324,212.236 52.742,214.400 53.175 M210.779 88.434 C 212.661 88.673,214.830 89.013,215.600 89.189 C 225.348 91.416,226.834 91.846,232.200 93.995 C 234.651 94.976,242.039 98.692,243.472 99.665 C 244.392 100.289,245.249 100.800,245.376 100.800 C 245.595 100.800,247.806 102.304,251.400 104.898 C 286.782 130.436,295.730 183.950,270.813 221.000 C 253.163 247.246,219.761 262.862,190.833 258.393 C 184.371 257.395,182.377 257.022,179.000 256.183 C 177.020 255.690,174.320 254.892,173.000 254.409 C 171.680 253.925,169.661 253.186,168.514 252.766 C 166.355 251.976,162.400 250.256,161.000 249.499 C 156.788 247.220,155.322 246.347,152.200 244.263 C 147.014 240.801,141.312 236.091,138.488 232.935 C 137.141 231.431,135.297 229.390,134.390 228.400 C 122.221 215.124,114.323 193.773,114.267 174.000 C 114.166 138.333,133.974 108.572,167.600 93.872 C 172.186 91.867,180.916 89.584,188.400 88.432 C 191.652 87.932,206.833 87.933,210.779 88.434 M121.075 98.361 C 123.781 100.337,123.575 105.565,120.734 107.034 C 115.917 109.525,110.901 104.545,113.650 100.000 C 115.302 97.269,118.587 96.543,121.075 98.361 M286.710 98.529 C 288.828 100.459,289.175 102.172,287.959 104.685 C 285.058 110.677,276.027 106.819,278.591 100.682 C 279.932 97.474,284.287 96.319,286.710 98.529 M309.100 134.250 C 312.192 137.777,309.783 142.797,305.000 142.797 C 302.184 142.797,299.600 140.385,299.600 137.757 C 299.600 132.924,305.899 130.599,309.100 134.250 M121.414 239.213 C 123.497 241.170,123.572 245.111,121.563 247.036 C 118.776 249.706,114.277 248.447,113.229 244.704 C 111.862 239.820,117.811 235.828,121.414 239.213 M285.087 238.668 C 289.961 240.981,288.217 248.400,282.800 248.400 C 277.773 248.400,275.858 241.382,280.168 238.754 C 281.692 237.825,283.252 237.797,285.087 238.668 M142.800 274.006 C 148.433 277.813,165.571 284.509,174.000 286.196 C 174.770 286.350,177.020 286.818,179.000 287.236 C 182.962 288.072,195.052 289.339,195.634 288.979 C 195.835 288.855,196.000 286.774,196.000 284.357 C 196.000 278.446,197.166 276.381,200.486 276.413 C 203.635 276.443,204.794 278.558,204.797 284.276 C 204.799 286.857,204.971 288.859,205.204 289.003 C 205.902 289.434,216.757 288.258,222.400 287.140 C 234.171 284.808,241.144 282.392,253.300 276.431 C 256.765 274.731,259.600 273.408,259.600 273.489 C 259.600 276.461,240.029 286.366,225.800 290.594 C 204.011 297.068,178.219 294.192,155.000 282.698 C 150.157 280.300,140.777 274.225,140.489 273.300 C 140.302 272.699,141.331 273.013,142.800 274.006 " stroke="none" fill="#243043" fill-rule="evenodd"></path><g id="hero-logo-mark" class="logo-key-rotate"><g class="logo-key-counter"><defs><clipPath id="hero-logo-clip"><circle cx="201.2" cy="172.7" r="87.5"/></clipPath></defs><image href="/images/logo-amazla-key.png" xlink:href="/images/logo-amazla-key.png" x="113.7" y="85.2" width="175" height="175" preserveAspectRatio="xMidYMid meet" clip-path="url(#hero-logo-clip)" /></g></g><path id="path1-blade" class="logo-key-rotate" d="M163.842 321.015 C 163.153 321.704,163.015 325.485,163.535 329.386 C 163.888 332.032,165.474 333.194,168.759 333.213 C 172.716 333.235,172.400 331.260,172.400 355.980 L 172.400 377.672 175.124 380.336 C 176.623 381.801,178.779 383.810,179.916 384.800 C 182.173 386.766,182.137 386.631,182.036 392.737 L 182.000 394.873 178.180 398.522 C 171.499 404.903,171.491 404.989,177.000 410.362 L 181.200 414.459 181.200 418.932 L 181.200 423.405 177.960 426.803 C 172.436 432.595,172.400 432.664,172.400 437.282 L 172.400 441.244 177.600 446.291 L 182.800 451.338 182.800 453.678 L 182.800 456.019 179.500 459.506 C 177.685 461.424,175.866 463.243,175.458 463.549 C 175.050 463.854,174.195 464.926,173.558 465.930 L 172.400 467.757 172.400 476.699 L 172.400 485.642 175.900 489.086 C 185.976 499.001,192.071 504.800,192.415 504.800 C 192.661 504.800,192.800 471.422,192.800 412.628 L 192.800 320.457 178.642 320.415 C 166.145 320.379,164.408 320.449,163.842 321.015 M199.600 415.001 C 199.600 508.091,199.612 509.578,200.374 509.986 C 201.674 510.682,202.107 510.479,204.800 507.911 C 213.248 499.854,214.669 498.472,215.777 497.234 L 217.000 495.869 217.200 486.634 L 217.400 477.400 227.481 477.200 C 238.974 476.972,238.489 477.135,238.321 473.559 L 238.200 471.000 227.800 470.800 L 217.400 470.600 217.182 466.800 C 216.920 462.235,216.893 462.171,214.322 459.972 C 210.172 456.423,209.955 455.056,213.146 452.577 C 216.459 450.005,216.520 449.805,216.714 440.994 C 216.928 431.279,216.762 430.608,213.341 427.332 L 210.764 424.863 210.882 421.932 L 211.000 419.000 219.100 418.892 L 227.200 418.783 227.200 409.565 C 227.200 399.174,227.282 398.800,229.565 398.800 C 232.075 398.800,232.184 399.154,232.327 407.760 L 232.454 415.400 233.884 416.875 C 235.466 418.507,237.455 419.519,237.979 418.958 C 238.418 418.487,238.763 394.794,238.347 393.669 C 238.066 392.910,222.108 392.181,221.518 392.900 C 221.473 392.955,221.338 397.410,221.218 402.800 L 221.000 412.600 219.000 412.600 L 217.000 412.600 216.800 405.200 C 216.578 396.994,216.593 397.043,213.401 394.000 C 211.408 392.101,210.800 390.803,210.800 388.448 C 210.800 385.066,210.209 385.200,225.179 385.200 L 238.300 385.200 238.550 383.950 C 238.688 383.263,238.800 378.508,238.800 373.384 L 238.800 364.068 236.933 362.425 C 235.084 360.797,233.424 360.043,232.881 360.585 C 232.727 360.739,232.546 364.989,232.479 370.030 C 232.359 379.131,232.352 379.197,231.466 379.419 C 229.569 379.895,212.060 379.422,211.519 378.880 C 211.045 378.405,210.930 371.519,211.167 357.887 C 211.200 356.001,212.215 354.442,214.136 353.328 C 216.427 352.000,216.800 350.380,216.800 341.758 C 216.800 332.619,216.879 332.383,219.697 333.113 L 221.000 333.450 221.200 343.825 L 221.400 354.200 229.798 354.200 L 238.196 354.200 238.549 352.529 C 238.743 351.610,238.785 350.395,238.643 349.829 L 238.385 348.800 233.669 348.800 C 227.148 348.800,227.557 349.361,227.690 340.598 L 227.800 333.400 232.441 333.200 C 238.656 332.932,238.400 333.224,238.400 326.394 L 238.400 320.887 237.401 320.636 C 236.852 320.498,228.122 320.396,218.001 320.408 L 199.600 320.431 199.600 415.001 M221.467 426.667 C 221.128 427.005,221.124 450.676,221.462 451.939 C 221.988 453.903,226.066 451.868,226.784 449.283 C 227.309 447.393,227.328 433.040,226.808 431.227 C 226.134 428.879,222.423 425.710,221.467 426.667 M232.643 427.033 C 232.093 428.466,232.379 451.418,232.956 452.208 C 233.646 453.151,236.272 451.572,237.553 449.444 C 239.321 446.507,239.091 431.252,237.248 429.252 C 235.044 426.861,233.073 425.911,232.643 427.033 " stroke="none" fill="#c82a29" fill-rule="evenodd"></path></g></g>            </svg>
           </div>
           <div class="hero-text-logo flex-shrink-0 order-1 lg:order-none self-start pt-12 lg:self-auto lg:pt-0 relative flex w-1/2 justify-end lg:justify-end lg:w-auto lg:absolute lg:bottom-8 lg:right-24 lg:w-full" aria-hidden="true">
-            <svg class="h-14 sm:h-16 lg:h-24 w-auto max-lg:max-h-16" viewBox="0 0 380 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Amazla Key">
+            <svg class="h-14 sm:h-16 lg:h-24 w-auto max-lg:max-h-16" viewBox="0 0 235 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Amazla">
               <defs>
                 <style>.dark-text{fill:#243043;font-family:sans-serif;font-weight:bold}.gray-text{fill:#64748B;font-family:sans-serif;font-weight:normal}</style>
               </defs>
-              <text x="0" y="52" font-size="42" class="dark-text">AMAZLA <tspan fill="#E82127">KEY</tspan></text>
+              <text x="0" y="52" font-size="42" class="dark-text">AMAZLA</text>
               <text x="0" y="88" font-size="20" class="gray-text">Amazfit to Tesla Control</text>
             </svg>
           </div>
@@ -149,112 +247,146 @@
       </div>
     </section>
 
-    <!-- Value proposition -->
-    <section class="relative py-20 lg:py-28 bg-white overflow-hidden" id="value">
+    <!-- Compare -->
+    <section class="relative py-24 lg:py-28 bg-white overflow-hidden" id="compare">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-12" data-animate>
+          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Compare apps</h2>
+          <p class="mt-4 text-lg text-amazla-secondary">Amazla and Amazla Key are available now. Garmin Key is in progress.</p>
+        </div>
+        <div class="overflow-x-auto rounded-2xl border border-slate-200 shadow-lg" data-animate>
+          <table class="compare-table w-full min-w-[52rem]">
+            <thead>
+              <tr>
+                <th class="w-1/4"></th>
+                <th class="w-1/4">Amazla <span class="text-amazla-accent font-normal text-sm">(Free)</span></th>
+                <th class="w-1/4">Amazla Key <span class="text-amazla-primary font-normal text-sm">($10)</span></th>
+                <th class="w-1/4">Garmin Key <span class="text-slate-500 font-normal text-sm">(Coming Soon)</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="font-medium text-amazla-dark">Connection</td><td>Internet → Fleet API</td><td>BLE (VCSEC)</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Phone required daily</td><td>Yes — every command</td><td>No — setup only</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Range</td><td>Anywhere with internet</td><td>~10–15 m (BLE)</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Lock / Unlock / Frunk / Trunk</td><td>Cloud</td><td>BLE</td><td>Planned</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Climate &amp; Defrost</td><td>Yes</td><td>No</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Charge Port</td><td>Yes</td><td>No</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Vehicle Status</td><td>Live</td><td>No</td><td>TBD</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Watch Platform</td><td>Amazfit, ZeppOS 1.x</td><td>Amazfit, ZeppOS 3.0+</td><td>Garmin</td></tr>
+              <tr><td class="font-medium text-amazla-dark">Price</td><td>Free</td><td>$10 one-time</td><td>TBD</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Products -->
+    <section class="relative py-20 lg:py-28 bg-white overflow-hidden" id="products">
       <div class="pointer-events-none absolute inset-0" aria-hidden="true">
         <div class="absolute -top-24 left-10 w-64 h-64 bg-amazla-accent/5 rounded-full blur-3xl" data-parallax="0.06"></div>
-      </div>
-      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="max-w-3xl mx-auto text-center" data-animate>
-          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">
-            One tap. No phone.
-          </h2>
-          <p class="mt-6 text-lg text-amazla-secondary">
-            For everyone who owns a Tesla and an Amazfit watch. Lock or unlock your car, open the frunk or trunk, adjust climate, open the charge port, and check battery & charging status—directly from your wrist. Fast, simple, always with you.
-          </p>
-          <ul class="mt-10 flex flex-wrap justify-center gap-6 text-amazla-secondary">
-            <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amazla-primary"></span> $10 one-time</li>
-            <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amazla-accent"></span> Sign in with Tesla</li>
-            <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amazla-primary"></span> No subscription</li>
-            <li class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-amazla-accent"></span> Passive entry (auto-unlock)</li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <!-- Features -->
-    <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden" id="features">
-      <div class="pointer-events-none absolute inset-0" aria-hidden="true">
         <div class="absolute -right-20 top-10 w-80 h-80 bg-amazla-primary/10 rounded-full blur-3xl" data-parallax="0.09"></div>
       </div>
-      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-16" data-animate>
-          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Features</h2>
-          <p class="mt-4 text-lg text-amazla-secondary">Everything you need, right on your wrist.</p>
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-8" data-animate>
+          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Products</h2>
+          <p class="mt-4 text-lg text-amazla-secondary">Two apps — pick cloud control or a BLE key.</p>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8" data-animate-stagger>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-primary/10 flex items-center justify-center">
-              <img src="/images/feature-lock-unlock.png" alt="Lock & Unlock" class="w-full h-full object-contain" width="512" height="512" />
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Lock & Unlock</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">
-              Lock or unlock your vehicle with one tap. Passive entry (auto-unlock) is available when you approach the car.
+        <div class="product-tabs-wrap flex justify-center" role="tablist" aria-label="Product details">
+          <div class="product-tabs">
+            <button type="button" id="product-tab-amazla" class="product-tab product-tab-active rounded-full text-sm font-semibold transition-colors" role="tab" aria-selected="true" aria-controls="amazla">Amazla</button>
+            <button type="button" id="product-tab-key" class="product-tab rounded-full text-sm font-semibold text-slate-500 hover:text-amazla-dark transition-colors" role="tab" aria-selected="false" aria-controls="amazla-key">Amazla Key</button>
+          </div>
+        </div>
+
+        <div id="amazla" class="product-panel" role="tabpanel" data-animate>
+          <div class="max-w-3xl mx-auto text-center sm:text-left">
+            <span class="inline-flex items-center rounded-full bg-amazla-accent/10 text-amazla-accent px-4 py-2 text-sm font-semibold tracking-wide uppercase">Free · Cloud</span>
+            <h3 class="mt-6 text-2xl sm:text-3xl font-bold text-amazla-dark">Amazla</h3>
+            <p class="mt-4 text-lg text-amazla-secondary">
+              Full Tesla control over the internet via Tesla Fleet API. Lock, climate, frunk, trunk, charge port, and live status — through your phone.
             </p>
-          </article>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-primary/10 flex items-center justify-center">
-              <img src="/images/feature-frunk-trunk.png" alt="Open Frunk & Trunk" class="w-full h-full object-contain" width="512" height="512" />
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Open Frunk & Trunk</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">Open the frunk or trunk remotely when you need it.</p>
-          </article>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-accent/10 flex items-center justify-center">
-              <img src="/images/feature-climate.png" alt="Climate" class="w-full h-full object-contain" width="512" height="512" />
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Climate</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">Start climate control and defrost right from your wrist.</p>
-          </article>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-accent/10 flex items-center justify-center">
-              <img src="/images/feature-charge-port.png" alt="Charge Port" class="w-full h-full object-contain" width="512" height="512" />
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Charge Port</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">Open or close the charge port and view charging status.</p>
-          </article>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-accent/10 flex items-center justify-center">
-              <img src="/images/feature-vehicle-status.png" alt="Vehicle Status" class="w-full h-full object-contain" width="512" height="512" />
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Vehicle Status</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">See battery level & range, charging state, and door status at a glance.</p>
-          </article>
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate-stagger-item data-tilt-subtle>
-            <div class="w-12 h-12 lg:w-14 lg:h-14 xl:w-16 xl:h-16 rounded-xl bg-amazla-primary/10 flex items-center justify-center">
-              <span class="text-amazla-primary font-bold text-lg lg:text-xl xl:text-2xl tracking-tight">$10</span>
-            </div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Simple pricing</h3>
-            <p class="mt-2 text-amazla-secondary text-sm">Pay once. $10. No subscription.</p>
-          </article>
+            <ul class="mt-6 space-y-2 text-amazla-secondary text-sm inline-block text-left">
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-amazla-accent mt-1.5 flex-shrink-0"></span> Remote access from anywhere with cell service</li>
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-slate-400 mt-1.5 flex-shrink-0"></span> Phone with internet required for every command</li>
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-slate-400 mt-1.5 flex-shrink-0"></span> ZeppOS 1.x — 23+ older Amazfit models</li>
+            </ul>
+          </div>
+          <div class="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-6" data-animate-stagger>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Lock &amp; Unlock</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Remote lock and unlock via Fleet API.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Climate &amp; Defrost</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">HVAC on/off, defrost, temperature display.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Frunk, Trunk &amp; Charge Port</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Open frunk, trunk, and charge port remotely.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Vehicle Status</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Battery, range, charging, and door status.</p>
+            </article>
+          </div>
+        </div>
+
+        <div id="amazla-key" class="product-panel" role="tabpanel" hidden data-animate>
+          <div class="max-w-3xl mx-auto text-center sm:text-left">
+            <span class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-4 py-2 text-sm font-semibold tracking-wide uppercase">$10 one-time · BLE</span>
+            <h3 class="mt-6 text-2xl sm:text-3xl font-bold text-amazla-dark">Amazla Key</h3>
+            <p class="mt-4 text-lg text-amazla-secondary">
+              A Tesla key on your wrist. Lock, unlock, frunk, and trunk over Bluetooth (VCSEC) — no internet needed for daily use.
+            </p>
+            <ul class="mt-6 space-y-2 text-amazla-secondary text-sm inline-block text-left">
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-amazla-primary mt-1.5 flex-shrink-0"></span> BLE range ~10–15 m, no phone relay for commands</li>
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-slate-400 mt-1.5 flex-shrink-0"></span> One-time pairing and Tesla sign-in at setup</li>
+              <li class="flex items-start gap-2"><span class="w-2 h-2 rounded-full bg-slate-400 mt-1.5 flex-shrink-0"></span> ZeppOS 3.0+ — newer Amazfit watches only</li>
+            </ul>
+          </div>
+          <div class="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-6" data-animate-stagger>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Lock &amp; Unlock</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Direct BLE commands — no internet required.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">Frunk &amp; Trunk</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Open frunk or trunk over Bluetooth nearby.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">BLE Pairing</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Pair once, keys stored on your watch.</p>
+            </article>
+            <article class="bg-amazla-background rounded-2xl p-6" data-animate-stagger-item>
+              <h3 class="font-semibold text-amazla-dark">$10 one-time</h3>
+              <p class="mt-2 text-amazla-secondary text-sm">Pay once in Zepp. No subscription.</p>
+            </article>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- App screenshots -->
-    <section class="relative py-20 lg:py-28 bg-white overflow-hidden" aria-label="App screenshots">
-      <div class="pointer-events-none absolute inset-0" aria-hidden="true">
-        <div class="absolute bottom-0 right-1/4 w-72 h-72 bg-amazla-primary/5 rounded-full blur-3xl" data-parallax="0.07"></div>
-      </div>
+    <!-- Screenshots -->
+    <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden" aria-label="App screenshots">
       <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div class="text-center mb-12" data-animate>
           <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">See it in action</h2>
-          <p class="mt-4 text-lg text-amazla-secondary">See how fast and effortless Tesla control feels right on your watch.</p>
+          <p class="mt-4 text-lg text-amazla-secondary">Screenshots from Amazla — the full-feature cloud app.</p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" data-animate-stagger>
           <div class="rounded-2xl overflow-hidden shadow-lg border border-slate-100 sm:col-span-2 lg:col-span-1 sm:max-w-[32rem] sm:mx-auto lg:max-w-none" data-animate-stagger-item>
             <div class="rounded-2xl overflow-hidden w-full h-full" data-tilt>
-              <img src="/images/screenshots/status-overview.png" alt="Amazla Key vehicle status screen" class="w-full h-auto block" width="927" height="934" />
+              <img src="/images/screenshots/status-overview.png" alt="Vehicle status screen" class="w-full h-auto block" width="927" height="934" />
             </div>
           </div>
           <div class="rounded-2xl overflow-hidden shadow-lg border border-slate-100" data-animate-stagger-item>
             <div class="rounded-2xl overflow-hidden w-full h-full" data-tilt>
-              <img src="/images/screenshots/lock-control.png" alt="Amazla Key lock and unlock control screen" class="w-full h-auto block" width="926" height="734" />
+              <img src="/images/screenshots/lock-control.png" alt="Lock and unlock control screen" class="w-full h-auto block" width="926" height="734" />
             </div>
           </div>
           <div class="rounded-2xl overflow-hidden shadow-lg border border-slate-100" data-animate-stagger-item>
             <div class="rounded-2xl overflow-hidden w-full h-full" data-tilt>
-              <img src="/images/screenshots/climate-control.png" alt="Amazla Key climate control screen" class="w-full h-auto block" width="924" height="726" />
+              <img src="/images/screenshots/climate-control.png" alt="Climate control screen (Amazla cloud)" class="w-full h-auto block" width="924" height="726" />
             </div>
           </div>
         </div>
@@ -262,23 +394,37 @@
     </section>
 
     <!-- Coming Soon -->
-    <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden" id="coming-soon">
+    <section class="relative py-20 lg:py-28 bg-white overflow-hidden" id="coming-soon">
       <div class="pointer-events-none absolute inset-0" aria-hidden="true">
-        <div class="absolute top-1/2 left-1/3 w-80 h-80 bg-amazla-accent/10 rounded-full blur-3xl -translate-y-1/2" data-parallax="0.06"></div>
+        <div class="absolute top-10 right-1/4 w-72 h-72 bg-amazla-primary/5 rounded-full blur-3xl" data-parallax="0.05"></div>
       </div>
-      <div class="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="rounded-3xl bg-white border border-slate-200 shadow-lg shadow-slate-200/50 p-8 sm:p-10 text-center" data-animate="up">
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-12" data-animate>
           <p class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-4 py-2 text-sm font-semibold tracking-wide uppercase">Coming Soon</p>
-          <h2 class="mt-6 text-3xl sm:text-4xl font-bold text-amazla-dark">Next controls already in progress</h2>
-          <p class="mt-4 text-lg text-amazla-secondary">
-            New actions from the app roadmap are coming soon: horn, summon, home/garage actions, and lights control.
-          </p>
-          <div class="mt-8 flex flex-wrap justify-center gap-3">
-            <span class="px-4 py-2 rounded-full bg-amazla-background border border-slate-200 text-amazla-dark text-sm font-medium">Horn</span>
-            <span class="px-4 py-2 rounded-full bg-amazla-background border border-slate-200 text-amazla-dark text-sm font-medium">Summon</span>
-            <span class="px-4 py-2 rounded-full bg-amazla-background border border-slate-200 text-amazla-dark text-sm font-medium">Garage / Home</span>
-            <span class="px-4 py-2 rounded-full bg-amazla-background border border-slate-200 text-amazla-dark text-sm font-medium">Lights</span>
-          </div>
+          <h2 class="mt-6 text-3xl sm:text-4xl font-bold text-amazla-dark">On the roadmap</h2>
+          <p class="mt-4 text-lg text-amazla-secondary">More ways to control your Tesla from your wrist.</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6" data-animate-stagger>
+          <article class="rounded-2xl bg-amazla-background p-6 sm:p-8" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-accent/10 text-amazla-accent px-3 py-1 text-xs font-semibold tracking-wide uppercase">Amazla</span>
+            <h3 class="mt-4 text-xl font-bold text-amazla-dark">Summon</h3>
+            <p class="mt-2 text-amazla-secondary text-sm leading-relaxed">Bring your car to you — or park it — without leaving the sidewalk.</p>
+          </article>
+          <article class="rounded-2xl bg-amazla-background p-6 sm:p-8" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-accent/10 text-amazla-accent px-3 py-1 text-xs font-semibold tracking-wide uppercase">Amazla</span>
+            <h3 class="mt-4 text-xl font-bold text-amazla-dark">Garage door</h3>
+            <p class="mt-2 text-amazla-secondary text-sm leading-relaxed">Open home as you arrive — one tap from your watch.</p>
+          </article>
+          <article class="rounded-2xl bg-amazla-background p-6 sm:p-8" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-3 py-1 text-xs font-semibold tracking-wide uppercase">Both apps</span>
+            <h3 class="mt-4 text-xl font-bold text-amazla-dark">Find my car</h3>
+            <p class="mt-2 text-amazla-secondary text-sm leading-relaxed">Honk or flash the lights when you can’t spot it in a crowded lot.</p>
+          </article>
+          <article class="rounded-2xl bg-amazla-background p-6 sm:p-8" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-3 py-1 text-xs font-semibold tracking-wide uppercase">Both apps</span>
+            <h3 class="mt-4 text-xl font-bold text-amazla-dark">Lights</h3>
+            <p class="mt-2 text-amazla-secondary text-sm leading-relaxed">Turn headlights on or off from your wrist when you need them.</p>
+          </article>
         </div>
       </div>
     </section>
@@ -289,199 +435,219 @@
         <div class="absolute top-1/2 left-0 w-96 h-96 bg-amazla-primary/10 rounded-full blur-3xl -translate-x-1/2" data-parallax="0.06"></div>
       </div>
       <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-12" data-animate>
-          <h2 class="text-3xl sm:text-4xl font-bold">Works with popular Amazfit watches</h2>
-          <p class="mt-4 text-lg text-slate-300">Active, Balance, Bip, GTR, GTS, T-Rex, and more.</p>
+        <div class="text-center mb-8" data-animate>
+          <h2 class="text-3xl sm:text-4xl font-bold">Supported watches</h2>
+          <p class="mt-4 text-lg text-slate-300">Each app targets different Amazfit generations.</p>
         </div>
-        <div class="relative" data-animate>
-          <div id="devices-carousel" class="devices-carousel overflow-x-auto" role="region" aria-label="Supported Amazfit devices">
+        <div class="flex justify-center mb-10" role="tablist" aria-label="Device lists by app">
+          <div class="device-tabs">
+            <button type="button" id="device-tab-amazla" class="device-tab device-tab-active rounded-full text-sm font-semibold transition-colors" role="tab" aria-selected="true" aria-controls="device-panel-amazla">Amazla (ZeppOS 1.x)</button>
+            <button type="button" id="device-tab-key" class="device-tab rounded-full text-sm font-semibold text-slate-300 hover:text-white transition-colors" role="tab" aria-selected="false" aria-controls="device-panel-key">Amazla Key (ZeppOS 3+)</button>
+          </div>
+        </div>
+
+        <div id="device-panel-amazla" class="device-panel relative" role="tabpanel" data-animate>
+          <p class="text-center text-sm text-slate-400 mb-6">GTR 3, GTS 3, GTR 4, GTS 4, T-Rex 2, Bip 5, Balance, and more — 23+ models.</p>
+          <div id="devices-carousel" class="devices-carousel overflow-x-auto" role="region" aria-label="Amazla supported devices">
             <div class="flex items-stretch gap-4 sm:gap-5 w-max px-16 sm:px-20 pb-1">
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gts-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 3</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gtr-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 3</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gtr-3-pro.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 3 Pro</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gts-4-mini.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 4 mini</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gtr-mini.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR mini</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/band-7.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Band 7</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/falcon.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Falcon</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/t-rex-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex 2</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/t-rex-ultra.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex Ultra</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gtr-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 4</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/gts-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 4</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/cheetah-pro.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Cheetah Pro</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/cheetah.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Cheetah</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/active.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/active-edge.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active Edge</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/bip-5.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 5</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/balance.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Balance</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/t-rex-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex 3</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/bip-5-unity.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 5 Unity</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/active-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active 2</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/balance-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Balance 2</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/bip-6.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 6</p>
-              </article>
-              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44">
-                <div class="devices-card-image flex items-center justify-center aspect-square p-3">
-                  <img src="/images/devices/active-2-square.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" />
-                </div>
-                <p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active 2 (Square)</p>
-              </article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gts-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 3</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gtr-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 3</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gtr-3-pro.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 3 Pro</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gts-4-mini.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 4 mini</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gtr-mini.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR mini</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/band-7.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Band 7</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/falcon.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Falcon</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/t-rex-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex 2</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/t-rex-ultra.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex Ultra</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gtr-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 4</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gts-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 4</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/cheetah-pro.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Cheetah Pro</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/cheetah.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Cheetah</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/active.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/active-edge.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active Edge</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/bip-5.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 5</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/balance.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Balance</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/bip-5-unity.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 5 Unity</p></article>
             </div>
           </div>
-          <button type="button" id="devices-prev-btn" class="devices-nav absolute -left-3 sm:-left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Previous devices">
-            ←
-          </button>
-          <button type="button" id="devices-next-btn" class="devices-nav absolute -right-3 sm:-right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Next devices">
-            →
-          </button>
+          <button type="button" id="devices-prev-btn" class="devices-nav absolute -left-3 sm:-left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Previous devices">←</button>
+          <button type="button" id="devices-next-btn" class="devices-nav absolute -right-3 sm:-right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Next devices">→</button>
+        </div>
+
+        <div id="device-panel-key" class="device-panel relative" role="tabpanel" hidden data-animate>
+          <p class="text-center text-sm text-slate-400 mb-6">Active 2, Balance 2, T-Rex 3, Bip 6, and all ZeppOS 3.0+ round, square, and band watches.</p>
+          <div id="devices-carousel-key" class="devices-carousel overflow-x-auto" role="region" aria-label="Amazla Key supported devices">
+            <div class="flex items-stretch gap-4 sm:gap-5 w-max px-16 sm:px-20 pb-1">
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/active-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active 2</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/active-2-square.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Active 2 (Square)</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/balance-2.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Balance 2</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/bip-6.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Bip 6</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/t-rex-3.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex 3</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/t-rex-ultra.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">T-Rex Ultra</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gtr-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTR 4</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/gts-4.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">GTS 4</p></article>
+              <article class="devices-card flex-shrink-0 w-[9.5rem] sm:w-44"><div class="devices-card-image flex items-center justify-center aspect-square p-3"><img src="/images/devices/cheetah-pro.png" alt="" class="max-h-full max-w-full object-contain" width="200" height="200" loading="lazy" decoding="async" aria-hidden="true" /></div><p class="mt-3 text-center text-xs sm:text-sm text-slate-200 font-medium leading-snug">Cheetah Pro</p></article>
+            </div>
+          </div>
+          <button type="button" id="devices-prev-btn-key" class="devices-nav absolute -left-3 sm:-left-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Previous devices">←</button>
+          <button type="button" id="devices-next-btn-key" class="devices-nav absolute -right-3 sm:-right-4 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-2 text-white hover:bg-white/25 transition-colors border-0" aria-label="Next devices">→</button>
         </div>
       </div>
     </section>
 
-    <!-- CTA -->
+    <!-- Download -->
     <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden" id="download">
       <div class="pointer-events-none absolute inset-0" aria-hidden="true">
         <div class="absolute top-1/2 left-1/2 w-[32rem] h-[32rem] bg-amazla-primary/5 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2" data-parallax="0.04"></div>
       </div>
-      <div class="relative max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center" data-animate="scale">
-        <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Get Amazla Key today</h2>
-        <p class="mt-4 text-lg text-amazla-secondary">Control your Tesla from your Amazfit watch.</p>
-        <p class="mt-2 text-base font-semibold text-amazla-dark">One-time purchase · $10 · No subscription</p>
-        <div class="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
-          <a href="https://apps.apple.com/ua/app/zepp/id1127269366?l=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-10 py-4 transition-all duration-200">
-            Install Zepp on iPhone
-          </a>
-          <a href="https://play.google.com/store/apps/details?id=com.huami.watch.hmwatchmanager&hl=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-10 py-4 transition-all duration-200">
-            Install Zepp on Android
-          </a>
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-12" data-animate>
+          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Get started</h2>
         </div>
-        <p class="mt-4 text-sm text-amazla-secondary">
-          Zepp first, then get Amazla Key inside.
-        </p>
+        <div class="download-grid" data-animate-stagger>
+          <article class="rounded-3xl bg-white border border-slate-200 shadow-lg p-8 text-center" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-accent/10 text-amazla-accent px-4 py-1.5 text-sm font-semibold">Free</span>
+            <h3 class="mt-4 text-2xl font-bold text-amazla-dark">Amazla</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">Full cloud control. Sign in with Tesla, deploy your key, and go.</p>
+            <div class="mt-6 flex flex-row flex-wrap gap-3 justify-center">
+              <a href="https://apps.apple.com/ua/app/zepp/id1127269366?l=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-base sm:text-lg text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent rounded-xl px-8 py-4 transition-all">Install Zepp (iPhone)</a>
+              <a href="https://play.google.com/store/apps/details?id=com.huami.watch.hmwatchmanager&hl=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-base sm:text-lg text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent rounded-xl px-8 py-4 transition-all">Install Zepp (Android)</a>
+            </div>
+            <p class="mt-4 text-sm text-amazla-secondary">Install Zepp on your phone first, then find the app inside Zepp.</p>
+          </article>
+          <article class="rounded-3xl bg-white border-2 border-amazla-primary/20 shadow-lg p-8 text-center" data-animate-stagger-item>
+            <span class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-4 py-1.5 text-sm font-semibold">$10 one-time</span>
+            <p class="mt-2 text-xs text-amazla-secondary">No subscription</p>
+            <h3 class="mt-4 text-2xl font-bold text-amazla-dark">Amazla Key</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">BLE Tesla key. Pair once, then control your car without your phone.</p>
+            <div class="mt-6 flex flex-row flex-wrap gap-3 justify-center">
+              <a href="https://apps.apple.com/ua/app/zepp/id1127269366?l=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-base sm:text-lg text-white bg-amazla-primary hover:bg-red-600 rounded-xl px-8 py-4 transition-all shadow-lg shadow-red-500/25">Install Zepp (iPhone)</a>
+              <a href="https://play.google.com/store/apps/details?id=com.huami.watch.hmwatchmanager&hl=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-base sm:text-lg text-white bg-amazla-primary hover:bg-red-600 rounded-xl px-8 py-4 transition-all shadow-lg shadow-red-500/25">Install Zepp (Android)</a>
+            </div>
+            <p class="mt-4 text-sm text-amazla-secondary">Install Zepp on your phone first, then find the app inside Zepp.</p>
+          </article>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="bg-amazla-dark text-slate-400 py-12">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-      <span class="font-semibold text-white">Amazla Key</span>
+      <span class="font-semibold text-white">Amazla</span>
       <div class="flex gap-8 text-sm">
         <a href="/privacy-and-terms.html#privacy" class="hover:text-white transition-colors">Privacy</a>
         <a href="/privacy-and-terms.html#terms" class="hover:text-white transition-colors">Terms</a>
+        <a href="/how-it-works.html" class="hover:text-white transition-colors">How it works</a>
       </div>
     </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-8 border-t border-white/10 text-center text-sm text-slate-500">
-      © Amazla Key. One-time $10 purchase inside Zepp. No subscription. Not affiliated with Tesla or Amazfit. For Amazfit watch owners with a Tesla vehicle.
+      © Amazla. Amazla is free; Amazla Key is a $10 one-time purchase inside Zepp. Not affiliated with Tesla or Amazfit.
     </div>
   </footer>
 
+  <script>
+    (function () {
+      var tabAmazla = document.getElementById('device-tab-amazla');
+      var tabKey = document.getElementById('device-tab-key');
+      var panelAmazla = document.getElementById('device-panel-amazla');
+      var panelKey = document.getElementById('device-panel-key');
+
+      function showDevicePanel(which) {
+        var isAmazla = which === 'amazla';
+        panelAmazla.hidden = !isAmazla;
+        panelKey.hidden = isAmazla;
+        tabAmazla.classList.toggle('device-tab-active', isAmazla);
+        tabKey.classList.toggle('device-tab-active', !isAmazla);
+        tabAmazla.setAttribute('aria-selected', isAmazla ? 'true' : 'false');
+        tabKey.setAttribute('aria-selected', !isAmazla ? 'true' : 'false');
+        tabAmazla.classList.toggle('text-slate-300', !isAmazla);
+        tabKey.classList.toggle('text-slate-300', isAmazla);
+      }
+
+      tabAmazla.addEventListener('click', function () { showDevicePanel('amazla'); });
+      tabKey.addEventListener('click', function () { showDevicePanel('key'); });
+
+      var productTabAmazla = document.getElementById('product-tab-amazla');
+      var productTabKey = document.getElementById('product-tab-key');
+      var productPanelAmazla = document.getElementById('amazla');
+      var productPanelKey = document.getElementById('amazla-key');
+
+      function showProductPanel(which) {
+        var isAmazla = which === 'amazla';
+        productPanelAmazla.hidden = !isAmazla;
+        productPanelKey.hidden = isAmazla;
+        productTabAmazla.classList.toggle('product-tab-active', isAmazla);
+        productTabKey.classList.toggle('product-tab-active', !isAmazla);
+        productTabAmazla.setAttribute('aria-selected', isAmazla ? 'true' : 'false');
+        productTabKey.setAttribute('aria-selected', !isAmazla ? 'true' : 'false');
+        productTabAmazla.classList.toggle('text-slate-500', !isAmazla);
+        productTabKey.classList.toggle('text-slate-500', isAmazla);
+      }
+
+      productTabAmazla.addEventListener('click', function () { showProductPanel('amazla'); });
+      productTabKey.addEventListener('click', function () { showProductPanel('key'); });
+
+      function syncProductFromHash() {
+        var hash = (location.hash || '').toLowerCase();
+        if (hash === '#amazla-key') {
+          showProductPanel('key');
+          document.getElementById('products').scrollIntoView();
+        } else if (hash === '#amazla') {
+          showProductPanel('amazla');
+          document.getElementById('products').scrollIntoView();
+        } else if (hash === '#products') {
+          showProductPanel('amazla');
+        }
+      }
+      syncProductFromHash();
+      window.addEventListener('hashchange', syncProductFromHash);
+
+      function initCarousel(carouselId, prevId, nextId) {
+        var carousel = document.getElementById(carouselId);
+        var prev = document.getElementById(prevId);
+        var next = document.getElementById(nextId);
+        if (!carousel || !prev || !next) return;
+        var track = carousel.firstElementChild;
+        if (!track) return;
+
+        function updateScale() {
+          var cards = track.querySelectorAll('.devices-card');
+          var center = carousel.getBoundingClientRect().left + carousel.clientWidth / 2;
+          var half = Math.max(carousel.clientWidth * 0.5, 1);
+          cards.forEach(function (card) {
+            var img = card.querySelector('.devices-card-image');
+            var rect = card.getBoundingClientRect();
+            var dist = Math.abs(center - (rect.left + rect.width / 2));
+            var t = Math.min(dist / half, 1);
+            if (img) img.style.transform = 'scale(' + (1.12 - t * 0.2).toFixed(3) + ')';
+            card.style.opacity = (1 - t * 0.25).toFixed(3);
+            card.style.zIndex = String(Math.round((1 - t) * 100));
+          });
+        }
+
+        var ticking = false;
+        carousel.addEventListener('scroll', function () {
+          if (!ticking) {
+            requestAnimationFrame(function () { updateScale(); ticking = false; });
+            ticking = true;
+          }
+        }, { passive: true });
+        window.addEventListener('resize', updateScale);
+        var step = function () { return Math.max(carousel.clientWidth * 0.42, 240); };
+        prev.addEventListener('click', function () {
+          if (carousel.scrollLeft <= 8) carousel.scrollLeft = carousel.scrollWidth - carousel.clientWidth - 8;
+          carousel.scrollBy({ left: -step(), behavior: 'smooth' });
+        });
+        next.addEventListener('click', function () {
+          if (carousel.scrollLeft + carousel.clientWidth >= carousel.scrollWidth - 8) carousel.scrollLeft = 8;
+          carousel.scrollBy({ left: step(), behavior: 'smooth' });
+        });
+        updateScale();
+      }
+
+      initCarousel('devices-carousel', 'devices-prev-btn', 'devices-next-btn');
+      initCarousel('devices-carousel-key', 'devices-prev-btn-key', 'devices-next-btn-key');
+    })();
+  </script>
 </body>
 </html>

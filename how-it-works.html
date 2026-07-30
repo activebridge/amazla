@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>How Amazla Key Works - BLE and Secure Tesla Commands</title>
-  <meta name="description" content="Learn how Amazla Key connects an Amazfit watch to Tesla using BLE, secure VCSEC sessions, encrypted commands, and instant vehicle status updates." />
+  <title>How Amazla Works — Cloud &amp; BLE Technical Overview</title>
+  <meta name="description" content="Technical overview of how Amazla (Tesla Fleet API) and Amazla Key (BLE/VCSEC) connect your Amazfit watch to your Tesla." />
   <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
   <link rel="canonical" href="https://amazla.app/how-it-works.html" />
   <link rel="alternate" hreflang="en" href="https://amazla.app/how-it-works.html" />
   <link rel="alternate" hreflang="x-default" href="https://amazla.app/how-it-works.html" />
   <meta property="og:type" content="article" />
-  <meta property="og:site_name" content="Amazla Key" />
-  <meta property="og:title" content="How Amazla Key Works - BLE and Secure Tesla Commands" />
-  <meta property="og:description" content="Technical overview of BLE connection, VCSEC session setup, authenticated encrypted commands, and watch-side updates in Amazla Key." />
+  <meta property="og:site_name" content="Amazla" />
+  <meta property="og:title" content="How Amazla Works — Cloud &amp; BLE Technical Overview" />
+  <meta property="og:description" content="How Amazla uses Tesla Fleet API and how Amazla Key uses BLE/VCSEC for direct watch-to-car commands." />
   <meta property="og:url" content="https://amazla.app/how-it-works.html" />
   <meta property="og:image" content="https://amazla.app/images/logo-amazla-key.png" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="How Amazla Key Works" />
-  <meta name="twitter:description" content="A technical breakdown of how Amazla Key sends secure Tesla commands from your Amazfit watch." />
+  <meta name="twitter:title" content="How Amazla Works" />
+  <meta name="twitter:description" content="Technical breakdown of Amazla (cloud) and Amazla Key (BLE) for Tesla control from your Amazfit watch." />
   <meta name="twitter:image" content="https://amazla.app/images/logo-amazla-key.png" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="shortcut icon" href="/favicon.png" />
@@ -28,16 +28,10 @@
     {
       "@context": "https://schema.org",
       "@type": "TechArticle",
-      "headline": "How Amazla Key controls Tesla from your watch",
-      "description": "Technical overview of BLE communication and secure command execution between Amazfit watch and Tesla.",
-      "author": {
-        "@type": "Organization",
-        "name": "Amazla Key"
-      },
-      "publisher": {
-        "@type": "Organization",
-        "name": "Amazla Key"
-      },
+      "headline": "How Amazla and Amazla Key control Tesla from your watch",
+      "description": "Technical overview of cloud Fleet API and BLE/VCSEC communication for Amazfit Tesla apps.",
+      "author": { "@type": "Organization", "name": "Amazla" },
+      "publisher": { "@type": "Organization", "name": "Amazla" },
       "mainEntityOfPage": "https://amazla.app/how-it-works.html"
     }
   </script>
@@ -47,136 +41,152 @@
 <body class="bg-amazla-background text-amazla-dark font-sans antialiased">
   <header class="fixed top-0 left-0 right-0 z-50 bg-amazla-background/90 backdrop-blur-sm border-b border-slate-200/50">
     <nav class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2" aria-label="Amazla Key home">
+      <a href="/" class="flex items-center gap-2" aria-label="Amazla home">
         <img src="/images/logo-amazla-key.png" alt="" class="h-8 w-8 rounded-full object-cover" width="32" height="32" />
-        <span class="font-bold text-amazla-dark text-lg tracking-tight">Amazla <span class="text-amazla-primary">Key</span></span>
+        <span class="font-bold text-amazla-dark text-lg tracking-tight">Amazla</span>
       </a>
       <div class="flex items-center gap-6">
-        <a href="/index.html#features" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Features</a>
-        <a href="/index.html#devices" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Devices</a>
+        <a href="/index.html#amazla" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Products</a>
+        <a href="/index.html#compare" class="text-sm font-medium text-amazla-secondary hover:text-amazla-dark transition-colors hidden sm:block">Compare</a>
         <a href="/how-it-works.html" class="text-sm font-semibold text-amazla-dark bg-slate-100/60 hover:bg-slate-100 rounded-lg px-4 py-2 transition-colors shadow-sm hidden sm:block">How it works</a>
-        <a href="/index.html#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get Amazla Key</a>
+        <a href="/index.html#download" class="text-sm font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-lg px-4 py-2 transition-colors shadow-lg shadow-red-500/25">Get started</a>
       </div>
     </nav>
   </header>
 
   <main>
-    <!-- Hero -->
-    <section id="hero" class="relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
+    <section id="hero" class="relative min-h-[70vh] flex items-center justify-center overflow-hidden pt-16">
       <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
         <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-amazla-primary/5 rounded-full blur-3xl" data-parallax="0.08"></div>
         <div class="absolute bottom-1/4 right-1/4 w-80 h-80 bg-amazla-accent/5 rounded-full blur-3xl" data-parallax="0.12"></div>
-        <div class="absolute -top-24 right-10 w-64 h-64 border border-amazla-primary/20 rounded-3xl rotate-6" data-parallax="0.05"></div>
-        <div class="absolute -bottom-28 -left-10 w-72 h-72 border border-amazla-accent/15 rounded-3xl -rotate-6" data-parallax="0.04"></div>
-        <div class="absolute top-2/3 left-1/2 w-48 h-48 bg-amazla-accent/10 rounded-full blur-2xl" data-parallax="0.06"></div>
       </div>
-
-      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28 flex flex-col lg:flex-row items-center lg:items-start gap-0 md:gap-12 lg:gap-16">
-        <div class="flex-1 min-w-0 lg:flex-[2] text-center lg:text-left" data-animate="left">
-          <div class="inline-flex items-center gap-2 rounded-full border border-slate-200/60 bg-white/60 px-4 py-2 text-sm text-amazla-secondary" data-animate="up">
-            <span class="h-2.5 w-2.5 rounded-full bg-amazla-primary inline-block"></span>
-            Technical overview
-          </div>
-
-          <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-amazla-dark" data-animate="up">
-            How Amazla Key controls Tesla from your watch
-          </h1>
-
-          <p class="mt-6 text-lg sm:text-xl text-amazla-secondary max-w-2xl mx-auto lg:mx-0" data-animate="up">
-            Amazla Key connects to your Tesla over Bluetooth (BLE), establishes a secure VCSEC session, and sends authenticated, encrypted commands directly from your watch.
-          </p>
+      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 lg:py-28 text-center" data-animate>
+        <div class="inline-flex items-center gap-2 rounded-full border border-slate-200/60 bg-white/60 px-4 py-2 text-sm text-amazla-secondary">
+          <span class="h-2.5 w-2.5 rounded-full bg-amazla-primary inline-block"></span>
+          Technical overview
         </div>
-        <div class="flex-1 min-w-0 lg:flex-[1]"></div>
+        <h1 class="mt-6 text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-amazla-dark">
+          How each app connects to your Tesla
+        </h1>
+        <p class="mt-6 text-lg sm:text-xl text-amazla-secondary max-w-2xl mx-auto">
+          Amazla routes commands through the internet (Tesla Fleet API). Amazla Key sends daily commands directly over Bluetooth (VCSEC).
+        </p>
       </div>
     </section>
 
-    <!-- Steps -->
-    <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden">
+    <!-- Amazla cloud flow -->
+    <section class="relative py-20 lg:py-28 bg-white overflow-hidden" id="how-amazla">
       <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="text-center mb-16" data-animate>
-          <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">4 steps</h2>
-          <p class="mt-4 text-lg text-amazla-secondary">
-            What happens from the moment you tap on the watch to the action in your car.
+        <div class="text-center mb-12" data-animate>
+          <span class="inline-flex items-center rounded-full bg-amazla-accent/10 text-amazla-accent px-4 py-2 text-sm font-semibold tracking-wide uppercase">Amazla · Free · Cloud</span>
+          <h2 class="mt-6 text-3xl sm:text-4xl font-bold text-amazla-dark">Fleet API path</h2>
+          <p class="mt-4 text-lg text-amazla-secondary max-w-2xl mx-auto">
+            Every command goes from watch → phone → internet → Tesla Fleet API → your car. Your phone must have internet for each action.
           </p>
         </div>
-
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate="up">
+          <article class="bg-amazla-background rounded-2xl p-6 lg:p-8 border border-slate-100" data-animate="up">
+            <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">1</div>
+            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Sign in with Tesla</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">
+              OAuth in Zepp app settings. Scopes include vehicle commands and charging. Tokens are stored on your phone.
+            </p>
+          </article>
+          <article class="bg-amazla-background rounded-2xl p-6 lg:p-8 border border-slate-100" data-animate="up">
+            <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">2</div>
+            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Deploy public key</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">
+              One-time step: authorize your vehicle to accept commands from the Fleet API proxy. Requires car online and phone nearby via Bluetooth.
+            </p>
+          </article>
+          <article class="bg-amazla-background rounded-2xl p-6 lg:p-8 border border-slate-100" data-animate="up">
+            <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">3</div>
+            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Send command via Fleet API</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">
+              Watch sends a request to the phone app-side service, which calls Tesla Fleet API (lock, climate, frunk, charge port, etc.). Auto wake-up if the car is asleep.
+            </p>
+          </article>
+          <article class="bg-amazla-background rounded-2xl p-6 lg:p-8 border border-slate-100" data-animate="up">
+            <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">4</div>
+            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">Update watch UI</h3>
+            <p class="mt-2 text-amazla-secondary text-sm">
+              Vehicle data is fetched and cached. Battery, doors, climate temps, and charging state refresh on the watch.
+            </p>
+          </article>
+        </div>
+        <div class="mt-8 rounded-2xl bg-amazla-background p-6 text-center" data-animate>
+          <p class="text-sm text-slate-600">
+            <span class="font-medium text-amazla-dark">Works anywhere</span> your phone has internet — not limited to BLE range. Best for climate, defrost, charge port, and remote access.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Amazla Key BLE flow -->
+    <section class="relative py-20 lg:py-28 bg-amazla-background overflow-hidden" id="how-amazla-key">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="text-center mb-12" data-animate>
+          <span class="inline-flex items-center rounded-full bg-amazla-primary/10 text-amazla-primary px-4 py-2 text-sm font-semibold tracking-wide uppercase">Amazla Key · $10 · BLE</span>
+          <h2 class="mt-6 text-3xl sm:text-4xl font-bold text-amazla-dark">BLE / VCSEC path</h2>
+          <p class="mt-4 text-lg text-amazla-secondary max-w-2xl mx-auto">
+            Daily commands (lock, unlock, frunk, trunk) go directly from watch to car over Bluetooth. No server in the middle.
+          </p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100" data-animate="up">
             <div class="w-12 h-12 rounded-xl bg-amazla-primary/10 flex items-center justify-center text-amazla-primary font-bold text-xl">B</div>
             <h3 class="mt-4 font-semibold text-amazla-dark text-lg">1. Connect via BLE</h3>
             <p class="mt-2 text-amazla-secondary text-sm">
-              The watch scans for your Tesla over BLE, lets you select a vehicle, and can remember the MAC for faster reconnects.
+              The watch scans for your Tesla over BLE, connects, and can remember the MAC for faster reconnects.
             </p>
           </article>
-
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate="up">
+          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100" data-animate="up">
             <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">V</div>
             <h3 class="mt-4 font-semibold text-amazla-dark text-lg">2. Establish VCSEC session</h3>
             <p class="mt-2 text-amazla-secondary text-sm">
-              A secure session is negotiated using ECDH (key exchange) and SHA-1 derived session keys, with epoch/counters tracked for replay protection.
+              Secure session via ECDH key exchange and derived session keys, with epoch/counters for replay protection.
             </p>
           </article>
-
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate="up">
+          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100" data-animate="up">
             <div class="w-12 h-12 rounded-xl bg-amazla-accent/10 flex items-center justify-center text-amazla-accent font-bold text-xl">S</div>
-            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">3. Send authenticated & encrypted commands</h3>
+            <h3 class="mt-4 font-semibold text-amazla-dark text-lg">3. Send encrypted commands</h3>
             <p class="mt-2 text-amazla-secondary text-sm">
-              Commands like <span class="font-medium">lock/unlock</span>, <span class="font-medium">frunk/trunk</span>, <span class="font-medium">charge port</span>, and <span class="font-medium">HVAC</span> are packaged as VCSEC actions, authenticated (HMAC) and encrypted (AES-GCM) on the watch.
+              Lock/unlock and frunk/trunk are packaged as VCSEC actions, authenticated (HMAC) and encrypted (AES-GCM) on the watch.
             </p>
           </article>
-
-          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100 hover:shadow-xl hover:border-amazla-accent/20 transition-all duration-300" data-animate="up">
+          <article class="bg-white rounded-2xl p-6 lg:p-8 shadow-lg shadow-slate-200/50 border border-slate-100" data-animate="up">
             <div class="w-12 h-12 rounded-xl bg-amazla-primary/10 flex items-center justify-center text-amazla-primary font-bold text-xl">U</div>
             <h3 class="mt-4 font-semibold text-amazla-dark text-lg">4. Update the watch UI</h3>
             <p class="mt-2 text-amazla-secondary text-sm">
-              After sending actions, the watch reads the updated vehicle status (battery, temperatures, doors, etc.) and refreshes what you see instantly.
+              After BLE actions, vehicle status refreshes. Live sync for battery and climate uses Fleet API when online.
             </p>
           </article>
+        </div>
+        <div class="mt-8 grid gap-6 lg:grid-cols-2" data-animate>
+          <div class="rounded-2xl bg-white border border-slate-200 p-6">
+            <h3 class="font-semibold text-amazla-dark">Setup (phone needed once)</h3>
+            <p class="mt-2 text-sm text-slate-600">
+              BLE pairing whitelists your watch as a Tesla key (tap keycard on center console). Session key pools are generated on the phone and synced to the watch for fast reconnects.
+            </p>
+          </div>
+          <div class="rounded-2xl bg-amazla-primary/5 border border-amazla-primary/20 p-6">
+            <h3 class="font-semibold text-amazla-dark">Daily use (no phone)</h3>
+            <p class="mt-2 text-sm text-slate-600">
+              Lock, unlock, frunk, and trunk run on the watch via BLE + VCSEC — no server control in the middle. Climate and live status still need internet when used.
+            </p>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- Technical note + CTA -->
+    <!-- CTA -->
     <section class="relative py-20 lg:py-28 bg-white overflow-hidden">
-      <div class="pointer-events-none absolute inset-0" aria-hidden="true">
-        <div class="absolute bottom-0 right-1/4 w-72 h-72 bg-amazla-primary/5 rounded-full blur-3xl" data-parallax="0.07"></div>
-      </div>
-
-      <div class="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="grid gap-8 lg:grid-cols-2 lg:items-start">
-          <div class="rounded-3xl border border-slate-200/60 bg-white p-7 lg:p-8" data-animate="up">
-            <h2 class="text-2xl sm:text-3xl font-bold text-amazla-dark">What’s important (technically)</h2>
-            <p class="mt-3 text-slate-600">
-              To keep the watch fast, crypto logic is localized and uses pre-generated/session-key pools for future sessions.
-              If the pool is running low, it may request replenishment via the companion/phone app in the background.
-            </p>
-
-            <div class="mt-5 rounded-2xl bg-amazla-background p-4">
-              <p class="text-sm text-slate-600">
-                Key point: <span class="font-medium text-amazla-dark">daily commands</span> run on the watch (BLE + VCSEC) — no server control in the middle.
-              </p>
-            </div>
-          </div>
-
-          <div class="rounded-3xl border border-slate-200/60 bg-amazla-primary/5 p-7 lg:p-8" data-animate="up">
-            <h2 class="text-2xl sm:text-3xl font-bold text-amazla-dark">Ready to control your Tesla?</h2>
-            <p class="mt-3 text-slate-600">
-              Install Amazla Key and pair your Tesla once. After that, most actions are available from your watch while you’re within BLE range.
-            </p>
-
-            <div class="mt-6 flex flex-col sm:flex-row gap-4">
-              <a href="https://apps.apple.com/ua/app/zepp/id1127269366?l=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
-                Download on the App Store
-              </a>
-              <a href="https://play.google.com/store/apps/details?id=com.huami.watch.hmwatchmanager&hl=uk" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent hover:text-amazla-accent rounded-xl px-8 py-4 transition-all duration-200">
-                Get it on Google Play
-              </a>
-            </div>
-
-            <p class="mt-4 text-xs text-slate-500">
-              Note: available actions depend on the Tesla model and on Bluetooth connection state.
-            </p>
-          </div>
+      <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 text-center" data-animate>
+        <h2 class="text-3xl sm:text-4xl font-bold text-amazla-dark">Ready to choose?</h2>
+        <p class="mt-4 text-lg text-amazla-secondary">Compare both apps and pick the one that fits your driving routine.</p>
+        <div class="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+          <a href="/index.html#compare" class="inline-flex items-center justify-center font-semibold text-amazla-dark bg-white border-2 border-slate-200 hover:border-amazla-accent rounded-xl px-8 py-4 transition-all">Compare apps</a>
+          <a href="/index.html#download" class="inline-flex items-center justify-center font-semibold text-white bg-amazla-primary hover:bg-red-600 rounded-xl px-8 py-4 transition-all shadow-lg shadow-red-500/25">Get started</a>
         </div>
       </div>
     </section>
@@ -184,17 +194,15 @@
 
   <footer class="bg-amazla-dark text-slate-400 py-12">
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-      <span class="font-semibold text-white">Amazla Key</span>
+      <span class="font-semibold text-white">Amazla</span>
       <div class="flex gap-8 text-sm">
         <a href="/privacy-and-terms.html#privacy" class="hover:text-white transition-colors">Privacy</a>
         <a href="/privacy-and-terms.html#terms" class="hover:text-white transition-colors">Terms</a>
       </div>
     </div>
     <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-8 border-t border-white/10 text-center text-sm text-slate-500">
-      © Amazla Key. One-time $10 purchase inside Zepp. No subscription. Not affiliated with Tesla or Amazfit. For Amazfit watch owners with a Tesla vehicle.
+      © Amazla. Amazla is free; Amazla Key is a $10 one-time purchase inside Zepp. Not affiliated with Tesla or Amazfit.
     </div>
   </footer>
-
 </body>
 </html>
-
