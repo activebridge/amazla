@@ -516,6 +516,16 @@ export default {
   get widgets() {
     return widgets
   },
+  // UNSOLVED — do not put widgets in a GROUP on a v1-config build. If any tracked
+  // widget lives inside a GROUP (page() / group() above), leaving the app throws
+  // "TypeError: not a function (no stack available)" from the runtime's own exit
+  // path — ~3 ms BEFORE Page.onDestroy runs — and the watch/simulator freezes.
+  // Device-bisected 2026-08-04 on Band 7, then reproduced on GTR 3: a page of plain
+  // text widgets exits cleanly; the same widgets inside a GROUP freeze, with the art,
+  // buttons, scroll view and key handler all removed, and in either delete order
+  // (reverse-order deleteWidget here does NOT help). HTTP/pages/slide.js works around
+  // it by giving each slide an absolute y offset instead — page()/group() currently
+  // have no callers. To be solved properly later.
   reset: () => {
     // widgets.map(w => w.setProperty(prop.VISIBLE, false))
     widgets.map((w) => hmUI.deleteWidget(w))

@@ -86,7 +86,7 @@ export const Help = (store) => {
             },
             [
               Auth({
-                label: '❓ Feadback or Suggestions 🗯️',
+                label: '❓ Feedback or Suggestions 🗯️',
                 authorizeUrl: 'https://buymeacoffee.com/galulex',
               }),
             ],
@@ -103,13 +103,13 @@ export const Help = (store) => {
           Br(),
           P('1. Tap + button to add new action'),
           Br(),
-          P('2. Set Title — name shown on watch'),
+          P('2. Set ✏️ Title — name shown on watch'),
           Br(),
-          P('3. Pick Icon — visual identifier'),
+          P('3. Pick 🖼️ Icon — the glyph drawn on the button'),
           Br(),
-          P('4. Enter URL — API endpoint'),
+          P('4. Enter 🔗 URL — API endpoint'),
           Br(),
-          P('5. Select Method — GET, POST, etc.'),
+          P('5. Select ⚙️ Method — GET, POST, etc.'),
 
           Hr(),
 
@@ -127,9 +127,9 @@ export const Help = (store) => {
 
           Hr(),
 
-          H1('💻 JSON Response'),
+          H1('🧩 Parse JSON Response'),
           P(
-            'Extract specific JSON fields using dot notation. Keys are split by dot (.) to navigate nested objects and arrays:',
+            'Turn this on to pull single fields out of a JSON reply instead of showing the whole body. Keys use dot notation to walk nested objects and arrays:',
           ),
           Br(),
           Code('data.user.name'),
@@ -142,13 +142,29 @@ export const Help = (store) => {
           Br(),
           Code('data.items.0.msg → "Hello"'),
           Br(),
+          P('✅ Success Key — what to show when the call works.'),
+          Br(),
+          P('⛔ Error Key — what to show when it fails; finding it marks the result as an error.'),
+          Br(),
           Hr(),
 
           H1('▶️ Running Actions'),
           Br(),
-          P('• ▶ Run — test an action from its edit window'),
+          P('• ▶ Run — test an action from its edit window, the result appears below the form'),
           Br(),
-          P('• On Watch — swipe to select action, tap to run'),
+          P('• On Watch — tap a button to run it'),
+          Br(),
+          P('• Swipe up/down to move between pages when you have more actions than fit one screen'),
+
+          Hr(),
+
+          H1('⌚ Buttons per Page'),
+          Br(),
+          P('Set 1–4 in ⚙️ settings. That picks the watch layout: one big button, two halves, three or four tiles.'),
+          Br(),
+          P('Actions are then split across pages — 6 actions with 2 per page gives you 3 pages.'),
+          Br(),
+          P('Band-style screens (tall and narrow, e.g. Band 7) stack up to 3 per page whatever you choose here.'),
 
           Hr(),
 
@@ -164,22 +180,30 @@ export const Help = (store) => {
           Br(),
           P('• Swipe an action left to clone ⧉ or delete ✕ it'),
           Br(),
+          P('• A clone is a full copy named "… copy", placed right under the original — handy for one URL with several payloads'),
+          Br(),
 
           Hr(),
 
           H1('🔄 Widgets'),
           Br(),
-          P('• Widgets can display maximum 4 actions (first four will be shown)'),
+          P('• One page of actions on the watchface carousel, plus a card widget that opens the app'),
+          Br(),
+          P('• They show as many actions as your Buttons per Page setting, starting from the first'),
+          Br(),
+          P('• Older watches (Amazfit GTR 3 / GTS 3 / GTS 4 Mini / Band 7) do not offer widgets'),
           Br(),
           P('• After changing settings, Reopen the app, remove and re-add the widget on your watch to refresh'),
 
           Hr(),
 
-          H1('🔘 Button Mode'),
+          H1('🔘 Physical Buttons'),
           Br(),
-          P('• You can assign an action to the physical button press'),
+          P('• Assign an action to the button press in ⚙️ settings'),
           Br(),
-          P('• Use long press to exit the app'),
+          P('• Long press exits the app'),
+          Br(),
+          P('• On watches with up/down keys or a crown, they move the selection and the middle key runs it'),
 
           Hr(),
 
@@ -200,6 +224,8 @@ export const Help = (store) => {
           P('• 💡 Keep Screen On — app stops when screen turns off, enable this to complete long requests'),
           Br(),
           P('• 🔚 Exit on Success — automatically closes the app when request succeeds'),
+          Br(),
+          P('• 📳 Vibrate — buzzes when the result arrives: a double tap for success, one long one for failure'),
         ]),
       ]),
   ])
