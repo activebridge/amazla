@@ -1,56 +1,47 @@
+import { initStore } from '../setting/store.js'
 import { MessageBuilder } from '../shared/message'
+import { xhr } from './xhr.js'
 
+// shared/message.js serves both sides — it selects the phone transport when hmBle
+// isn't defined — so there is no separate message-side build here.
 const messageBuilder = new MessageBuilder()
+const store = initStore(settings.settingsStorage)
 
-function getActions() {
-  return JSON.parse(settings.settingsStorage.getItem('actions') || '[{}]')
+const testRequest = async (id) => {
+  const action = store.actions.data.find((a) => a.id === String(id))
+  const { body, status, success } = await xhr(action)
+
+  const label = success ? '✅' : '❌'
+  store.result = `${label} | ${status} ➜ ${JSON.stringify(body)}`
 }
-
-function parse(str) {
-  let result = {}
-  try {
-    let rows = str.match(/(.*)=(.*)/g)
-    rows.map(r => {
-      const pair = r.split('=')
-      result[pair[0]] = pair[1]
-    })
-    return result
-  } catch(error) {
-    return { Error: error }
-  }
-}
-
-async function fetchData(ctx, i) {
-  try {
-    const action = getActions()[Number(i)]
-    const res = await fetch({
-      url: action.url,
-      method: action.method,
-      headers: parse(action.headers),
-      body: JSON.stringify(parse(action.body)),
-    })
-
-    const body = typeof res.body === 'string' ? res.body : JSON.stringify(res.body)
-    ctx.response({ data: { result: body, status: res.status } })
-  } catch (error) {
-    ctx.response({ data: { result: JSON.stringify(error) } })
-  }
-};
 
 AppSideService({
   onInit() {
-    messageBuilder.listen(() => { })
+    messageBuilder.listen(() => {})
 
-    messageBuilder.on('request', (ctx) => {
-      const payload = messageBuilder.buf2Json(ctx.request.payload)
+    messageBuilder.on('request', async (ctx) => {
+      const { method, params } = messageBuilder.buf2Json(ctx.request.payload)
 
-      if (payload.method === 'GET_ACTIONS') return ctx.response({ data: { result: getActions() } })
+      if (method === 'SETTINGS') {
+        ctx.response({
+          data: { result: { actions: store.actions.data, config: store.config.data } },
+        })
+        return
+      }
 
-      return fetchData(ctx, payload.method)
+      if (method === 'FETCH') {
+        const result = await xhr(store.actions.data.find((a) => a.id === params.id))
+        ctx.response({ data: { result } })
+      }
+    })
+
+    // Plain AppSideService has no onSettingsChange lifecycle (zml's BaseSideService
+    // wired settingsStorage 'change' for us). Register the listener directly.
+    settings.settingsStorage.addListener('change', ({ key, newValue }) => {
+      if (key === 'test') testRequest(newValue)
     })
   },
 
-  onRun() { },
-
-  onDestroy() { },
-});
+  onRun() {},
+  onDestroy() {},
+})

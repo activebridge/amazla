@@ -28,8 +28,8 @@ treated as in scope.
 | Active 2 (Round) | 466 × 466 | Round | 4.2 | `10092803` |
 | Active 2 (NFC) / 2R | 466 × 466 | Round | 4.2 | same as Active 2 (Round) |
 | Active 2 (Square) | 390 × 450 | Square | 4.2 | `10223872` |
-| Active Max | 480 × 480 | Round | 4.0 | |
-| Active 3 Premium | 480 × 480 | Round | 4.0 | `10813699` |
+| Active Max | 480 × 480 | Round | 4.2 | `10813697`, `10813699` |
+| Active 3 Premium | 466 × 466 | Round | 4.3 | `10944768`, `10944769`, `10944771`, `10948867` |
 | GTS 3 | 390 × 450 | Square | 1.0 (v1 — out of scope) | |
 | GTS 4 | 390 × 450 | Square | 3.6 | `7995649`¹ |
 | GTS 4 Mini | 336 × 384 | Square | 1.0 (v1 — out of scope) | |
@@ -51,6 +51,11 @@ treated as in scope.
 > `deviceSource` is a per-model integer — read it from the runtime log below
 > rather than hardcoding (values vary and are not all published). Confirmed
 > values are filled in above; the rest are blank until logged.
+> **Authoritative source:** zeus caches the full catalog (product name, shape,
+> screen size, apiLevel, deviceSource) at `~/.zepp/.zeus_devices` — prefer it
+> over this table. Corrected from it 2026-08-02: **Active 3 Premium is 466×466
+> / api 4.3**, not 480×480. `10813699` is **Active Max**, so the two
+> "Active 3 Premium" widget-metric logs further down were really Active Max.
 > **Note:** the simulator's `deviceSource` is **unreliable** — do not key
 > behavior off it. It is sometimes empty (Bip 5 Unity, Active) and **inconsistent
 > across models with the same screen**: at 390×450, GTS 4 and Bip 6 both report

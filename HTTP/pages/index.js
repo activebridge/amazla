@@ -1,105 +1,153 @@
-import { readFileSync, writeFileSync } from './../utils/fs'
+import UI, { height as h, isBar, isRound, isV1, text } from './../../pages/ui.js'
+import { keyListener, keyUnlisten } from './keys.js'
+import { response } from './output.js'
+import { keepScreenOn } from './screen.js'
+import { PER_SLIDE, Slide } from './slide.js'
+import { localStorage, toast } from './utils.js'
 
-const { messageBuilder } = getApp()._options.globalData;
-const vibrator = hmSensor.createSensor(hmSensor.id.VIBRATE)
-const vibrate = () => {
-  vibrator.stop()
-  vibrator.scene = 23
-  vibrator.start()
+let isBusy = false
+let widgets = []
+let currentFocus = -1
+let app = null
+let rendered = false
+let renderTimer = null
+
+// Read lazily — globalData.messageBuilder is set in app.onCreate, and a
+// module-eval snapshot would capture the initial null.
+const getMessageBuilder = () => getApp()._options.globalData.messageBuilder
+
+// Bar screens stack their actions and only have room for three, whatever the setting
+// says — the fourth would fall off the bottom.
+const perSlide = (buttons) => Math.min(buttons, PER_SLIDE)
+
+const focus = (i) => {
+  if (widgets.length === 0) return
+  currentFocus += i
+  if (currentFocus >= widgets.length) currentFocus = 0
+  if (currentFocus < 0) currentFocus = widgets.length - 1
+  const {
+    settings: {
+      config: { buttons = 4 },
+    },
+  } = app.state
+
+  // Never animate: the slide swap should feel like the wrap-to-first jump does.
+  hmUI.scrollToPage(Math.floor(currentFocus / perSlide(buttons)), false)
+
+  widgets.map((widget) => widget.setProperty(hmUI.prop.VISIBLE, false))
+  widgets[currentFocus].setProperty(hmUI.prop.VISIBLE, true)
 }
-const COLORS = [0xFFBD44, 0xFF605C, 0x00CA4E]
-let isRunning = false
 
 Page({
-  state: {},
+  state: { settings: localStorage.settings },
 
-  build() {
-    hmUI.updateStatusBarTitle('HTTP')
-    const actions = [{}, {}, {}]
-    // const actions = readFileSync()
-    let widgets = []
+  render() {
+    const { actions = [], config: { buttons = 4, awake } = {} } = app.state.settings
+    let index = 0
+    widgets = []
+    currentFocus = -1
 
-    const Actions = actions => {
-      actions.map((a, i) => {
-        widgets.push(hmUI.createWidget(hmUI.widget.TEXT, {
-          x: 4,
-          y: (i * 368) + 50,
-          w: 190,
-          h: 46,
-          color: 0xffffff,
-          text_size: 26,
-          align_h: hmUI.align.CENTER_H,
-          align_v: hmUI.align.CENTER_V,
-          text_style: hmUI.text_style.NONE,
-          text: a.title || 'N/A',
-        }))
+    // A re-render (sync answered with different settings) deletes the widgets the
+    // scroll view is paging through, so it is turned off before they go.
+    if (rendered && typeof hmUI.setScrollView === 'function') hmUI.setScrollView(false, h, 1, false)
+    UI.reset()
 
-        widgets.push(hmUI.createWidget(hmUI.widget.BUTTON, {
-          x: 14,
-          y: (i * 368) + 150,
-          w: 170,
-          h: 170,
-          text_size: 100,
-          radius: 90,
-          normal_color: COLORS[i] || 0x333333,
-          press_color: 0x000000,
-          text: a.icon || '▶',
-          click_func: () => { this.fetchData(i) },
-        }))
-
-        const text = hmUI.createWidget(hmUI.widget.TEXT, {
-          x: 96,
-          y: 120,
-          w: 288,
-          h: 46,
-          color: 0xffffff,
-          text_size: 36,
-          align_h: hmUI.align.CENTER_H,
-          align_v: hmUI.align.CENTER_V,
-          text_style: hmUI.text_style.NONE,
-          text: '⚽♀ ♁ ♂ • ¼☃1☂☀★☆☉☎☏☜☞☟☯♠ ♡ ♢ ♣ ♤ ♥ ♦ ♧ ♨ ♩ ♪ ♫ ♬ ♭ ♮ ♯ ♲ ♳ ♴ ♵ ♶ ♷ ♸ ♹ ♺ ♻ ♼ ♽⚠⚾ ✂ ✓ ✚ ✽ ✿ ❀ ❖ ❶ ❷ ❸ ❹ ❺ ❻ ❼ ❽ ❾ ❿ ➀ ➁ ➂ ➃ ➄ ➅ ➆ ➇ ➈ ➉ ➊ ➋ ➌ ➍ ➎ ➏ ➐ ➑ ➒ ➓ ➡ © ® ™ @ ¶ § ℀ ℃  ℅ ℉ ℊ ℓ № ℡  Ω ℧ Å ℮ ℵ ℻  ☖ ☗'
-        })
+    if (actions.length === 0) {
+      text({
+        text: 'No actions configured.\nPlease set up actions in the settings',
       })
+      return
     }
-    Actions(actions)
-
-    hmUI.setScrollView(true, px(368), actions.length, true)
-    hmUI.scrollToPage(Math.floor(actions.length / 2) - 1, false)
-
-    const getActions = () => {
-      messageBuilder.request({ method: 'GET_ACTIONS' }).then(({ result }) => {
-
-        if (JSON.stringify(actions) === JSON.stringify(result)) return
-        widgets.map(p => { hmUI.deleteWidget(p) })
-        widgets = []
-        hmUI.setScrollView(true, px(368), result.length, true)
-        hmUI.scrollToPage(Math.floor(result.length / 2) - 1, false)
-        writeFileSync(result)
-        Actions(result)
-      }).catch((error) => {
-        hmUI.showToast({ text: error })
-      })
+    const size = perSlide(buttons)
+    for (let i = 0; i < actions.length; i += size) {
+      const chunk = actions.slice(i, i + size)
+      const slide = Slide(app, chunk, i, index)
+      widgets = widgets.concat(slide)
+      index += 1
     }
-    getActions()
+    hmUI.setScrollView(true, h, index, true)
+    rendered = true
+    // API-1.0 square watches keep their status bar — hiding it there leaves a dead
+    // strip instead of screen (the same call authenticator guards this way). Bar
+    // screens are the exception: Band 7 gives the strip back as usable screen.
+    const keepBar = isV1 && !isRound && !isBar
+    if (!keepBar && typeof hmUI.setStatusBarVisible === 'function') hmUI.setStatusBarVisible(false)
+
+    if (awake) keepScreenOn(true)
+    keyListener(focus, app.execFocus)
   },
 
-  fetchData(i) {
-    if (isRunning) return hmUI.showToast({ text: 'Busy...' })
+  fetch(id) {
+    if (isBusy) return toast('Busy...')
+    isBusy = true
+    const action = app.state.settings.actions.find((a) => a.id === String(id))
+    toast('Running ' + (action ? action.title : id))
+    getMessageBuilder()
+      .request({ method: 'FETCH', params: { id } })
+      .then(({ result }) => {
+        response(result, app.state.settings)
+      })
+      .catch((error) => {
+        toast('ERROR: ' + error)
+      })
+      .finally(() => {
+        isBusy = false
+      })
+  },
 
-    isRunning = true
-    hmUI.updateStatusBarTitle('Sending...')
-    hmApp.setScreenKeep(true)
+  // Runs the focused action, or — from a physical key press — the one assigned to
+  // that button in the settings. Returns whether anything was fired, so keys.js can
+  // hand an unhandled press back to the OS.
+  execFocus(isShortcut = false) {
+    const {
+      state: {
+        settings: { actions = [], config: { press } = {} },
+      },
+    } = app
+    const action = !isShortcut
+      ? actions[currentFocus] || actions[0]
+      : actions.find((a) => a.id === String(press))
+    if (!action) {
+      if (!isShortcut) toast('No action assigned')
+      return false
+    }
+    app.fetch(action.id)
+    return true
+  },
 
-    messageBuilder.request({ method: i }).then(data => {
-      isRunning = false
-      vibrate()
-      const { result = 'N/A', status = 'N/A' } = data
-      hmUI.updateStatusBarTitle('HTTP: ' + status)
-      hmUI.showToast({ text: result })
-      hmApp.setScreenKeep(false)
-      // hmApp.exit()
-    }).catch(error => {
-      hmUI.showToast({ text: error })
-    })
+  build() {
+    app.render()
+    app.sync()
+  },
+
+  sync() {
+    getMessageBuilder()
+      .request({ method: 'SETTINGS' })
+      .then(({ result }) => {
+        if (!result) return
+        if (JSON.stringify(app.state.settings) === JSON.stringify(result)) return
+
+        app.state.settings = result
+        localStorage.settings = result
+        // The polyfill turns this into timer.createTimer(300, …); v1 documents a
+        // 1000 ms floor, so watch that the re-render still lands on API-1.0.
+        renderTimer = setTimeout(app.render, 300)
+      })
+      .catch((error) => toast('ERROR: ' + error))
+  },
+
+  onInit(id) {
+    app = this
+    if (id) app.fetch(id)
+  },
+
+  onDestroy() {
+    const { config: { awake } = {} } = app.state.settings || {}
+    // A pending re-render must not outlive the page it would draw into.
+    if (renderTimer) clearTimeout(renderTimer)
+    renderTimer = null
+    if (awake) keepScreenOn(false)
+    keyUnlisten()
+    UI.reset()
   },
 })

@@ -1,7 +1,7 @@
 // NO @zos imports here. This file is shared by v1-config builds (native
-// hmUI/hmSetting globals — authenticator, amazwallet, which ship ONE build to
-// every device) and by v2/v3 builds (globals seeded by zeppify/zos-globals.js,
-// imported first in app.js — amazla_key, http_v3).
+// hmUI/hmSetting globals — authenticator, amazwallet, HTTP, which ship ONE build
+// to every device) and by v2/v3 builds (globals seeded by zeppify/zos-globals.js,
+// imported first in app.js — amazla_key).
 // Any `import ... from '@zos/*'` compiles to a top-level __$$RQR$$__(...) that the
 // v1 runtime can't load and that breaks zeus's v1 context extraction
 // ("ReferenceError: '__$$RQR$$__' is not defined"). The @zos imports for v2/v3
@@ -14,6 +14,9 @@
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
 export const isRound = screenShape === 1
+// Bar screens (Band 7 is 194 × 368) are far taller than wide, so a layout drawn in a
+// width × width square leaves most of the display empty. Callers stack instead.
+export const isBar = height / width >= 1.5
 
 // API-1.0 watches (GTR 3, GTR 3 Pro, GTS 3, GTS 4 Mini, Band 7) run a v1-config
 // build on the old runtime, where a TEXT widget with a custom TTF renders nothing
