@@ -1,5 +1,5 @@
 import * as hmUI from '@zos/ui'
-import { animation, img, text } from './../../../../pages/ui.js'
+import { animation, circle, height, img, text, width } from './../../../../pages/ui.js'
 import { PairButton } from 'zosLoader:./button.[pf].layout.js'
 
 // Animated illustration for the "Connecting to your Tesla" step — the same 12-dot
@@ -39,6 +39,14 @@ const SPINNER = {
 // ever on screen at a time (render() calls UI.reset() first), so there is no
 // scroll container to host. GROUP is for stacking multiple scroll screens.
 export const Slide = ({ image, spinner, title, button, onClick }) => {
+  // Opaque black backdrop, FIRST so the rest of the slide paints on top of it.
+  // hmUI.deleteWidget doesn't reliably land on some devices: users sent screenshots
+  // of three titles, both illustrations and the Pair button all on screen at once,
+  // survivors of earlier steps that UI.reset() failed to remove. z-order follows
+  // creation order, so anything left over from the previous slide is older than this
+  // circle and gets covered by it. Radius is the full screen, not height/2, so square
+  // screens are covered corner to corner; alpha 255 because ui.js defaults to 150.
+  circle({ radius: Math.max(width, height), color: 0x000000, alpha: 255 })
   if (spinner) {
     animation(SPINNER)
   } else if (image) {

@@ -2,8 +2,23 @@ import './shared/device-polyfill'
 import { MessageBuilder } from './shared/message'
 import { getPackageInfo } from '@zos/app'
 import * as ble from '@zos/ble'
+import * as sensor from '@zos/sensor'
 import { kpayConfig } from './shared/kpay-config'
 import kpayApp from 'kpay-amazfit/app'
+
+// zeppify/vibrate.js drives the motor through the v1 hmSensor VIBRATE sensor. That
+// global is missing on this runtime (hmUI/hmSetting are not), so its hasSensor()
+// check was false and every vibro.* call in this app was a silent no-op — no buzz on
+// the keycard prompt, pairing success or walk-away exit. @zos/sensor's Vibrator has
+// the same stop/setMode/start surface and the same nine scene numbers, so seeding the
+// legacy name over it makes the existing call path work unchanged. Namespace import +
+// guards: a missing binding here would take down app.js itself.
+if (typeof globalThis.hmSensor === 'undefined' && sensor.Vibrator) {
+  globalThis.hmSensor = {
+    id: { VIBRATE: 'VIBRATE' },
+    createSensor: () => new sensor.Vibrator(),
+  }
+}
 
 App({
   globalData: {

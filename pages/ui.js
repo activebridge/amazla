@@ -8,8 +8,8 @@
 // live in the shim, not here. Top-level hmUI.*/hmSetting.* access is fine — those
 // globals always exist by the time this module evaluates.
 
-// import * as hmSetting from '@zos/device'
-// import * as hmUI from '@zos/ui'
+import * as hmSetting from '@zos/device'
+import * as hmUI from '@zos/ui'
 
 export const { width, height, screenShape, deviceSource } = hmSetting.getDeviceInfo()
 export const size = Math.min(width, height)
@@ -26,10 +26,9 @@ export const isBar = height / width >= 1.5
 // list from the authenticator's old v1/app.json.
 const V1_SOURCES = [224, 225, 226, 227, 229, 230, 242, 246, 247, 252, 253, 254, 6095106]
 export const isV1 =
-  !(hmUI.widget && hmUI.widget.VIEW_CONTAINER !== undefined) ||
-  V1_SOURCES.indexOf(deviceSource) !== -1
+  !(hmUI.widget && hmUI.widget.VIEW_CONTAINER !== undefined) || V1_SOURCES.indexOf(deviceSource) !== -1
 
-console.log('[ui] device: w=' + width + ' h=' + height + ' shape=' + screenShape + ' source=' + deviceSource + ' v1=' + isV1)
+console.log(`[ui] device: w=${width} h=${height} shape=${screenShape} source=${deviceSource} v1=${isV1}`)
 
 // app-widget slot geometry (API_LEVEL 3.0). Guarded so runtimes without the
 // APIs fall back to full width. Used by authenticator/app-widget and
@@ -227,9 +226,12 @@ export const pageIndicator = (props = {}, group = hmUI) => {
   return pageIndicatorWidget
 }
 
-export const viewContainer = (props = {}) => {
+// A container is also how a page holds a screen it is not showing yet: children live
+// in the container's own coordinate space, so moving the container moves the whole
+// screen with one .set(). Hence attach() here — callers need `.set({ x })`.
+export const viewContainer = (props = {}, group = hmUI) => {
   const { z_index = 0, scroll_enable = false, ...rest } = props
-  const container = hmUI.createWidget(hmUI.widget.VIEW_CONTAINER, {
+  const container = group.createWidget(hmUI.widget.VIEW_CONTAINER, {
     x: 0,
     y: 0,
     w: width,
@@ -239,7 +241,7 @@ export const viewContainer = (props = {}) => {
     ...rest,
   })
   widgets.push(container)
-  return container
+  return attach(container)
 }
 
 export const editable = (props = {}) => {
@@ -530,6 +532,17 @@ export default {
     // widgets.map(w => w.setProperty(prop.VISIBLE, false))
     widgets.map((w) => hmUI.deleteWidget(w))
     widgets = []
+    return widgets
+  },
+  // Delete a SUBSET — the widgets one page created, captured as
+  // `widgets.slice(markBeforeBuilding)`. reset() deletes everything tracked, which is
+  // wrong for a page that navigates with replace(): the next page has already built by
+  // the time this page's onDestroy runs, so reset() takes the incoming page's widgets
+  // down with it (device 2026-08-06: unpair → a black pairing page, because the main
+  // page's destroy wiped the deck that had just been created).
+  remove: (list = []) => {
+    list.map((w) => hmUI.deleteWidget(w))
+    widgets = widgets.filter((w) => list.indexOf(w) === -1)
     return widgets
   },
 }
