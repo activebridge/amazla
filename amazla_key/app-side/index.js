@@ -144,6 +144,27 @@ AppSideService({
 
     kpay.init()
     messageBuilder.listen(() => {})
+
+    // Re-send the license to the watch on every spawn, for a customer who already paid.
+    //
+    // With trialEnabled:false the lib fetches status ONLY when startPurchase() ran in
+    // THIS side-service session (attemptFetch() no-ops otherwise), and the resulting
+    // 'licensed' push is one-shot with no ack. Paying takes minutes on the phone, by
+    // which time the watch app has slept or been killed — the push lands nowhere, and
+    // no later launch re-asks. The watch then shows Purchase forever, and tapping it
+    // looks dead because kpay skips its dialog once licensed (customer 2026-08-08).
+    //
+    // startPurchase() here is the lib's own re-check, not a payment prompt: with
+    // KPAY_ISLICENSED already 'true' and the validity period unexpired, fetchStatus()
+    // takes its cached branch and does no network call — it just pushes the stored
+    // 'licensed' status down to the watch. It also handles the delivery problem for us,
+    // pinging until the watch actually answers instead of firing blind at spawn time.
+    // Gated on the flag so an unpaid user is never nudged toward the payment dialog.
+    if (settings.settingsStorage.getItem('KPAY_ISLICENSED') === 'true') {
+      console.log('[App] KPAY: phone holds a license — re-sending it to the watch')
+      kpay.startPurchase()
+    }
+
     messageBuilder.on('request', (ctx) => {
       const jsonRpc = messageBuilder.buf2Json(ctx.request.payload)
       if (kpay.onRequest(jsonRpc)) return

@@ -162,6 +162,17 @@ const startPurchase = () => {
     hmUI.showToast({ text: 'kpay not ready' })
     return
   }
+  // Ask kpay first. A tap by someone who ALREADY paid is answered silently — kpay opens
+  // its dialog only for a not-licensed status — so without this the button looks dead
+  // and only a relaunch picks the license up (customer 2026-08-08). The license lands in
+  // kpay's own storage between taps: the phone answers the previous tap (or the launch
+  // re-check in app-side/index.js), so the next tap sees it and unlocks the app here.
+  if (isLicensed()) {
+    unlicensed = false
+    vibro.medium()
+    startLicensed()
+    return
+  }
   kpay.startPurchase()
 }
 
@@ -275,6 +286,15 @@ export function build(host) {
     return
   }
 
+  startLicensed()
+}
+
+// The licensed half of build(): phone RPCs, car link, listeners, controls. Split out
+// because it also runs LATER — when a Purchase tap finds the license already in place
+// and promotes this screen (startPurchase). Promoting in place, rather than replace()ing
+// the page, keeps clear of the destroy-wipes-the-new-page trap; the status widget already
+// exists from build() and the render() at the end of this function repaints it.
+function startLicensed() {
   phone = new Phone()
 
   tesla.onChange(render)
